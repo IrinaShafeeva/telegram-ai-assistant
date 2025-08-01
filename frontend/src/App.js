@@ -10,7 +10,7 @@ import {
   Lightbulb, 
   Calendar,
   BarChart3,
-  Settings,
+  Settings as SettingsIcon,
   User,
   Home
 } from 'lucide-react';

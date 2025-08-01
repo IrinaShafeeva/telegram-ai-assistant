@@ -7,7 +7,7 @@ import {
   Lightbulb, 
   Calendar,
   BarChart3,
-  Settings,
+  Settings as SettingsIcon,
   TrendingUp,
   TrendingDown
 } from 'lucide-react';
@@ -190,10 +190,10 @@ const Dashboard = ({ user }) => {
             <Plus size={16} />
             Добавить запись
           </Link>
-          <Link to="/settings" className="btn btn-secondary">
-            <Settings size={16} />
-            Настройки
-          </Link>
+                  <Link to="/settings" className="btn btn-secondary">
+          <SettingsIcon size={16} />
+          Настройки
+        </Link>
         </div>
       </div>
     </div>
