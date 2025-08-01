@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BarChart3, TrendingUp, TrendingDown } from 'lucide-react';
+import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react';
 import axios from 'axios';
 
 const Analytics = ({ user }) => {
@@ -23,7 +23,7 @@ const Analytics = ({ user }) => {
 
   useEffect(() => {
     fetchAnalytics();
-  }, [selectedProject, selectedPeriod]);
+  }, [selectedProject, selectedPeriod, fetchAnalytics]);
 
   const fetchAnalytics = async () => {
     try {

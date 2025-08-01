@@ -1,19 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import axios from 'axios';
-import { format } from 'date-fns';
-import { ru } from 'date-fns/locale';
-import { 
-  Plus, 
-  DollarSign, 
-  CheckSquare, 
-  Lightbulb, 
-  Calendar,
-  BarChart3,
-  Settings as SettingsIcon,
-  User,
-  Home
-} from 'lucide-react';
 
 // Components
 import Dashboard from './components/Dashboard';
@@ -32,7 +18,6 @@ if (window.Telegram && window.Telegram.WebApp) {
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (tg) {
