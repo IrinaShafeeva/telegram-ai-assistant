@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram AI Assistant - API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .response {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background-color: #e9ecef;
+            border: none;
+            cursor: pointer;
+        }
+        .tab.active {
+            background-color: #007bff;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Telegram AI Assistant - API Test</h1>
+    
+    <div class="tabs">
+        <button class="tab active" onclick="showTab('submit')">Добавить запись</button>
+        <button class="tab" onclick="showTab('analytics')">Аналитика</button>
+        <button class="tab" onclick="showTab('recent')">Последние записи</button>
+        <button class="tab" onclick="showTab('settings')">Настройки</button>
+    </div>
+
+    <!-- Submit Form -->
+    <div id="submit" class="tab-content active">
+        <div class="container">
+            <h2>Добавить запись</h2>
+            <form id="submitForm">
+                <div class="form-group">
+                    <label>Тип записи:</label>
+                    <select id="type" required>
+                        <option value="transaction">Транзакция</option>
+                        <option value="task">Задача</option>
+                        <option value="idea">Идея</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Проект:</label>
+                    <select id="project" required>
+                        <option value="GO">GO</option>
+                        <option value="Glamping">Glamping</option>
+                        <option value="Family">Family</option>
+                        <option value="Cars">Cars</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Описание:</label>
+                    <input type="text" id="description" required>
+                </div>
+                
+                <div class="form-group" id="amountGroup">
+                    <label>Сумма:</label>
+                    <input type="text" id="amount" placeholder="+1000 или -500">
+                </div>
+                
+                <div class="form-group" id="budgetGroup">
+                    <label>Источник бюджета:</label>
+                    <input type="text" id="budgetFrom" placeholder="Карта, наличные">
+                </div>
+                
+                <div class="form-group" id="personGroup">
+                    <label>Ответственный:</label>
+                    <select id="person">
+                        <option value="">Выберите ответственного</option>
+                        <option value="Саша">Саша</option>
+                        <option value="Ира">Ира</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" id="dateGroup">
+                    <label>Дата:</label>
+                    <input type="date" id="date">
+                </div>
+                
+                <button type="submit">Отправить</button>
+            </form>
+            <div id="submitResponse" class="response" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Analytics -->
+    <div id="analytics" class="tab-content">
+        <div class="container">
+            <h2>Аналитика</h2>
+            <div class="form-group">
+                <label>Проект:</label>
+                <select id="analyticsProject">
+                    <option value="all">Все проекты</option>
+                    <option value="GO">GO</option>
+                    <option value="Glamping">Glamping</option>
+                    <option value="Family">Family</option>
+                    <option value="Cars">Cars</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Период:</label>
+                <select id="analyticsPeriod">
+                    <option value="week">Неделя</option>
+                    <option value="month">Месяц</option>
+                    <option value="quarter">Квартал</option>
+                    <option value="year">Год</option>
+                </select>
+            </div>
+            <button onclick="getAnalytics()">Получить аналитику</button>
+            <div id="analyticsResponse" class="response" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Recent Items -->
+    <div id="recent" class="tab-content">
+        <div class="container">
+            <h2>Последние записи</h2>
+            <button onclick="getRecent()">Получить последние записи</button>
+            <div id="recentResponse" class="response" style="display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings" class="tab-content">
+        <div class="container">
+            <h2>Настройки</h2>
+            <div class="form-group">
+                <label>Хранение задач:</label>
+                <select id="taskStorage">
+                    <option value="supabase">Supabase</option>
+                    <option value="notion">Notion</option>
+                    <option value="sheets">Google Sheets</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Хранение идей:</label>
+                <select id="ideaStorage">
+                    <option value="supabase">Supabase</option>
+                    <option value="notion">Notion</option>
+                    <option value="sheets">Google Sheets</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="sendToPersonal" checked>
+                    Отправлять уведомления в личные сообщения
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="notifications" checked>
+                    Включить напоминания о задачах
+                </label>
+            </div>
+            <button onclick="saveSettings()">Сохранить настройки</button>
+            <div id="settingsResponse" class="response" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000';
+        
+        function showTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+        
+        // Show/hide form fields based on type
+        document.getElementById('type').addEventListener('change', function() {
+            const type = this.value;
+            const amountGroup = document.getElementById('amountGroup');
+            const budgetGroup = document.getElementById('budgetGroup');
+            const personGroup = document.getElementById('personGroup');
+            const dateGroup = document.getElementById('dateGroup');
+            
+            if (type === 'transaction') {
+                amountGroup.style.display = 'block';
+                budgetGroup.style.display = 'block';
+                personGroup.style.display = 'none';
+                dateGroup.style.display = 'none';
+            } else if (type === 'task') {
+                amountGroup.style.display = 'none';
+                budgetGroup.style.display = 'none';
+                personGroup.style.display = 'block';
+                dateGroup.style.display = 'block';
+            } else if (type === 'idea') {
+                amountGroup.style.display = 'none';
+                budgetGroup.style.display = 'none';
+                personGroup.style.display = 'none';
+                dateGroup.style.display = 'none';
+            }
+        });
+        
+        // Submit form
+        document.getElementById('submitForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                type: document.getElementById('type').value,
+                project: document.getElementById('project').value,
+                description: document.getElementById('description').value,
+                amount: document.getElementById('amount').value,
+                budgetFrom: document.getElementById('budgetFrom').value,
+                person: document.getElementById('person').value,
+                date: document.getElementById('date').value || new Date().toISOString().slice(0, 10),
+                telegramChatId: 'test-user'
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/submit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                showResponse('submitResponse', result, response.ok);
+            } catch (error) {
+                showResponse('submitResponse', { error: error.message }, false);
+            }
+        });
+        
+        async function getAnalytics() {
+            const project = document.getElementById('analyticsProject').value;
+            const period = document.getElementById('analyticsPeriod').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/analytics?project=${project}&period=${period}`);
+                const result = await response.json();
+                showResponse('analyticsResponse', result, response.ok);
+            } catch (error) {
+                showResponse('analyticsResponse', { error: error.message }, false);
+            }
+        }
+        
+        async function getRecent() {
+            try {
+                const response = await fetch(`${API_BASE}/api/recent`);
+                const result = await response.json();
+                showResponse('recentResponse', result, response.ok);
+            } catch (error) {
+                showResponse('recentResponse', { error: error.message }, false);
+            }
+        }
+        
+        async function saveSettings() {
+            const settings = {
+                taskStorage: document.getElementById('taskStorage').value,
+                ideaStorage: document.getElementById('ideaStorage').value,
+                sendToPersonal: document.getElementById('sendToPersonal').checked,
+                notifications: document.getElementById('notifications').checked
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/settings`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(settings)
+                });
+                
+                const result = await response.json();
+                showResponse('settingsResponse', result, response.ok);
+            } catch (error) {
+                showResponse('settingsResponse', { error: error.message }, false);
+            }
+        }
+        
+        function showResponse(elementId, data, isSuccess) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.textContent = JSON.stringify(data, null, 2);
+            element.className = `response ${isSuccess ? 'success' : 'error'}`;
+        }
+        
+        // Initialize form fields visibility
+        document.getElementById('type').dispatchEvent(new Event('change'));
+    </script>
+</body>
+</html> 

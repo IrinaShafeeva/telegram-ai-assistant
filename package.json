@@ -1,0 +1,32 @@
+{
+  "name": "telegram-ai-assistant",
+  "version": "1.0.0",
+  "description": "Telegram AI Assistant for expense tracking, tasks, ideas and reminders",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "cd frontend && npm run build",
+    "install-frontend": "cd frontend && npm install",
+    "dev-frontend": "cd frontend && npm start"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "node-telegram-bot-api": "^0.64.0",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.20.1",
+    "googleapis": "^128.0.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "node-cron": "^3.0.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": ["telegram", "ai", "assistant", "expenses", "tasks", "notion", "sheets"],
+  "author": "",
+  "license": "MIT"
+} 
