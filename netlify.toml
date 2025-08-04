@@ -1,25 +1,11 @@
 [build]
-  command = "echo 'Static site - no build required'"
+  command = "echo 'Telegram Bot Only - No Build Required'"
   publish = "public"
-
-[build.environment]
-  NODE_VERSION = "18"
-
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
-  status = 200
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-[context.production.environment]
-  NODE_ENV = "production"
-
-[context.deploy-preview.environment]
-  NODE_ENV = "preview"
 
 [[headers]]
   for = "/*"

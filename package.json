@@ -6,9 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "build": "echo 'Static site - no build required'",
-    "install-frontend": "echo 'No frontend to install'",
-    "dev-frontend": "echo 'No frontend dev server'",
+    "build": "echo 'Telegram Bot Only - No Build Required'",
     "deploy": "echo 'Ready for Netlify deployment'"
   },
   "dependencies": {

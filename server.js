@@ -33,23 +33,25 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const GOOGLE_SHEETS_CLIENT_EMAIL = process.env.GOOGLE_SHEETS_CLIENT_EMAIL;
 const GOOGLE_SHEETS_PRIVATE_KEY = process.env.GOOGLE_SHEETS_PRIVATE_KEY;
-const NOTION_API_KEY = process.env.NOTION_API_KEY;
+// Notion removed - focusing on Supabase and Google Sheets only
 
 // Initialize clients
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Google Sheets setup
-const auth = new google.auth.GoogleAuth({
-    credentials: {
-        client_email: GOOGLE_SHEETS_CLIENT_EMAIL,
-        private_key: GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n')
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets']
-});
-
-const sheets = google.sheets({ version: 'v4', auth });
+// Google Sheets setup (optional)
+let auth, sheets;
+if (GOOGLE_SHEETS_CLIENT_EMAIL && GOOGLE_SHEETS_PRIVATE_KEY) {
+    auth = new google.auth.GoogleAuth({
+        credentials: {
+            client_email: GOOGLE_SHEETS_CLIENT_EMAIL,
+            private_key: GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n')
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+    sheets = google.sheets({ version: 'v4', auth });
+}
 
 // AI Classification System
 class AIClassifier {
@@ -375,13 +377,16 @@ class DataStorage {
                 data.project
             ]];
 
-            await sheets.spreadsheets.values.append({
-                spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID,
-                range: `${sheetName}!A:G`,
-                valueInputOption: 'RAW',
-                insertDataOption: 'INSERT_ROWS',
-                resource: { values }
-            });
+            // Save to Google Sheets (if configured)
+            if (sheets && process.env.GOOGLE_SHEETS_SPREADSHEET_ID) {
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID,
+                    range: `${sheetName}!A:G`,
+                    valueInputOption: 'RAW',
+                    insertDataOption: 'INSERT_ROWS',
+                    resource: { values }
+                });
+            }
 
             // Save to Supabase for analytics
             const { error } = await supabase
@@ -408,32 +413,7 @@ class DataStorage {
 
     async saveTask(data) {
         try {
-            // Save to Notion
-            if (NOTION_API_KEY && this.databaseIds[data.project]?.task) {
-                await axios.post(`https://api.notion.com/v1/pages`, {
-                    parent: { database_id: this.databaseIds[data.project].task },
-                    properties: {
-                        "Description": {
-                            "title": [{ "text": { "content": data.description } }]
-                        },
-                        "Date": {
-                            "date": { "start": data.date }
-                        },
-                        "Person": {
-                            "rich_text": [{ "text": { "content": data.person || '' } }]
-                        },
-                        "ChatID": {
-                            "rich_text": [{ "text": { "content": data.telegramChatId } }]
-                        }
-                    }
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${NOTION_API_KEY}`,
-                        'Notion-Version': '2022-06-28',
-                        'Content-Type': 'application/json'
-                    }
-                });
-            }
+            // Notion integration removed - focusing on Supabase and Google Sheets
 
             // Save to Supabase
             const { error } = await supabase
@@ -461,23 +441,7 @@ class DataStorage {
 
     async saveIdea(data) {
         try {
-            // Save to Notion
-            if (NOTION_API_KEY && this.databaseIds[data.project]?.idea) {
-                await axios.post(`https://api.notion.com/v1/pages`, {
-                    parent: { database_id: this.databaseIds[data.project].idea },
-                    properties: {
-                        "Description": {
-                            "title": [{ "text": { "content": data.description } }]
-                        }
-                    }
-                }, {
-                    headers: {
-                        'Authorization': `Bearer ${NOTION_API_KEY}`,
-                        'Notion-Version': '2022-06-28',
-                        'Content-Type': 'application/json'
-                    }
-                });
-            }
+            // Notion integration removed - focusing on Supabase and Google Sheets
 
             // Save to Supabase
             const { error } = await supabase
@@ -922,10 +886,36 @@ app.get('/api/settings', async (req, res) => {
         // For now, return default settings
         // In a real app, you'd fetch from database
         res.json({
-            taskStorage: 'supabase',
-            ideaStorage: 'supabase',
-            sendToPersonal: true,
-            notifications: true
+            storage: {
+                transaction: {
+                    primary: 'supabase',
+                    supabase: true,
+                    sheets: false,
+                    sheets: false
+                },
+                task: {
+                    primary: 'supabase',
+                    supabase: true,
+                    sheets: false
+                },
+                idea: {
+                    primary: 'supabase',
+                    supabase: true,
+                    sheets: false
+                }
+            },
+            notifications: {
+                personal: true,
+                chat: false,
+                channel: false,
+                chatId: '',
+                channelId: ''
+            },
+            ai: {
+                autoClassify: true,
+                voiceTranscription: true,
+                smartReminders: true
+            }
         });
     } catch (error) {
         console.error('Settings error:', error);
@@ -939,6 +929,11 @@ app.post('/api/settings', async (req, res) => {
         
         // In a real app, you'd save to database
         console.log('Saving settings:', settings);
+        
+        // Validate settings structure
+        if (!settings.storage || !settings.notifications || !settings.ai) {
+            return res.status(400).json({ error: 'Invalid settings structure' });
+        }
         
         res.json({ success: true, message: 'Settings saved successfully' });
     } catch (error) {
