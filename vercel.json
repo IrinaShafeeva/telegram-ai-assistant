@@ -2,22 +2,22 @@
   "version": 2,
   "builds": [
     {
-      "src": "src/app.js",
+      "src": "debug-app.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/webhook",
-      "dest": "/src/app.js"
+      "dest": "/debug-app.js"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/src/app.js"
+      "dest": "/debug-app.js"
     },
     {
       "src": "/(.*)",
-      "dest": "/src/app.js"
+      "dest": "/debug-app.js"
     }
   ],
   "env": {
