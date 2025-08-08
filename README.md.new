@@ -1,0 +1,188 @@
+# AI Assistant v2.0 - Modern Architecture
+
+Масштабируемый AI-ассистент с rule-based роутингом, универсальной моделью данных и идемпотентными доставками.
+
+## 🏗️ Архитектура
+
+### Слои системы:
+```
+Клиенты (Telegram Bot, Web, Email)
+    ↓
+LLM + Tools (classify, extract, route)
+    ↓
+Services (Directory, Routing, Orchestrator)
+    ↓
+Connectors (Google, Telegram, Notion)
+    ↓
+Infrastructure (Postgres, Redis, Storage)
+```
+
+### Эволюция планов:
+- **MVP**: expenses/tasks/bookmarks → Google Sheets + Telegram
+- **Premium**: больше интеграций, аналитика, команды
+- **Custom**: пользовательские правила, enterprise коннекторы
+
+## 🚀 Новые возможности
+
+### 1. Универсальная модель `records`
+Вместо отдельных таблиц transactions/tasks/ideas:
+```sql
+records(id, tenant_id, kind, title, body, amount, tags, assignee_member_id, meta)
+```
+
+### 2. Rule-based роутинг
+```json
+{
+  "match": {"kind": "expense", "amount": {">": 1000}},
+  "actions": [
+    {"connector": "telegram_dm", "target": "@accountant"},
+    {"connector": "google_sheets", "target": "spreadsheet_id!Expenses"}
+  ]
+}
+```
+
+### 3. LLM Tools контракт
+```javascript
+// Доступные инструменты:
+- resolve_person(name) → member_id, tg_chat_id
+- add_expense/task/bookmark(data) → record_id + routing
+- search(query, kind) → matching records
+- route(record) → destinations[]
+```
+
+### 4. Идемпотентные доставки
+```sql
+deliveries(record_id, route_id, connector, target, idempotency_key, status)
+```
+
+## 📦 Установка и запуск
+
+### 1. Обновление схемы БД
+```bash
+# Применить новую схему в Supabase
+psql -f supabase-schema.sql
+```
+
+### 2. Установка зависимостей
+```bash
+npm install
+```
+
+### 3. Настройка переменных окружения
+```bash
+# .env
+TELEGRAM_BOT_TOKEN=your_bot_token
+OPENAI_API_KEY=your_openai_key
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_key
+GOOGLE_SHEETS_CLIENT_EMAIL=your_service_account@gmail.com
+GOOGLE_SHEETS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
+```
+
+### 4. Запуск
+```bash
+# Новая архитектура
+npm start
+
+# Или разработка
+npm run dev
+
+# Старая версия (для сравнения)
+npm run legacy
+```
+
+## 🔧 Структура проекта
+
+```
+src/
+├── app.js              # Основной файл приложения
+├── config/
+│   └── database.js     # Конфигурация БД
+├── tools/
+│   └── index.js        # LLM инструменты
+├── services/
+│   └── routing.js      # Rules engine
+├── connectors/
+│   ├── telegram.js     # Telegram DM/каналы
+│   └── google.js       # Sheets/Calendar
+└── tests/
+    └── *.test.js       # Тесты
+```
+
+## 📊 Примеры использования
+
+### Создание правила роутинга:
+```sql
+INSERT INTO routes (tenant_id, name, priority, match, action) VALUES (
+  'tenant-uuid',
+  'Большие расходы → бухгалтер',
+  10,
+  '{"kind": "expense", "amount": {">": 10000}}',
+  '[
+    {"connector": "telegram_dm", "target": "@accountant"},
+    {"connector": "google_sheets", "target": "sheet_id!BigExpenses"}
+  ]'
+);
+```
+
+### Добавление участника команды:
+```sql
+INSERT INTO team_members (tenant_id, display_name, aliases, tg_chat_id) VALUES (
+  'tenant-uuid',
+  'Иван Иванов', 
+  '["иван", "ваня", "ivan"]',
+  '@ivan_telegram'
+);
+```
+
+### API запросы:
+```javascript
+// Поиск записей
+GET /api/search?tenant_id=uuid&query=продукты&kind=expense
+
+// Получение записей
+GET /api/records?tenant_id=uuid&kind=task&limit=10
+```
+
+## 🔍 Отличия от v1.0
+
+| Аспект | v1.0 (старый) | v2.0 (новый) |
+|--------|---------------|--------------|
+| Данные | Отдельные таблицы | Универсальная `records` |
+| Роутинг | Хардкод в коде | Rule-based через БД |
+| LLM | Простые промпты | Function calling + tools |
+| Доставки | Прямые вызовы | Идемпотентная очередь |
+| Мультитенантность | Нет | Полная поддержка |
+| Поиск | SQL запросы | Full-text + pgvector |
+
+## 🎯 Roadmap
+
+### Phase 1 (MVP)
+- [x] Универсальная модель records
+- [x] Rule-based роутинг
+- [x] LLM tools интеграция
+- [x] Базовые коннекторы
+
+### Phase 2 (Premium)
+- [ ] MCP серверы поверх tools
+- [ ] Расширенная аналитика
+- [ ] Больше коннекторов (Notion, Todoist)
+- [ ] Webhook'и для внешних систем
+
+### Phase 3 (Custom)
+- [ ] Visual rule builder
+- [ ] Custom коннекторы через API
+- [ ] Enterprise SSO
+- [ ] On-premise развертывание
+
+## 🤝 Миграция с v1.0
+
+1. Сделайте бэкап текущих данных
+2. Примените новую схему БД
+3. Запустите миграцию: `npm run migrate`
+4. Протестируйте новую версию: `npm run dev`
+5. Переключитесь: изменить `main` в package.json
+
+---
+
+**Готово!** Теперь ваш AI-ассистент работает на современной, масштабируемой архитектуре 🚀

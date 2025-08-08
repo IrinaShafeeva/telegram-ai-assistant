@@ -1,131 +1,190 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Users table
+-- Tenants table (multi-tenancy support)
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    plan TEXT DEFAULT 'free' CHECK (plan IN ('free', 'premium', 'custom')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Entitlements for plan limits
+CREATE TABLE entitlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(tenant_id, key)
+);
+
+-- Users table (updated for multi-tenant)
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    telegram_chat_id TEXT UNIQUE NOT NULL,
-    username TEXT,
-    first_name TEXT,
-    last_name TEXT,
-    tier TEXT DEFAULT 'free' CHECK (tier IN ('free', 'pro', 'team')),
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    name TEXT,
+    email TEXT,
+    tg_chat_id TEXT,
+    role TEXT DEFAULT 'user' CHECK (role IN ('owner', 'admin', 'user', 'readonly')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(tenant_id, tg_chat_id)
 );
 
--- Project settings table
-CREATE TABLE project_settings (
+-- Team members and directory
+CREATE TABLE team_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    display_name TEXT NOT NULL,
+    aliases TEXT[] DEFAULT '{}',
+    tg_chat_id TEXT,
+    gcal_connection_id UUID,
+    meta JSONB DEFAULT '{}',
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(tenant_id, display_name)
+);
+
+-- Connections to external services
+CREATE TABLE connections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL, -- 'google', 'telegram', 'notion', etc.
+    secret_ref TEXT, -- reference to secrets manager
+    scopes TEXT[] DEFAULT '{}',
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    meta JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Destinations for routing
+CREATE TABLE destinations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    type TEXT NOT NULL, -- 'sheet', 'calendar', 'telegram_dm', 'telegram_channel'
+    provider TEXT NOT NULL, -- 'google', 'telegram', 'notion'
+    external_id TEXT NOT NULL, -- spreadsheet_id, chat_id, etc.
+    meta JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Routes for rule-based routing
+CREATE TABLE routes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    enabled BOOLEAN DEFAULT true,
+    match JSONB NOT NULL, -- matching conditions
+    action JSONB NOT NULL, -- array of actions
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Universal records table (replaces transactions/tasks/ideas)
+CREATE TABLE records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    project_name TEXT NOT NULL,
+    kind TEXT NOT NULL, -- 'expense', 'task', 'bookmark'
+    title TEXT NOT NULL,
+    body TEXT,
+    amount NUMERIC,
+    currency TEXT DEFAULT 'RUB',
+    due_at TIMESTAMPTZ,
+    url TEXT,
+    tags TEXT[] DEFAULT '{}',
+    assignee_member_id UUID REFERENCES team_members(id),
+    meta JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
     
-    task_storage TEXT CHECK (task_storage IN ('supabase', 'notion', 'sheets')) DEFAULT 'supabase',
-    idea_storage TEXT CHECK (idea_storage IN ('supabase', 'notion', 'sheets')) DEFAULT 'supabase',
-    
-    transaction_sheet_id TEXT,
-    transaction_sheet_name TEXT,
-    task_sheet_id TEXT,
-    task_sheet_name TEXT,
-    idea_sheet_id TEXT,
-    idea_sheet_name TEXT,
-    
-    task_notion_db_id TEXT,
-    idea_notion_db_id TEXT,
-    
-    telegram_channel_id TEXT,
-    send_to_personal BOOLEAN DEFAULT true,
-    
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
-    
-    UNIQUE(user_id, project_name)
+    -- Full-text search (updated by trigger)
+    fts TSVECTOR
 );
 
--- Transactions table (for analytics)
-CREATE TABLE transactions (
+-- Attachments for records
+CREATE TABLE attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project TEXT NOT NULL,
-    amount TEXT NOT NULL,
-    budget_from TEXT,
-    description TEXT NOT NULL,
-    date DATE NOT NULL,
-    telegram_chat_id TEXT NOT NULL,
-    user_id UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    record_id UUID REFERENCES records(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    mime_type TEXT,
+    meta JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Tasks table
-CREATE TABLE tasks (
+-- Categories for expense classification
+CREATE TABLE categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project TEXT NOT NULL,
-    description TEXT NOT NULL,
-    person TEXT,
-    date DATE,
-    repeat_type TEXT CHECK (repeat_type IN ('ежедневно', 'еженедельно', 'ежемесячно')),
-    repeat_until DATE,
-    notify_time TIME,
-    telegram_chat_id TEXT NOT NULL,
-    user_id UUID REFERENCES users(id),
-    completed BOOLEAN DEFAULT false,
-    completed_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    parent_id UUID REFERENCES categories(id),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(tenant_id, name)
 );
 
--- Ideas table
-CREATE TABLE ideas (
+-- Merchant rules for auto-categorization
+CREATE TABLE merchant_rules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    project TEXT NOT NULL,
-    description TEXT NOT NULL,
-    telegram_chat_id TEXT NOT NULL,
-    user_id UUID REFERENCES users(id),
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    pattern TEXT NOT NULL,
+    category_id UUID REFERENCES categories(id),
+    subcategory_id UUID REFERENCES categories(id),
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Reminders table
-CREATE TABLE reminders (
+-- User tags for personalization
+CREATE TABLE user_tags (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    description TEXT NOT NULL,
-    remind_at TIMESTAMP NOT NULL,
-    telegram_chat_id TEXT NOT NULL,
-    user_id UUID REFERENCES users(id),
-    sent BOOLEAN DEFAULT false,
-    sent_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(tenant_id, user_id, tag)
 );
 
--- Analytics table for aggregated data
-CREATE TABLE analytics (
+-- Deliveries for idempotent operations
+CREATE TABLE deliveries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id),
-    project TEXT NOT NULL,
-    data_type TEXT NOT NULL CHECK (data_type IN ('transaction', 'task', 'idea')),
-    total_count INTEGER DEFAULT 0,
-    total_amount DECIMAL(15,2) DEFAULT 0,
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now(),
-    
-    UNIQUE(user_id, project, data_type, period_start, period_end)
+    record_id UUID REFERENCES records(id) ON DELETE CASCADE,
+    route_id UUID REFERENCES routes(id),
+    connector TEXT NOT NULL,
+    target TEXT NOT NULL,
+    idempotency_key TEXT UNIQUE NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+    error TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Indexes for better performance
-CREATE INDEX idx_transactions_project_date ON transactions(project, date);
-CREATE INDEX idx_transactions_telegram_chat_id ON transactions(telegram_chat_id);
-CREATE INDEX idx_tasks_project_date ON tasks(project, date);
-CREATE INDEX idx_tasks_telegram_chat_id ON tasks(telegram_chat_id);
-CREATE INDEX idx_tasks_person ON tasks(person);
-CREATE INDEX idx_ideas_project ON ideas(project);
-CREATE INDEX idx_ideas_telegram_chat_id ON ideas(telegram_chat_id);
-CREATE INDEX idx_reminders_remind_at ON reminders(remind_at);
-CREATE INDEX idx_reminders_telegram_chat_id ON reminders(telegram_chat_id);
-CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
+-- Indexes for performance
+CREATE INDEX idx_users_tenant_tg_chat ON users(tenant_id, tg_chat_id);
+CREATE INDEX idx_team_members_tenant_name ON team_members(tenant_id, display_name);
+CREATE INDEX idx_team_members_aliases ON team_members USING GIN(aliases);
+CREATE INDEX idx_records_tenant_kind ON records(tenant_id, kind);
+CREATE INDEX idx_records_user_created ON records(user_id, created_at DESC);
+CREATE INDEX idx_records_assignee ON records(assignee_member_id);
+CREATE INDEX idx_records_fts ON records USING GIN(fts);
+CREATE INDEX idx_routes_tenant_priority ON routes(tenant_id, priority DESC);
+CREATE INDEX idx_deliveries_status ON deliveries(status) WHERE status IN ('pending', 'processing');
+CREATE INDEX idx_deliveries_idempotency ON deliveries(idempotency_key);
 
--- Functions for automatic timestamps
+-- Row Level Security
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE team_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE routes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deliveries ENABLE ROW LEVEL SECURITY;
+
+-- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -135,137 +194,85 @@ END;
 $$ language 'plpgsql';
 
 -- Triggers for updated_at
+CREATE TRIGGER update_tenants_updated_at BEFORE UPDATE ON tenants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_project_settings_updated_at BEFORE UPDATE ON project_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_transactions_updated_at BEFORE UPDATE ON transactions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_tasks_updated_at BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_ideas_updated_at BEFORE UPDATE ON ideas FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_reminders_updated_at BEFORE UPDATE ON reminders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_analytics_updated_at BEFORE UPDATE ON analytics FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_team_members_updated_at BEFORE UPDATE ON team_members FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_routes_updated_at BEFORE UPDATE ON routes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_records_updated_at BEFORE UPDATE ON records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_deliveries_updated_at BEFORE UPDATE ON deliveries FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Function to get user by telegram chat id
-CREATE OR REPLACE FUNCTION get_user_by_telegram_id(telegram_id TEXT)
-RETURNS TABLE (
-    id UUID,
-    telegram_chat_id TEXT,
-    username TEXT,
-    first_name TEXT,
-    last_name TEXT,
-    tier TEXT
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT u.id, u.telegram_chat_id, u.username, u.first_name, u.last_name, u.tier
-    FROM users u
-    WHERE u.telegram_chat_id = telegram_id;
-END;
-$$ LANGUAGE plpgsql;
+-- Helper functions for new architecture
 
--- Function to create user if not exists
-CREATE OR REPLACE FUNCTION create_user_if_not_exists(
-    p_telegram_chat_id TEXT,
-    p_username TEXT DEFAULT NULL,
-    p_first_name TEXT DEFAULT NULL,
-    p_last_name TEXT DEFAULT NULL
+-- Resolve person by name or alias
+CREATE OR REPLACE FUNCTION resolve_person(
+    p_tenant_id UUID,
+    p_name TEXT
 )
-RETURNS UUID AS $$
-DECLARE
-    user_id UUID;
-BEGIN
-    -- Try to get existing user
-    SELECT id INTO user_id
-    FROM users
-    WHERE telegram_chat_id = p_telegram_chat_id;
-    
-    -- If user doesn't exist, create new one
-    IF user_id IS NULL THEN
-        INSERT INTO users (telegram_chat_id, username, first_name, last_name)
-        VALUES (p_telegram_chat_id, p_username, p_first_name, p_last_name)
-        RETURNING id INTO user_id;
-    END IF;
-    
-    RETURN user_id;
-END;
-$$ LANGUAGE plpgsql;
-
--- Function to get today's tasks for a person
-CREATE OR REPLACE FUNCTION get_today_tasks_for_person(person_name TEXT)
-RETURNS TABLE (
-    id UUID,
-    project TEXT,
-    description TEXT,
-    person TEXT,
-    date DATE,
-    repeat_type TEXT,
-    repeat_until DATE,
-    notify_time TIME
+RETURNS TABLE(
+    member_id UUID,
+    display_name TEXT,
+    tg_chat_id TEXT,
+    gcal_connection_id UUID
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT t.id, t.project, t.description, t.person, t.date, t.repeat_type, t.repeat_until, t.notify_time
-    FROM tasks t
-    WHERE t.person = person_name
+    SELECT 
+        tm.id,
+        tm.display_name,
+        tm.tg_chat_id,
+        tm.gcal_connection_id
+    FROM team_members tm
+    WHERE tm.tenant_id = p_tenant_id 
+    AND tm.is_active = true
     AND (
-        -- Exact date match
-        (t.date = CURRENT_DATE AND t.repeat_type IS NULL)
-        OR
-        -- Daily repeating tasks
-        (t.repeat_type = 'ежедневно' AND (t.repeat_until IS NULL OR t.repeat_until >= CURRENT_DATE))
-        OR
-        -- Weekly repeating tasks
-        (t.repeat_type = 'еженедельно' AND 
-         EXTRACT(DOW FROM t.date) = EXTRACT(DOW FROM CURRENT_DATE) AND
-         (t.repeat_until IS NULL OR t.repeat_until >= CURRENT_DATE))
-        OR
-        -- Monthly repeating tasks
-        (t.repeat_type = 'ежемесячно' AND 
-         EXTRACT(DAY FROM t.date) = EXTRACT(DAY FROM CURRENT_DATE) AND
-         (t.repeat_until IS NULL OR t.repeat_until >= CURRENT_DATE))
+        LOWER(tm.display_name) = LOWER(p_name) 
+        OR p_name = ANY(tm.aliases)
     )
-    AND t.completed = false
-    ORDER BY t.date, t.description;
+    LIMIT 1;
 END;
 $$ LANGUAGE plpgsql;
 
--- Function to get analytics for a project
-CREATE OR REPLACE FUNCTION get_project_analytics(
-    p_project TEXT,
-    p_start_date DATE,
-    p_end_date DATE
+-- Generate idempotency key
+CREATE OR REPLACE FUNCTION generate_idempotency_key(
+    p_tenant_id UUID,
+    p_record_id UUID,
+    p_route_id UUID
 )
-RETURNS TABLE (
-    data_type TEXT,
-    total_count BIGINT,
-    total_amount DECIMAL(15,2)
+RETURNS TEXT AS $$
+BEGIN
+    RETURN encode(digest(p_tenant_id::text || p_record_id::text || p_route_id::text, 'sha256'), 'hex');
+END;
+$$ LANGUAGE plpgsql;
+
+-- Search records with full-text search
+CREATE OR REPLACE FUNCTION search_records(
+    p_tenant_id UUID,
+    p_user_id UUID,
+    p_query TEXT,
+    p_kind TEXT DEFAULT NULL,
+    p_limit INTEGER DEFAULT 20
+)
+RETURNS TABLE(
+    record_id UUID,
+    kind TEXT,
+    title TEXT,
+    snippet TEXT,
+    rank REAL
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT 
-        'transaction'::TEXT as data_type,
-        COUNT(*)::BIGINT as total_count,
-        COALESCE(SUM(CAST(REPLACE(amount, '+', '') AS DECIMAL(15,2))), 0) as total_amount
-    FROM transactions
-    WHERE project = p_project
-    AND date BETWEEN p_start_date AND p_end_date
-    
-    UNION ALL
-    
-    SELECT 
-        'task'::TEXT as data_type,
-        COUNT(*)::BIGINT as total_count,
-        0::DECIMAL(15,2) as total_amount
-    FROM tasks
-    WHERE project = p_project
-    AND date BETWEEN p_start_date AND p_end_date
-    
-    UNION ALL
-    
-    SELECT 
-        'idea'::TEXT as data_type,
-        COUNT(*)::BIGINT as total_count,
-        0::DECIMAL(15,2) as total_amount
-    FROM ideas
-    WHERE project = p_project
-    AND created_at::DATE BETWEEN p_start_date AND p_end_date;
+        r.id,
+        r.kind,
+        r.title,
+        LEFT(COALESCE(r.body, ''), 200) as snippet,
+        ts_rank(r.fts, websearch_to_tsquery('russian', p_query)) as rank
+    FROM records r
+    WHERE r.tenant_id = p_tenant_id
+    AND (p_user_id IS NULL OR r.user_id = p_user_id)
+    AND (p_kind IS NULL OR r.kind = p_kind)
+    AND r.fts @@ websearch_to_tsquery('russian', p_query)
+    ORDER BY rank DESC, r.created_at DESC
+    LIMIT p_limit;
 END;
 $$ LANGUAGE plpgsql; 
