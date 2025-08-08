@@ -216,19 +216,40 @@ async function getUser(tenantId, tgChatId) {
 }
 
 async function createUser(tenantId, tgChatId) {
-    const { data, error } = await supabase
-        .from('users')
-        .insert({
-            tenant_id: tenantId,
-            tg_chat_id: tgChatId,
-            name: `User ${tgChatId}`,
-            role: 'user'
-        })
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+    // Try with new schema first, fallback to old schema
+    let userData = {
+        tenant_id: tenantId,
+        tg_chat_id: tgChatId,
+        username: `user_${tgChatId}`,
+        first_name: 'User',
+        last_name: tgChatId
+    };
+    
+    // Try to add role if column exists
+    try {
+        userData.role = 'user';
+        const { data, error } = await supabase
+            .from('users')
+            .insert(userData)
+            .select()
+            .single();
+        
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        // Fallback to old schema without role
+        console.log('Trying without role column...');
+        delete userData.role;
+        
+        const { data, error: fallbackError } = await supabase
+            .from('users')
+            .insert(userData)
+            .select()
+            .single();
+        
+        if (fallbackError) throw fallbackError;
+        return data;
+    }
 }
 
 // Message processing function (used by webhook)
