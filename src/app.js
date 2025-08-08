@@ -241,17 +241,21 @@ async function processMessage(msg) {
 
     try {
         const context = await getContext(chatId.toString());
+        console.log('Context:', context);
 
         // Handle commands
         if (text.startsWith('/')) {
+            console.log('Processing command:', text);
             await handleCommand(text, chatId, context);
             return;
         }
 
         // Handle voice messages
         if (voice) {
+            console.log('Processing voice message');
             const transcribedText = await transcribeVoice(voice);
             if (transcribedText) {
+                console.log('Transcribed:', transcribedText);
                 const result = await llmService.processMessage(transcribedText, context);
                 await handleLLMResponse(result, chatId);
             }
@@ -260,12 +264,26 @@ async function processMessage(msg) {
 
         // Handle text messages
         if (text) {
+            console.log('Processing text message:', text);
             const result = await llmService.processMessage(text, context);
+            console.log('LLM result:', result);
             await handleLLMResponse(result, chatId);
         }
     } catch (error) {
         console.error('Message handling error:', error);
-        await bot.sendMessage(chatId, 'Извините, произошла ошибка при обработке сообщения.');
+        console.error('Error stack:', error.stack);
+        
+        try {
+            await bot.sendMessage(chatId, `❌ Произошла ошибка: ${error.message}
+
+Попробуйте:
+• /start - перезапустить бота
+• /help - справка по командам
+
+Или обратитесь к администратору.`);
+        } catch (botError) {
+            console.error('Bot send error:', botError);
+        }
     }
 }
 
@@ -585,23 +603,36 @@ async function handleLLMResponse(result, chatId) {
 
 // Webhook for Telegram
 app.post('/webhook', async (req, res) => {
+    console.log('Webhook received:', JSON.stringify(req.body, null, 2));
+    
     try {
         const update = req.body;
         
+        if (!update) {
+            console.log('No update in request body');
+            return res.json({ ok: true });
+        }
+        
         // Handle message
         if (update.message) {
+            console.log('Processing message from webhook');
             await processMessage(update.message);
         }
         
         // Handle callback queries (inline buttons)
         if (update.callback_query) {
+            console.log('Processing callback query from webhook');
             await handleCallbackQuery(update.callback_query);
         }
         
         res.json({ ok: true });
     } catch (error) {
         console.error('Webhook error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error('Webhook error stack:', error.stack);
+        res.status(500).json({ 
+            error: 'Internal server error',
+            message: error.message 
+        });
     }
 });
 
@@ -743,11 +774,26 @@ setInterval(async () => {
     }
 }, 5 * 60 * 1000);
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`🚀 AI Assistant server running on port ${PORT}`);
-    console.log(`📱 Webhook URL: ${process.env.TELEGRAM_WEBHOOK_URL || `http://localhost:${PORT}/webhook`}`);
-    console.log('🎯 New architecture ready!');
+// Health check endpoint for Vercel
+app.get('/', (req, res) => {
+    res.json({
+        status: 'ok',
+        message: '🤖 AI Assistant v2.0 is running!',
+        version: '2.0.0',
+        endpoints: {
+            webhook: '/webhook',
+            api: '/api/*'
+        }
+    });
 });
+
+// Start server (only in non-serverless environment)
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+        console.log(`🚀 AI Assistant server running on port ${PORT}`);
+        console.log(`📱 Webhook URL: ${process.env.TELEGRAM_WEBHOOK_URL || `http://localhost:${PORT}/webhook`}`);
+        console.log('🎯 New architecture ready!');
+    });
+}
 
 module.exports = app;
