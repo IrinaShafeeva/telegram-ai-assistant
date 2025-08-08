@@ -2,22 +2,22 @@
   "version": 2,
   "builds": [
     {
-      "src": "stable-app.js",
+      "src": "ultra-minimal.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/webhook",
-      "dest": "/stable-app.js"
+      "dest": "/ultra-minimal.js"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/stable-app.js"
+      "dest": "/ultra-minimal.js"
     },
     {
       "src": "/(.*)",
-      "dest": "/stable-app.js"
+      "dest": "/ultra-minimal.js"
     }
   ],
   "env": {
