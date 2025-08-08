@@ -36,12 +36,16 @@ try {
     
     // Test connection
     supabase.from('tenants').select('count').limit(1)
-        .then(({ error }) => {
+        .then(({ data, error }) => {
             if (error) {
                 console.error('⚠️ Supabase connection test failed:', error.message);
+                console.error('⚠️ Error details:', error);
             } else {
-                console.log('✅ Supabase connection test passed');
+                console.log('✅ Supabase connection test passed:', data);
             }
+        })
+        .catch(err => {
+            console.error('⚠️ Supabase connection test error:', err);
         });
         
 } catch (error) {
