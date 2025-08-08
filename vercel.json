@@ -2,22 +2,22 @@
   "version": 2,
   "builds": [
     {
-      "src": "debug-app.js",
+      "src": "minimal-app.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/webhook",
-      "dest": "/debug-app.js"
+      "dest": "/minimal-app.js"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/debug-app.js"
+      "dest": "/minimal-app.js"
     },
     {
       "src": "/(.*)",
-      "dest": "/debug-app.js"
+      "dest": "/minimal-app.js"
     }
   ],
   "env": {
