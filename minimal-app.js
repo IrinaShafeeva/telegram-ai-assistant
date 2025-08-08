@@ -21,6 +21,9 @@ try {
 // Test Supabase
 let supabase;
 try {
+    console.log('SUPABASE_URL exists:', !!process.env.SUPABASE_URL);
+    console.log('SUPABASE_ANON_KEY exists:', !!process.env.SUPABASE_ANON_KEY);
+    
     const { createClient } = require('@supabase/supabase-js');
     supabase = createClient(
         process.env.SUPABASE_URL,
@@ -28,7 +31,8 @@ try {
     );
     console.log('✅ Supabase client initialized');
 } catch (error) {
-    console.error('❌ Supabase error:', error);
+    console.error('❌ Supabase error:', error.message);
+    console.error('❌ Supabase stack:', error.stack);
 }
 
 // Test OpenAI
