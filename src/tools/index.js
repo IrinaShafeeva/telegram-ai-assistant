@@ -240,14 +240,22 @@ class ToolsService {
 
     async searchRecords(tenant_id, user_id, params) {
         try {
-            const { data, error } = await supabase
-                .rpc('search_records', {
-                    p_tenant_id: tenant_id,
-                    p_user_id: user_id,
-                    p_query: params.query,
-                    p_kind: params.kind || null,
-                    p_limit: params.limit || 10
-                });
+            let query = supabase
+                .from('records')
+                .select('id, title, body, kind, amount, currency, created_at, tags')
+                .eq('tenant_id', tenant_id)
+                .order('created_at', { ascending: false })
+                .limit(params.limit || 10);
+
+            if (params.kind) {
+                query = query.eq('kind', params.kind);
+            }
+
+            if (params.query) {
+                query = query.or(`title.ilike.%${params.query}%,body.ilike.%${params.query}%`);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
             return data;
