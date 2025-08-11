@@ -1,6 +1,6 @@
 {
   "name": "ai-assistant-new",
-  "version": "2.0.0", 
+  "version": "2.0.0",
   "description": "Modern AI Assistant with scalable architecture",
   "main": "src/app.js",
   "scripts": {
@@ -8,30 +8,39 @@
     "dev": "nodemon src/app.js",
     "legacy": "node server.js",
     "setup": "node scripts/simple-setup.js",
+    "setup:team": "node scripts/team-setup.js",
     "test": "jest"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "@supabase/supabase-js": "^2.38.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "node-telegram-bot-api": "^0.64.0",
-    "multer": "^1.4.5-lts.1",
-    "openai": "^4.20.1",
+    "express": "^4.18.2",
     "googleapis": "^128.0.0",
-    "@supabase/supabase-js": "^2.38.0",
+    "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
-    "uuid": "^9.0.1",
-    "serverless-http": "^3.2.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.20.1",
+    "serverless-http": "^3.2.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1"
   },
   "engines": {
     "node": ">=16.0.0"
   },
-  "keywords": ["telegram", "ai", "assistant", "expenses", "tasks", "notion", "sheets"],
+  "keywords": [
+    "telegram",
+    "ai",
+    "assistant",
+    "expenses",
+    "tasks",
+    "notion",
+    "sheets"
+  ],
   "author": "",
   "license": "MIT"
-} 
+}

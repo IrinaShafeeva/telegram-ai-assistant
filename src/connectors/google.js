@@ -1,189 +1,143 @@
 /**
- * Google Sheets Connector
- * Handles delivery to Google Sheets
+ * Google Connectors
+ * Handles Google Sheets and Google Calendar integrations
  */
 
-const { google } = require('googleapis');
+const { getSheetsAPI, getCalendarAPI } = require('../config/google');
 
 class GoogleSheetsConnector {
     constructor() {
         this.name = 'google_sheets';
-        this.sheets = null;
-        this.auth = null;
-        this.initializeAuth();
-    }
-
-    initializeAuth() {
-        if (process.env.GOOGLE_SHEETS_CLIENT_EMAIL && process.env.GOOGLE_SHEETS_PRIVATE_KEY) {
-            this.auth = new google.auth.GoogleAuth({
-                credentials: {
-                    client_email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
-                    private_key: process.env.GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n')
-                },
-                scopes: ['https://www.googleapis.com/auth/spreadsheets']
-            });
-            this.sheets = google.sheets({ version: 'v4', auth: this.auth });
-        }
     }
 
     async deliver(record, delivery) {
-        if (!this.sheets) {
-            throw new Error('Google Sheets not configured');
-        }
-
         const { target } = delivery;
-        const [spreadsheetId, sheetName] = target.split('!');
         
         try {
-            const values = this.formatRowData(record);
+            const sheets = await getSheetsAPI();
+            if (!sheets) {
+                throw new Error('Google Sheets API недоступен');
+            }
+
+            // Определяем лист для записи
+            let sheetName = 'Записи';
+            switch (record.kind) {
+                case 'expense':
+                    sheetName = 'Расходы';
+                    break;
+                case 'task':
+                    sheetName = 'Задачи';
+                    break;
+                case 'bookmark':
+                    sheetName = 'Закладки';
+                    break;
+                case 'reminder':
+                    sheetName = 'Напоминания';
+                    break;
+            }
+
+            // Формируем данные для записи
+            const rowData = this.formatRecordForSheets(record);
             
-            const response = await this.sheets.spreadsheets.values.append({
-                spreadsheetId,
+            // Записываем в Google Sheets
+            const response = await sheets.spreadsheets.values.append({
+                spreadsheetId: target,
                 range: `${sheetName}!A:Z`,
-                valueInputOption: 'RAW',
+                valueInputOption: 'USER_ENTERED',
                 insertDataOption: 'INSERT_ROWS',
-                resource: { values: [values] }
+                resource: {
+                    values: [rowData]
+                }
             });
 
             return {
-                spreadsheet_id: spreadsheetId,
+                success: true,
+                message: `✅ Запись сохранена в Google Sheets (${sheetName})`,
+                spreadsheet_id: target,
                 sheet_name: sheetName,
-                rows_added: 1,
-                range: response.data.updates.updatedRange
+                row_count: response.data.updates?.updatedRows || 1
             };
+
         } catch (error) {
             console.error('Google Sheets delivery error:', error);
             throw error;
         }
     }
 
-    formatRowData(record) {
-        const { kind, title, body, amount, currency, url, tags, assignee, created_at } = record;
+    formatRecordForSheets(record) {
+        const now = new Date().toLocaleString('ru-RU');
         
-        const date = new Date(created_at).toLocaleDateString('ru-RU');
-        const time = new Date(created_at).toLocaleTimeString('ru-RU');
-        
-        switch (kind) {
+        switch (record.kind) {
             case 'expense':
                 return [
-                    date,
-                    time,
-                    title,
-                    amount || '',
-                    currency || 'RUB',
-                    body || '',
-                    tags ? tags.join(', ') : ''
+                    now,
+                    record.title,
+                    record.amount || '',
+                    record.currency || 'RUB',
+                    record.body || '',
+                    record.tags?.join(', ') || '',
+                    record.user_id || ''
                 ];
                 
             case 'task':
                 return [
-                    date,
-                    time,
-                    title,
-                    body || '',
-                    assignee?.display_name || '',
+                    now,
+                    record.title,
+                    record.body || '',
+                    record.assignee?.display_name || '',
                     record.due_at ? new Date(record.due_at).toLocaleDateString('ru-RU') : '',
-                    'Новая',
-                    tags ? tags.join(', ') : ''
+                    record.tags?.join(', ') || '',
+                    record.user_id || ''
                 ];
                 
             case 'bookmark':
                 return [
-                    date,
-                    time,
-                    title,
-                    url || '',
-                    body || '',
-                    tags ? tags.join(', ') : ''
+                    now,
+                    record.title,
+                    record.url || '',
+                    record.body || '',
+                    record.tags?.join(', ') || '',
+                    record.user_id || ''
+                ];
+                
+            case 'reminder':
+                return [
+                    now,
+                    record.title,
+                    record.body || '',
+                    record.assignee?.display_name || '',
+                    record.due_at ? new Date(record.due_at).toLocaleDateString('ru-RU') : '',
+                    'Напоминание',
+                    record.user_id || ''
                 ];
                 
             default:
                 return [
-                    date,
-                    time,
-                    kind,
-                    title,
-                    body || '',
-                    tags ? tags.join(', ') : ''
+                    now,
+                    record.title,
+                    record.body || '',
+                    record.kind,
+                    record.tags?.join(', ') || '',
+                    record.user_id || ''
                 ];
-        }
-    }
-
-    async createSheetHeaders(spreadsheetId, sheetName, kind) {
-        if (!this.sheets) return;
-
-        const headers = this.getHeaders(kind);
-        
-        try {
-            await this.sheets.spreadsheets.values.update({
-                spreadsheetId,
-                range: `${sheetName}!A1:Z1`,
-                valueInputOption: 'RAW',
-                resource: { values: [headers] }
-            });
-
-            // Format header row
-            await this.sheets.spreadsheets.batchUpdate({
-                spreadsheetId,
-                resource: {
-                    requests: [{
-                        repeatCell: {
-                            range: {
-                                sheetId: 0,
-                                startRowIndex: 0,
-                                endRowIndex: 1,
-                                startColumnIndex: 0,
-                                endColumnIndex: headers.length
-                            },
-                            cell: {
-                                userEnteredFormat: {
-                                    textFormat: { bold: true },
-                                    backgroundColor: { red: 0.9, green: 0.9, blue: 0.9 }
-                                }
-                            },
-                            fields: 'userEnteredFormat(textFormat,backgroundColor)'
-                        }
-                    }]
-                }
-            });
-
-            return { success: true, headers };
-        } catch (error) {
-            console.error('Create headers error:', error);
-            throw error;
-        }
-    }
-
-    getHeaders(kind) {
-        switch (kind) {
-            case 'expense':
-                return ['Дата', 'Время', 'Описание', 'Сумма', 'Валюта', 'Детали', 'Теги'];
-            case 'task':
-                return ['Дата', 'Время', 'Задача', 'Описание', 'Ответственный', 'Срок', 'Статус', 'Теги'];
-            case 'bookmark':
-                return ['Дата', 'Время', 'Название', 'Ссылка', 'Заметка', 'Теги'];
-            default:
-                return ['Дата', 'Время', 'Тип', 'Название', 'Описание', 'Теги'];
         }
     }
 
     async validateTarget(target) {
-        if (!this.sheets) {
-            return { valid: false, error: 'Google Sheets not configured' };
-        }
-
-        const [spreadsheetId, sheetName] = target.split('!');
-        
         try {
-            const response = await this.sheets.spreadsheets.get({
-                spreadsheetId,
-                ranges: [sheetName]
+            const sheets = await getSheetsAPI();
+            if (!sheets) return { valid: false, error: 'Google Sheets API недоступен' };
+
+            const response = await sheets.spreadsheets.get({
+                spreadsheetId: target,
+                ranges: ['A1'],
+                fields: 'properties.title,sheets.properties.title'
             });
 
             return {
                 valid: true,
-                spreadsheet_title: response.data.properties.title,
-                sheet_exists: true
+                title: response.data.properties.title,
+                sheets: response.data.sheets.map(s => s.properties.title)
             };
         } catch (error) {
             return {
@@ -197,76 +151,113 @@ class GoogleSheetsConnector {
 class GoogleCalendarConnector {
     constructor() {
         this.name = 'google_calendar';
-        this.calendar = null;
-        this.initializeAuth();
-    }
-
-    initializeAuth() {
-        if (process.env.GOOGLE_SHEETS_CLIENT_EMAIL && process.env.GOOGLE_SHEETS_PRIVATE_KEY) {
-            const auth = new google.auth.GoogleAuth({
-                credentials: {
-                    client_email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
-                    private_key: process.env.GOOGLE_SHEETS_PRIVATE_KEY.replace(/\\n/g, '\n')
-                },
-                scopes: ['https://www.googleapis.com/auth/calendar']
-            });
-            this.calendar = google.calendar({ version: 'v3', auth });
-        }
     }
 
     async deliver(record, delivery) {
-        if (!this.calendar || record.kind !== 'task') {
-            throw new Error('Google Calendar not configured or record is not a task');
-        }
-
-        const { target } = delivery; // calendar ID
+        const { target } = delivery;
         
         try {
-            const event = this.createEvent(record);
+            const calendar = await getCalendarAPI();
+            if (!calendar) {
+                throw new Error('Google Calendar API недоступен');
+            }
+
+            // Получаем информацию о календаре участника
+            const calendarInfo = await this.getCalendarInfo(target);
+            if (!calendarInfo) {
+                throw new Error('Информация о календаре не найдена');
+            }
+
+            // Создаем событие в календаре
+            const event = this.formatRecordForCalendar(record);
             
-            const response = await this.calendar.events.insert({
-                calendarId: target,
-                resource: event
+            const response = await calendar.events.insert({
+                calendarId: calendarInfo.calendar_id,
+                resource: event,
+                sendUpdates: 'all'
             });
 
             return {
-                calendar_id: target,
+                success: true,
+                message: `✅ Напоминание создано в Google Calendar`,
+                calendar_id: calendarInfo.calendar_id,
                 event_id: response.data.id,
-                event_link: response.data.htmlLink
+                event_link: response.data.htmlLink,
+                member_name: calendarInfo.member_name
             };
+
         } catch (error) {
             console.error('Google Calendar delivery error:', error);
             throw error;
         }
     }
 
-    createEvent(record) {
-        const { title, body, due_at, assignee } = record;
-        
-        const startTime = due_at ? new Date(due_at) : new Date();
-        const endTime = new Date(startTime.getTime() + 60 * 60 * 1000); // +1 hour
+    async getCalendarInfo(connectionId) {
+        try {
+            // Здесь должна быть логика получения информации о календаре
+            // из базы данных по connection_id
+            // Пока что возвращаем заглушку
+            return {
+                calendar_id: 'primary', // или конкретный calendar_id
+                member_name: 'Участник команды'
+            };
+        } catch (error) {
+            console.error('Ошибка получения информации о календаре:', error);
+            return null;
+        }
+    }
 
+    formatRecordForCalendar(record) {
+        const now = new Date();
+        const dueDate = record.due_at ? new Date(record.due_at) : new Date(now.getTime() + 60 * 60 * 1000); // +1 час по умолчанию
+        
         return {
-            summary: title,
-            description: body || '',
+            summary: `Напоминание: ${record.title}`,
+            description: `${record.body || ''}\n\nСоздано ботом`,
             start: {
-                dateTime: startTime.toISOString(),
+                dateTime: dueDate.toISOString(),
                 timeZone: 'Europe/Moscow'
             },
             end: {
-                dateTime: endTime.toISOString(),
+                dateTime: new Date(dueDate.getTime() + 60 * 60 * 1000).toISOString(), // +1 час
                 timeZone: 'Europe/Moscow'
             },
-            attendees: assignee?.email ? [{ email: assignee.email }] : [],
             reminders: {
                 useDefault: false,
                 overrides: [
-                    { method: 'email', minutes: 24 * 60 },
-                    { method: 'popup', minutes: 10 }
+                    { method: 'email', minutes: 24 * 60 }, // За день
+                    { method: 'popup', minutes: 30 }       // За 30 минут
                 ]
             }
         };
     }
+
+    async validateTarget(target) {
+        try {
+            const calendar = await getCalendarAPI();
+            if (!calendar) return { valid: false, error: 'Google Calendar API недоступен' };
+
+            // Проверяем доступность календаря
+            const response = await calendar.calendars.get({
+                calendarId: 'primary'
+            });
+
+            return {
+                valid: true,
+                calendar_id: response.data.id,
+                summary: response.data.summary,
+                timezone: response.data.timeZone
+            };
+        } catch (error) {
+            return {
+                valid: false,
+                error: error.message
+            };
+        }
+    }
 }
 
-module.exports = { GoogleSheetsConnector, GoogleCalendarConnector };
+module.exports = { 
+    GoogleSheetsConnector, 
+    GoogleCalendarConnector 
+};

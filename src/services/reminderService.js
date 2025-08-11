@@ -1,0 +1,440 @@
+/**
+ * Reminder Service
+ * Управляет напоминаниями для команды: Google Calendar + Telegram уведомления
+ */
+
+const { createTeamReminder } = require('./googleCalendar');
+const { writeReminder } = require('./googleSheets');
+const { supabase } = require('../config/database');
+
+class ReminderService {
+    constructor(bot) {
+        this.bot = bot;
+    }
+
+    /**
+     * Создает напоминание для команды
+     * @param {Object} reminderData - данные напоминания
+     * @param {string} reminderData.contact - имя контакта
+     * @param {string} reminderData.what - что напомнить
+     * @param {string} reminderData.when - когда напомнить
+     * @param {string} reminderData.tenantId - ID тенанта
+     * @param {string} reminderData.chatId - ID чата отправителя
+     * @returns {Object} результат создания напоминания
+     */
+    async createTeamReminder(reminderData) {
+        try {
+            const { contact, what, when, tenantId, chatId } = reminderData;
+            
+            console.log(`📅 Создаю командное напоминание для ${contact}: ${what} в ${when}`);
+
+            // 1. Получаем информацию о члене команды
+            console.log(`🔍 Ищем участника команды: ${contact} в tenant: ${tenantId}`);
+            const teamMember = await this.getTeamMember(tenantId, contact);
+            console.log(`👤 Результат поиска участника:`, teamMember);
+            
+            if (!teamMember) {
+                console.log(`❌ Участник команды "${contact}" не найден`);
+                return {
+                    success: false,
+                    message: `❌ Участник команды "${contact}" не найден`
+                };
+            }
+            
+            console.log(`✅ Участник команды найден: ${teamMember.display_name}`);
+
+            // 2. Получаем Google Sheets ID
+            const spreadsheetId = await this.getUserGoogleSheetsId(tenantId);
+            if (!spreadsheetId) {
+                return {
+                    success: false,
+                    message: '❌ Google Sheets не настроен'
+                };
+            }
+
+            // 3. Создаем напоминание в Google Calendar
+            const calendarResult = await createTeamReminder(contact, what, when, tenantId);
+            
+            if (!calendarResult.success) {
+                return {
+                    success: false,
+                    message: `❌ Ошибка создания в Google Calendar: ${calendarResult.message || calendarResult.error}`
+                };
+            }
+
+            // 4. Записываем в Google Sheets
+            await writeReminder(spreadsheetId, contact, what, when, chatId);
+
+            // 5. Отправляем уведомления в Telegram
+            const telegramResult = await this.sendTelegramNotifications(teamMember, what, when, chatId);
+
+            return {
+                success: true,
+                message: `✅ Напоминание создано для ${contact}:\n\n📅 ${what}\n⏰ ${when}\n\n📱 Добавлено в Google Calendar\n📊 Записано в Google Sheets\n📨 Уведомления отправлены в Telegram`,
+                calendarEvent: calendarResult,
+                telegramNotifications: telegramResult
+            };
+
+        } catch (error) {
+            console.error('❌ Ошибка создания командного напоминания:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Получает информацию о члене команды
+     */
+    async getTeamMember(tenantId, contactName) {
+        try {
+            // Генерируем варианты имени для поиска
+            const nameVariations = this.generateNameVariations(contactName);
+            console.log(`🔍 Ищем участника команды с вариантами:`, nameVariations);
+            
+            // Пробуем найти по каждому варианту имени напрямую в таблице team_members
+            for (const variation of nameVariations) {
+                console.log(`🔍 Поиск по варианту: "${variation}"`);
+                
+                const { data, error } = await supabase
+                    .from('team_members')
+                    .select('id, display_name, aliases, meta, tg_chat_id')
+                    .eq('tenant_id', tenantId)
+                    .eq('is_active', true)
+                    .ilike('display_name', variation);
+
+                if (error) {
+                    console.error(`❌ Ошибка поиска по варианту "${variation}":`, error);
+                    continue;
+                }
+
+                if (data && data.length > 0) {
+                    const member = data[0];
+                    console.log(`✅ Найден участник команды: "${variation}" → ${member.display_name}`);
+                    console.log(`📧 Meta данные участника:`, member.meta);
+                    
+                    // Возвращаем в том же формате, что ожидает код
+                    return {
+                        member_id: member.id,
+                        display_name: member.display_name,
+                        tg_chat_id: member.tg_chat_id,
+                        meta: member.meta,
+                        gcal_connection_id: null // Не используется в текущем коде
+                    };
+                }
+            }
+
+            console.log(`❌ Участник команды "${contactName}" не найден ни по одному варианту`);
+            return null;
+            
+        } catch (error) {
+            console.error('❌ Ошибка получения члена команды:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Генерирует варианты имени для поиска (разные падежи)
+     */
+    generateNameVariations(name) {
+        const variations = [name];
+        
+        // Простые правила для русских имен
+        if (name.endsWith('и')) {
+            // "Марии" → "Мария"
+            variations.push(name.slice(0, -1) + 'я');
+            // "Марии" → "Мария" (уже добавили)
+            variations.push(name.slice(0, -1));
+        }
+        
+        if (name.endsWith('е')) {
+            // "Саше" → "Саша"
+            variations.push(name.slice(0, -1) + 'а');
+        }
+        
+        if (name.endsWith('у')) {
+            // "Сашу" → "Саша"  
+            variations.push(name.slice(0, -1) + 'а');
+        }
+        
+        if (name.endsWith('ю')) {
+            // "Машю" → "Маша"
+            variations.push(name.slice(0, -1) + 'а');
+        }
+        
+        // Добавляем базовые окончания
+        if (!name.endsWith('а') && !name.endsWith('я')) {
+            variations.push(name + 'а');
+            variations.push(name + 'я');
+        }
+        
+        // Убираем дубликаты
+        return [...new Set(variations)];
+    }
+
+    /**
+     * Получает Google Sheets ID пользователя
+     */
+    async getUserGoogleSheetsId(tenantId) {
+        try {
+            const { data: destinations, error } = await supabase
+                .from('destinations')
+                .select('external_id')
+                .eq('tenant_id', tenantId)
+                .eq('type', 'sheet')
+                .eq('provider', 'google')
+                .limit(1);
+
+            if (error) {
+                console.error('❌ Ошибка получения Google Sheets ID:', error);
+                return null;
+            }
+
+            if (destinations && destinations.length > 0) {
+                const externalId = destinations[0].external_id;
+                const spreadsheetId = externalId.split('!')[0];
+                return spreadsheetId;
+            }
+
+            return null;
+        } catch (error) {
+            console.error('❌ Ошибка получения Google Sheets ID:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Отправляет уведомления в Telegram
+     */
+    async sendTelegramNotifications(teamMember, what, when, senderChatId) {
+        try {
+            const results = [];
+
+            // Отправляем уведомление самому участнику команды
+            const memberChatId = teamMember.tg_chat_id || teamMember.meta?.tg_chat_id;
+            if (memberChatId) {
+                try {
+                    const message = this.formatReminderMessage(what, when, 'personal');
+                    await this.bot.sendMessage(memberChatId, message, {
+                        parse_mode: 'Markdown'
+                    });
+                    
+                    results.push({
+                        target: memberChatId,
+                        status: 'sent',
+                        type: 'personal'
+                    });
+                    
+                    console.log(`✅ Уведомление отправлено ${teamMember.display_name} в Telegram (${memberChatId})`);
+                } catch (error) {
+                    console.error(`❌ Ошибка отправки уведомления ${teamMember.display_name}:`, error);
+                    results.push({
+                        target: memberChatId,
+                        status: 'failed',
+                        error: error.message,
+                        type: 'personal'
+                    });
+                }
+            } else {
+                console.log(`⚠️ Telegram chat_id не найден для ${teamMember.display_name}`);
+            }
+
+            // Отправляем подтверждение отправителю
+            try {
+                const confirmationMessage = this.formatReminderMessage(what, when, 'confirmation', teamMember.display_name);
+                await this.bot.sendMessage(senderChatId, confirmationMessage, {
+                    parse_mode: 'Markdown'
+                });
+                
+                results.push({
+                    target: senderChatId,
+                    status: 'sent',
+                    type: 'confirmation'
+                });
+            } catch (error) {
+                console.error('❌ Ошибка отправки подтверждения отправителю:', error);
+                results.push({
+                    target: senderChatId,
+                    status: 'failed',
+                    error: error.message,
+                    type: 'confirmation'
+                });
+            }
+
+            return {
+                success: true,
+                results: results,
+                totalSent: results.filter(r => r.status === 'sent').length,
+                totalFailed: results.filter(r => r.status === 'failed').length
+            };
+
+        } catch (error) {
+            console.error('❌ Ошибка отправки Telegram уведомлений:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Форматирует сообщение напоминания
+     */
+    formatReminderMessage(what, when, type, contactName = '') {
+        const emoji = '⏰';
+        const time = new Date().toLocaleString('ru-RU');
+        
+        switch (type) {
+            case 'personal':
+                return `${emoji} *Напоминание для вас*\n\n📅 ${what}\n⏰ ${when}\n\n_Создано: ${time}_`;
+            
+            case 'confirmation':
+                return `${emoji} *Напоминание создано*\n\n👤 Для: ${contactName}\n📅 ${what}\n⏰ ${when}\n\n✅ Добавлено в Google Calendar\n📨 Уведомление отправлено\n\n_Время: ${time}_`;
+            
+            default:
+                return `${emoji} *Напоминание*\n\n📅 ${what}\n⏰ ${when}\n\n_Время: ${time}_`;
+        }
+    }
+
+    /**
+     * Создает личное напоминание
+     */
+    async createPersonalReminder(reminderData) {
+        try {
+            const { what, when, tenantId, chatId } = reminderData;
+            
+            console.log(`📅 Создаю личное напоминание: ${what} в ${when}`);
+
+            // Получаем Google Sheets ID
+            const spreadsheetId = await this.getUserGoogleSheetsId(tenantId);
+            if (!spreadsheetId) {
+                return {
+                    success: false,
+                    message: '❌ Google Sheets не настроен'
+                };
+            }
+
+            // Записываем в Google Sheets
+            const success = await writeReminder(spreadsheetId, 'Я', what, when, chatId);
+            
+            if (success) {
+                // Отправляем подтверждение
+                const message = this.formatReminderMessage(what, when, 'personal');
+                await this.bot.sendMessage(chatId, message, {
+                    parse_mode: 'Markdown'
+                });
+
+                return {
+                    success: true,
+                    message: `✅ Личное напоминание создано:\n\n📅 ${what}\n⏰ ${when}\n\n📊 Записано в Google Sheets\n📨 Уведомление запланировано`
+                };
+            } else {
+                return {
+                    success: false,
+                    message: '❌ Ошибка записи напоминания'
+                };
+            }
+
+        } catch (error) {
+            console.error('❌ Ошибка создания личного напоминания:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Обрабатывает напоминание (определяет тип и создает)
+     */
+    async processReminder(text, context, chatId) {
+        try {
+            console.log('⏰ Обрабатываю напоминание:', text);
+            
+            // Извлекаем информацию о напоминании
+            const reminderInfo = this.extractReminderInfo(text);
+            console.log('📅 Информация о напоминании:', reminderInfo);
+            
+            if (reminderInfo.contact && reminderInfo.when) {
+                // Напоминание для конкретного человека
+                return await this.createTeamReminder({
+                    ...reminderInfo,
+                    tenantId: context.tenant_id,
+                    chatId: chatId.toString()
+                });
+            } else {
+                // Личное напоминание
+                return await this.createPersonalReminder({
+                    ...reminderInfo,
+                    tenantId: context.tenant_id,
+                    chatId: chatId.toString()
+                });
+            }
+            
+        } catch (error) {
+            console.error('❌ Ошибка обработки напоминания:', error);
+            return { success: false, message: '❌ Ошибка обработки напоминания' };
+        }
+    }
+
+    /**
+     * Извлекает информацию о напоминании из текста
+     */
+    extractReminderInfo(text) {
+        const lowerText = text.toLowerCase();
+        
+        // Паттерны для извлечения контактов
+        const contactPatterns = [
+            /(?:напомни|напомнить)\s+(?:для\s+)?([а-яё]+)\s+(?:о\s+)?(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i,
+            /(?:напомни|напомнить)\s+([а-яё]+)\s+(?:о\s+)?(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i
+        ];
+        
+        let contact = null;
+        let what = '';
+        let when = '';
+        
+        for (const pattern of contactPatterns) {
+            const match = text.match(pattern);
+            if (match) {
+                contact = match[1];
+                what = match[2].trim();
+                // Извлекаем время из оставшейся части текста
+                const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.\d{4}?)/i);
+                const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+                
+                let whenParts = [];
+                if (dayMatch) whenParts.push(dayMatch[0]);
+                if (timeMatch) whenParts.push(timeMatch[0]);
+                
+                when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
+                break;
+            }
+        }
+        
+        // Если не нашли контакт, пробуем извлечь личное напоминание
+        if (!contact) {
+            const personalMatch = text.match(/(?:напомни|напомнить)\s+(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i);
+            if (personalMatch) {
+                what = personalMatch[1].trim();
+                const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.\d{4}?)/i);
+                const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+                
+                let whenParts = [];
+                if (dayMatch) whenParts.push(dayMatch[0]);
+                if (timeMatch) whenParts.push(timeMatch[0]);
+                
+                when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
+            }
+        }
+        
+        return {
+            contact,
+            what: what || text,
+            when: when || 'завтра',
+            originalText: text
+        };
+    }
+}
+
+module.exports = ReminderService;
