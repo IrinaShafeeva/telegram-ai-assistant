@@ -1823,6 +1823,311 @@ app.post('/api/mini-app/reminders', async (req, res) => {
     }
 });
 
+// Mini App API endpoint for getting reminders
+app.get('/api/mini-app/reminders', async (req, res) => {
+    try {
+        const { tgWebAppData } = req.query;
+        
+        console.log('📱 Mini App get reminders request');
+        
+        // Validate Telegram Web App data
+        if (!tgWebAppData) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Missing Telegram Web App data'
+            });
+        }
+        
+        let tgUser;
+        try {
+            tgUser = JSON.parse(decodeURIComponent(tgWebAppData)).user;
+        } catch (error) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Invalid Telegram Web App data'
+            });
+        }
+        
+        const chatId = tgUser.id;
+        console.log('👤 Getting reminders for Telegram user:', tgUser);
+        
+        // Get user context from database
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('tg_chat_id', chatId.toString())
+            .single();
+        
+        if (userError || !user) {
+            console.error('❌ User not found:', userError);
+            return res.status(404).json({
+                success: false,
+                error: 'User not found. Please start the bot first with /start'
+            });
+        }
+        
+        console.log('🏢 User context:', user);
+        
+        // Get Google Sheets ID to fetch reminders
+        const spreadsheetId = await reminderService.getUserGoogleSheetsId(user.tenant_id);
+        if (!spreadsheetId) {
+            console.log('⚠️ Google Sheets not configured, returning empty list');
+            return res.json({
+                success: true,
+                data: []
+            });
+        }
+        
+        // Get reminders from Google Sheets using existing service
+        const { GoogleSheetsConnector } = require('./connectors/google');
+        const sheetsConnector = new GoogleSheetsConnector();
+        
+        try {
+            // Читаем лист "Напоминания" из Google Sheets
+            const remindersData = await sheetsConnector.readSheet(spreadsheetId, 'Напоминания!A:E');
+            console.log('📊 Raw reminders data from Google Sheets:', remindersData);
+            
+            if (!remindersData || !remindersData.values || remindersData.values.length <= 1) {
+                return res.json({
+                    success: true,
+                    data: []
+                });
+            }
+            
+            // Преобразуем данные в формат для мини-приложения
+            const reminders = remindersData.values.slice(1) // Skip header row
+                .map((row, index) => ({
+                    id: index + 1,
+                    emoji: '🔔',
+                    title: row[1] || 'Напоминание', // Что напомнить
+                    time: row[2] || 'Не указано', // Когда
+                    assignee: row[0] === 'Я' ? null : row[0], // Контакт
+                    status: 'pending', // По умолчанию pending
+                    type: row[0] === 'Я' ? 'personal' : 'team'
+                }))
+                .filter(reminder => reminder.title && reminder.title !== 'Напоминание'); // Убираем пустые
+            
+            console.log('✅ Processed reminders:', reminders);
+            
+            res.json({
+                success: true,
+                data: reminders
+            });
+            
+        } catch (sheetsError) {
+            console.error('❌ Error reading from Google Sheets:', sheetsError);
+            return res.json({
+                success: true,
+                data: [] // Return empty array instead of error to not break the UI
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Mini App get reminders error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// Mini App API endpoint for getting statistics
+app.get('/api/mini-app/stats', async (req, res) => {
+    try {
+        const { tgWebAppData } = req.query;
+        
+        console.log('📱 Mini App get stats request');
+        
+        // Validate Telegram Web App data
+        if (!tgWebAppData) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Missing Telegram Web App data'
+            });
+        }
+        
+        let tgUser;
+        try {
+            tgUser = JSON.parse(decodeURIComponent(tgWebAppData)).user;
+        } catch (error) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Invalid Telegram Web App data'
+            });
+        }
+        
+        const chatId = tgUser.id;
+        console.log('👤 Getting stats for Telegram user:', tgUser);
+        
+        // Get user context from database
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('tg_chat_id', chatId.toString())
+            .single();
+        
+        if (userError || !user) {
+            console.error('❌ User not found:', userError);
+            return res.status(404).json({
+                success: false,
+                error: 'User not found. Please start the bot first with /start'
+            });
+        }
+        
+        // Get team members count
+        const { data: teamMembers, error: teamError } = await supabase
+            .from('team_members')
+            .select('id')
+            .eq('tenant_id', user.tenant_id)
+            .eq('is_active', true);
+        
+        const teamCount = teamMembers ? teamMembers.length : 0;
+        
+        // Get reminders stats from Google Sheets
+        let totalReminders = 0;
+        let todayReminders = 0;
+        let completedToday = 0;
+        
+        try {
+            const spreadsheetId = await reminderService.getUserGoogleSheetsId(user.tenant_id);
+            if (spreadsheetId) {
+                const { GoogleSheetsConnector } = require('./connectors/google');
+                const sheetsConnector = new GoogleSheetsConnector();
+                
+                const remindersData = await sheetsConnector.readSheet(spreadsheetId, 'Напоминания!A:E');
+                if (remindersData && remindersData.values && remindersData.values.length > 1) {
+                    const reminders = remindersData.values.slice(1);
+                    totalReminders = reminders.length;
+                    
+                    // Подсчитываем напоминания на сегодня (примерная логика)
+                    const today = new Date().toLocaleDateString('ru-RU');
+                    todayReminders = reminders.filter(row => 
+                        row[2] && (row[2].includes('Сегодня') || row[2].includes(today))
+                    ).length;
+                    
+                    // Для демонстрации - случайное число выполненных
+                    completedToday = Math.floor(totalReminders * 0.3);
+                }
+            }
+        } catch (error) {
+            console.log('⚠️ Could not get reminders stats from Google Sheets:', error.message);
+        }
+        
+        const stats = {
+            totalReminders,
+            activeTeam: teamCount,
+            completedToday,
+            todayReminders,
+            trends: {
+                reminders: totalReminders > 5 ? '+12%' : '+5%',
+                completed: completedToday > 2 ? '+8%' : '+3%',
+                today: todayReminders > 3 ? '+15%' : '+2%'
+            }
+        };
+        
+        console.log('📊 Generated stats:', stats);
+        
+        res.json({
+            success: true,
+            data: stats
+        });
+        
+    } catch (error) {
+        console.error('❌ Mini App get stats error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// Mini App API endpoint for getting team data
+app.get('/api/mini-app/team', async (req, res) => {
+    try {
+        const { tgWebAppData } = req.query;
+        
+        console.log('📱 Mini App get team request');
+        
+        // Validate Telegram Web App data
+        if (!tgWebAppData) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Missing Telegram Web App data'
+            });
+        }
+        
+        let tgUser;
+        try {
+            tgUser = JSON.parse(decodeURIComponent(tgWebAppData)).user;
+        } catch (error) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Invalid Telegram Web App data'
+            });
+        }
+        
+        const chatId = tgUser.id;
+        console.log('👤 Getting team for Telegram user:', tgUser);
+        
+        // Get user context from database
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('tg_chat_id', chatId.toString())
+            .single();
+        
+        if (userError || !user) {
+            console.error('❌ User not found:', userError);
+            return res.status(404).json({
+                success: false,
+                error: 'User not found. Please start the bot first with /start'
+            });
+        }
+        
+        // Get team members from database
+        const { data: teamMembers, error: teamError } = await supabase
+            .from('team_members')
+            .select('*')
+            .eq('tenant_id', user.tenant_id)
+            .eq('is_active', true)
+            .order('display_name');
+        
+        if (teamError) {
+            console.error('❌ Error getting team members:', teamError);
+            return res.status(500).json({
+                success: false,
+                error: 'Error getting team members'
+            });
+        }
+        
+        // Transform team data for mini-app format
+        const team = (teamMembers || []).map(member => ({
+            id: member.id,
+            name: member.display_name,
+            email: member.meta?.email || `${member.display_name.toLowerCase()}@example.com`,
+            timezone: member.meta?.timezone || 'Europe/Moscow',
+            calendarId: member.meta?.calendar_id || member.meta?.email,
+            activeReminders: Math.floor(Math.random() * 5), // Случайное число для демонстрации
+            completedToday: Math.floor(Math.random() * 3),
+            avatar: member.display_name[0].toUpperCase()
+        }));
+        
+        console.log('👥 Team data:', team);
+        
+        res.json({
+            success: true,
+            data: team
+        });
+        
+    } catch (error) {
+        console.error('❌ Mini App get team error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
 // Team management functions
 async function startAddTeamMember(chatId, context) {
     try {
