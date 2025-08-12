@@ -876,6 +876,10 @@ async function handleCommand(command, chatId, context) {
             await handleSheetsCommand(chatId, context, args.join(' '));
             break;
             
+        case '/calendar':
+            await handleCalendarCommand(chatId, context, args.join(' '));
+            break;
+            
         case '/team':
             await handleTeamCommand(chatId, context);
             break;
@@ -1207,6 +1211,99 @@ async function handleSheetsCommand(chatId, context, url) {
     }
 }
 
+async function handlePersonalCalendarSetup(chatId, context) {
+    try {
+        // Проверяем, настроен ли уже личный календарь пользователя
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('meta')
+            .eq('id', context.user_id)
+            .single();
+            
+        if (userError) throw userError;
+        
+        const hasPersonalCalendar = user.meta?.personal_calendar_id;
+        
+        let message = `📅 Настройка личного Google Calendar\n\n`;
+        
+        if (hasPersonalCalendar) {
+            message += `✅ Личный календарь уже настроен!\n`;
+            message += `📅 Calendar ID: ${user.meta.personal_calendar_id}\n\n`;
+            message += `🔄 Хотите изменить Calendar ID?`;
+        } else {
+            message += `Для создания личных напоминаний в Google Calendar:\n\n`;
+            message += `1️⃣ Откройте Google Calendar\n`;
+            message += `2️⃣ Поделитесь своим календарем с:\n`;
+            message += `📧 ai-assistant-bot-270@ai-assistant-sheets.iam.gserviceaccount.com\n`;
+            message += `3️⃣ Дайте права "Внесение изменений в мероприятия"\n`;
+            message += `4️⃣ Скопируйте Calendar ID из настроек\n\n`;
+            message += `📝 Отправьте команду: /calendar YOUR_CALENDAR_ID\n\n`;
+            message += `💡 Как найти Calendar ID:\n`;
+            message += `• Откройте настройки календаря\n`;
+            message += `• Найдите раздел "Интеграция календаря"\n`;
+            message += `• Скопируйте "Идентификатор календаря"`;
+        }
+        
+        await bot.sendMessage(chatId, message, {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📋 Инструкция', callback_data: 'personal_calendar_help' },
+                        { text: '🔙 Назад', callback_data: 'setup_refresh' }
+                    ]
+                ]
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Ошибка настройки личного календаря:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка настройки личного календаря');
+    }
+}
+
+async function handleCalendarCommand(chatId, context, calendarId) {
+    if (!calendarId || !calendarId.includes('@') || calendarId.length < 10) {
+        await bot.sendMessage(chatId, `📅 Настройка личного календаря
+
+Использование: /calendar YOUR_CALENDAR_ID
+
+Пример:
+/calendar your-email@gmail.com
+
+Или скопируйте Calendar ID из настроек Google Calendar.`);
+        return;
+    }
+    
+    try {
+        // Сохраняем Calendar ID пользователя
+        const { error } = await supabase
+            .from('users')
+            .update({ 
+                meta: {
+                    ...context.meta,
+                    personal_calendar_id: calendarId.trim(),
+                    calendar_setup_date: new Date().toISOString()
+                }
+            })
+            .eq('id', context.user_id);
+            
+        if (error) throw error;
+        
+        await bot.sendMessage(chatId, `✅ Личный календарь настроен!
+
+📅 Calendar ID: ${calendarId}
+
+Теперь напоминания будут создаваться в вашем Google Calendar.
+
+Попробуйте:
+"Напомни мне завтра в 15:00 позвонить бабушке" 📞`);
+        
+    } catch (error) {
+        console.error('❌ Ошибка сохранения Calendar ID:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка сохранения Calendar ID. Попробуйте позже.');
+    }
+}
+
 async function handleLLMResponse(result, chatId) {
     switch (result.type) {
         case 'text':
@@ -1369,27 +1466,7 @@ async function handleCallbackQuery(query) {
                 
             case 'setup_calendar':
                 await bot.answerCallbackQuery(query.id, { text: 'Настройка календаря...' });
-                await bot.sendMessage(chatId, `📅 Настройка Google Calendar
-                
-Для настройки календаря:
-
-1️⃣ Убедитесь, что поделились календарем с сервисным аккаунтом:
-📧 ai-assistant-bot-270@ai-assistant-sheets.iam.gserviceaccount.com
-
-2️⃣ Дайте права "Внесение изменений в мероприятия"
-
-3️⃣ Используйте /team для добавления участников и привязки к календарю
-
-✅ Вы уже поделились календарем - можно переходить к настройке участников!`, {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: '👥 Настроить команду', callback_data: 'setup_team' },
-                                { text: '🔙 Назад', callback_data: 'setup_refresh' }
-                            ]
-                        ]
-                    }
-                });
+                await handlePersonalCalendarSetup(chatId, context);
                 break;
                 
             case 'setup_cancel':
@@ -1473,6 +1550,11 @@ async function handleCallbackQuery(query) {
             case 'team_calendar_instructions':
                 await bot.answerCallbackQuery(query.id, { text: 'Инструкции...' });
                 await showCalendarSetupInstructions(chatId);
+                break;
+                
+            case 'personal_calendar_help':
+                await bot.answerCallbackQuery(query.id, { text: 'Инструкции...' });
+                await showPersonalCalendarInstructions(chatId);
                 break;
 
             case (data.match(/^edit_member_(\d+)$/) || {}).input:
@@ -2304,6 +2386,52 @@ async function showCalendarSetupInstructions(chatId) {
         });
     } catch (error) {
         console.error('❌ Ошибка показа инструкций по календарю:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка показа инструкций');
+    }
+}
+
+async function showPersonalCalendarInstructions(chatId) {
+    try {
+        let message = `📅 **Пошаговая настройка личного календаря**\n\n`;
+        
+        message += `🔑 **1. Настройка доступа**\n`;
+        message += `• Откройте Google Calendar\n`;
+        message += `• Выберите нужный календарь\n`;
+        message += `• Нажмите на "Настройки и общий доступ"\n\n`;
+        
+        message += `👥 **2. Предоставление доступа**\n`;
+        message += `• Найдите "Делиться с определенными людьми"\n`;
+        message += `• Нажмите "Добавить людей"\n`;
+        message += `• Введите: ai-assistant-bot-270@ai-assistant-sheets.iam.gserviceaccount.com\n`;
+        message += `• Выберите права: "Внесение изменений в мероприятия"\n`;
+        message += `• Нажмите "Отправить"\n\n`;
+        
+        message += `🆔 **3. Получение Calendar ID**\n`;
+        message += `• В том же меню найдите "Интеграция календаря"\n`;
+        message += `• Скопируйте "Идентификатор календаря"\n`;
+        message += `• Обычно выглядит как ваш email\n\n`;
+        
+        message += `📝 **4. Сохранение в боте**\n`;
+        message += `• Выполните команду: /calendar ВАШ_CALENDAR_ID\n`;
+        message += `• Пример: /calendar irina@gmail.com\n\n`;
+        
+        message += `✅ **5. Тестирование**\n`;
+        message += `• Попробуйте: "Напомни завтра в 15:00 позвонить маме"\n`;
+        message += `• Событие должно появиться в вашем календаре`;
+        
+        await bot.sendMessage(chatId, message, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🔙 Назад', callback_data: 'setup_calendar' }
+                    ]
+                ]
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Ошибка показа инструкций по личному календарю:', error);
         await bot.sendMessage(chatId, '❌ Ошибка показа инструкций');
     }
 }
