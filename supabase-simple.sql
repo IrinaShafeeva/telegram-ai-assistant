@@ -143,6 +143,14 @@ BEGIN
     ) THEN
         ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK (role IN ('owner', 'admin', 'user', 'readonly'));
     END IF;
+    
+    -- Add meta column if it doesn't exist
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'users' AND column_name = 'meta'
+    ) THEN
+        ALTER TABLE users ADD COLUMN meta JSONB DEFAULT '{}';
+    END IF;
 END$$;
 
 -- 3. Create basic indexes

@@ -351,6 +351,7 @@ app.use(cors({
     origin: [
         'https://bespoke-platypus-5c4604.netlify.app',
         'https://ai-assist-62v3e0kmt-irinashafeevas-projects.vercel.app',
+        'https://reminder-dashboard-brc1elya1-irinashafeevas-projects.vercel.app',
         'http://localhost:3000',
         'http://localhost:3009'
     ],
@@ -1731,6 +1732,94 @@ app.get('/api/search', async (req, res) => {
     } catch (error) {
         console.error('API search error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Mini App API endpoint for reminders
+app.post('/api/mini-app/reminders', async (req, res) => {
+    try {
+        const { title, time, assignee, type, tgWebAppData } = req.body;
+        
+        console.log('📱 Mini App reminder request:', { title, time, assignee, type });
+        
+        // Validate Telegram Web App data
+        if (!tgWebAppData || !tgWebAppData.user) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized: Invalid Telegram Web App data'
+            });
+        }
+        
+        const tgUser = tgWebAppData.user;
+        const chatId = tgUser.id;
+        
+        console.log('👤 Telegram user:', tgUser);
+        
+        // Get user context from database
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('tg_chat_id', chatId.toString())
+            .single();
+        
+        if (userError || !user) {
+            console.error('❌ User not found:', userError);
+            return res.status(404).json({
+                success: false,
+                error: 'User not found. Please start the bot first with /start'
+            });
+        }
+        
+        const context = {
+            tenant_id: user.tenant_id,
+            user_id: user.id,
+            meta: user.meta || {}
+        };
+        
+        console.log('🏢 User context:', context);
+        
+        // Create reminder text for processing
+        let reminderText;
+        if (type === 'team' && assignee) {
+            reminderText = `напомни ${assignee} ${title} ${time}`;
+        } else {
+            reminderText = `напомни мне ${title} ${time}`;
+        }
+        
+        console.log('📝 Processing reminder text:', reminderText);
+        
+        // Process reminder using the existing service
+        const result = await reminderService.processReminder(reminderText, context, chatId);
+        
+        console.log('✅ Reminder processing result:', result);
+        
+        if (result.success) {
+            res.json({
+                success: true,
+                data: {
+                    id: Date.now(),
+                    emoji: '🔔',
+                    title,
+                    time,
+                    assignee,
+                    status: 'pending',
+                    type: type || 'personal'
+                },
+                message: result.message
+            });
+        } else {
+            res.status(400).json({
+                success: false,
+                error: result.message || 'Failed to create reminder'
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Mini App reminder error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
     }
 });
 

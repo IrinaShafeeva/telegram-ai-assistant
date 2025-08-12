@@ -1,3 +1,0 @@
-@echo off
-echo Запуск деплоя на Vercel...
-call deploy_vercel.bat 
