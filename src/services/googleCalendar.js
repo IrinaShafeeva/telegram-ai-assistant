@@ -305,7 +305,43 @@ function parseReminderTime(timeString) {
             return today;
         }
 
-        // Пытаемся распарсить конкретную дату
+        // Пытаемся распарсить дату с текстовым месяцем (например, "15 августа")
+        const monthNames = {
+            'января': 0, 'февраля': 1, 'марта': 2, 'апреля': 3, 'мая': 4, 'июня': 5,
+            'июля': 6, 'августа': 7, 'сентября': 8, 'октября': 9, 'ноября': 10, 'декабря': 11
+        };
+        
+        const textDateMatch = timeString.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)/i);
+        if (textDateMatch) {
+            const day = parseInt(textDateMatch[1]);
+            const monthName = textDateMatch[2].toLowerCase();
+            const month = monthNames[monthName];
+            const year = now.getFullYear();
+            
+            console.log(`📅 Парсим дату: ${day} ${monthName} (месяц ${month})`);
+            
+            const date = new Date(year, month, day);
+            const timeMatch = timeString.match(/(\d{1,2}):(\d{2})/);
+            if (timeMatch) {
+                date.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]), 0, 0);
+                console.log(`⏰ Установлено время: ${timeMatch[1]}:${timeMatch[2]}`);
+            } else {
+                // Если не указано время, но есть число в тексте, используем его как час
+                const hourMatch = timeString.match(/в\s+(\d{1,2})/);
+                if (hourMatch) {
+                    date.setHours(parseInt(hourMatch[1]), 0, 0, 0);
+                    console.log(`⏰ Установлен час из текста: ${hourMatch[1]}:00`);
+                } else {
+                    date.setHours(12, 0, 0, 0); // По умолчанию 12:00
+                    console.log(`⏰ Установлено время по умолчанию: 12:00`);
+                }
+            }
+            
+            console.log(`📅 Результат парсинга: ${date.toISOString()}`);
+            return date;
+        }
+
+        // Пытаемся распарсить конкретную дату в формате дд.мм.гггг
         const dateMatch = timeString.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})?/);
         if (dateMatch) {
             const day = parseInt(dateMatch[1]);
@@ -317,7 +353,7 @@ function parseReminderTime(timeString) {
             if (timeMatch) {
                 date.setHours(parseInt(timeMatch[1]), parseInt(timeMatch[2]), 0, 0);
             } else {
-                date.setHours(9, 0, 0, 0);
+                date.setHours(12, 0, 0, 0);
             }
             return date;
         }
