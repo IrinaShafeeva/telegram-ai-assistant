@@ -1245,6 +1245,26 @@ async function handleLLMResponse(result, chatId) {
     }
 }
 
+// Middleware для проверки webhook secret отключен для отладки
+// app.use('/webhook', (req, res, next) => {
+//     if (req.method === 'POST') {
+//         const secretToken = req.headers['x-telegram-bot-api-secret-token'];
+//         const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+//         
+//         console.log('🔍 Webhook debug:', {
+//             secretToken,
+//             expectedSecret,
+//             headers: req.headers
+//         });
+//         
+//         if (!expectedSecret || secretToken !== expectedSecret) {
+//             console.log('❌ Webhook secret token mismatch');
+//             return res.status(401).json({ error: 'Unauthorized' });
+//         }
+//     }
+//     next();
+// });
+
 // Webhook for Telegram
 app.get('/webhook', (req, res) => {
     res.json({ 
@@ -1255,31 +1275,42 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
-    console.log('Webhook received:', JSON.stringify(req.body, null, 2));
+    console.log('🔍 Webhook called with body:', req.body);
     
     try {
         const update = req.body;
         
         if (!update) {
-            console.log('No update in request body');
+            console.log('❌ No update in request body');
             return res.json({ ok: true });
         }
         
         // Handle message
         if (update.message) {
-            console.log('Processing message from webhook');
-            await processMessage(update.message);
+            console.log('📨 Processing message from webhook:', update.message);
+            try {
+                await processMessage(update.message);
+                console.log('✅ Message processed successfully');
+            } catch (msgError) {
+                console.error('❌ Error processing message:', msgError);
+            }
         }
         
         // Handle callback queries (inline buttons)
         if (update.callback_query) {
-            console.log('Processing callback query from webhook');
-            await handleCallbackQuery(update.callback_query);
+            console.log('🔘 Processing callback query from webhook');
+            try {
+                await handleCallbackQuery(update.callback_query);
+                console.log('✅ Callback query processed successfully');
+            } catch (callbackError) {
+                console.error('❌ Error processing callback query:', callbackError);
+            }
         }
         
+        console.log('✅ Webhook response sent');
         res.json({ ok: true });
     } catch (error) {
-        console.error('Webhook error:', error);
+        console.error('❌ Webhook error:', error);
         console.error('Webhook error stack:', error.stack);
         res.status(500).json({ 
             error: 'Internal server error',
