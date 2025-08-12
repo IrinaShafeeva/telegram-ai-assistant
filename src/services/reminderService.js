@@ -539,16 +539,21 @@ class ReminderService {
             if (personalMatch) {
                 what = personalMatch[1].trim();
                 // Убираем временные маркеры из описания
-                what = what.replace(/(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2})\s*/gi, '').trim();
+                what = what.replace(/(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)|\d{1,2}\.\d{1,2}|в\s+\d{1,2})\s*/gi, '').trim();
             }
             
             // Извлекаем время
-            const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
+            const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
             const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+            const hourMatch = text.match(/в\s+(\d{1,2})(?!\d)/); // "в 12" но не "в 12:00"
             
             let whenParts = [];
             if (dayMatch) whenParts.push(dayMatch[0]);
-            if (timeMatch) whenParts.push(timeMatch[0]);
+            if (timeMatch) {
+                whenParts.push(timeMatch[0]);
+            } else if (hourMatch) {
+                whenParts.push(hourMatch[1] + ':00');
+            }
             
             const when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
             
@@ -582,12 +587,17 @@ class ReminderService {
                     what = match[2].trim();
                     
                     // Извлекаем время
-                    const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
+                    const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
                     const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+                    const hourMatch = text.match(/в\s+(\d{1,2})(?!\d)/);
                     
                     let whenParts = [];
                     if (dayMatch) whenParts.push(dayMatch[0]);
-                    if (timeMatch) whenParts.push(timeMatch[0]);
+                    if (timeMatch) {
+                        whenParts.push(timeMatch[0]);
+                    } else if (hourMatch) {
+                        whenParts.push(hourMatch[1] + ':00');
+                    }
                     
                     when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
                     break;
@@ -603,15 +613,20 @@ class ReminderService {
             if (fallbackMatch) {
                 what = fallbackMatch[1].trim();
                 // Убираем временные маркеры из описания
-                what = what.replace(/(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2})\s*/gi, '').trim();
+                what = what.replace(/(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)|\d{1,2}\.\d{1,2}|в\s+\d{1,2})\s*/gi, '').trim();
             }
             
-            const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
+            const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
             const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+            const hourMatch = text.match(/в\s+(\d{1,2})(?!\d)/);
             
             let whenParts = [];
             if (dayMatch) whenParts.push(dayMatch[0]);
-            if (timeMatch) whenParts.push(timeMatch[0]);
+            if (timeMatch) {
+                whenParts.push(timeMatch[0]);
+            } else if (hourMatch) {
+                whenParts.push(hourMatch[1] + ':00');
+            }
             
             when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
         }
