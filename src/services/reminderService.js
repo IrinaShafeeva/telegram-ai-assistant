@@ -289,6 +289,9 @@ class ReminderService {
             case 'personal':
                 return `${emoji} *Напоминание для вас*\n\n📅 ${what}\n⏰ ${when}\n\n_Создано: ${time}_`;
             
+            case 'personal_calendar':
+                return `${emoji} *Личное напоминание создано*\n\n📅 ${what}\n⏰ ${when}\n\n✅ Добавлено в ваш Google Calendar\n📊 Записано в Google Sheets\n\n_Создано: ${time}_`;
+            
             case 'confirmation':
                 return `${emoji} *Напоминание создано*\n\n👤 Для: ${contactName}\n📅 ${what}\n⏰ ${when}\n\n✅ Добавлено в Google Calendar\n📨 Уведомление отправлено\n\n_Время: ${time}_`;
             
@@ -306,35 +309,61 @@ class ReminderService {
             
             console.log(`📅 Создаю личное напоминание: ${what} в ${when}`);
 
-            // Получаем Google Sheets ID
-            const spreadsheetId = await this.getUserGoogleSheetsId(tenantId);
-            if (!spreadsheetId) {
+            // Получаем личный Calendar ID пользователя
+            const { data: user, error: userError } = await supabase
+                .from('users')
+                .select('meta')
+                .eq('tenant_id', tenantId)
+                .eq('tg_chat_id', chatId.toString())
+                .single();
+                
+            if (userError) {
+                console.error('❌ Ошибка получения пользователя:', userError);
                 return {
                     success: false,
-                    message: '❌ Google Sheets не настроен'
+                    message: '❌ Ошибка получения данных пользователя'
                 };
             }
-
-            // Записываем в Google Sheets
-            const success = await writeReminder(spreadsheetId, 'Я', what, when, chatId);
             
-            if (success) {
-                // Отправляем подтверждение
-                const message = this.formatReminderMessage(what, when, 'personal');
-                await this.bot.sendMessage(chatId, message, {
-                    parse_mode: 'Markdown'
-                });
-
-                return {
-                    success: true,
-                    message: `✅ Личное напоминание создано:\n\n📅 ${what}\n⏰ ${when}\n\n📊 Записано в Google Sheets\n📨 Уведомление запланировано`
-                };
-            } else {
+            const personalCalendarId = user.meta?.personal_calendar_id;
+            console.log(`📅 Personal Calendar ID: ${personalCalendarId}`);
+            
+            if (!personalCalendarId) {
                 return {
                     success: false,
-                    message: '❌ Ошибка записи напоминания'
+                    message: '❌ Личный календарь не настроен. Используйте /setup для настройки Google Calendar'
                 };
             }
+
+            // Создаем событие в личном календаре
+            const { createPersonalCalendarEvent } = require('./googleCalendar');
+            const calendarResult = await createPersonalCalendarEvent(personalCalendarId, what, when);
+            
+            if (!calendarResult.success) {
+                console.error('❌ Ошибка создания события в календаре:', calendarResult.error);
+                return {
+                    success: false,
+                    message: `❌ Ошибка создания в Google Calendar: ${calendarResult.error || calendarResult.message}`
+                };
+            }
+
+            // Получаем Google Sheets ID и записываем туда тоже
+            const spreadsheetId = await this.getUserGoogleSheetsId(tenantId);
+            if (spreadsheetId) {
+                await writeReminder(spreadsheetId, 'Я', what, when, chatId);
+                console.log('✅ Напоминание записано в Google Sheets');
+            }
+            
+            // Отправляем подтверждение
+            const message = this.formatReminderMessage(what, when, 'personal_calendar');
+            await this.bot.sendMessage(chatId, message, {
+                parse_mode: 'Markdown'
+            });
+
+            return {
+                success: true,
+                message: `✅ Личное напоминание создано:\n\n📅 ${what}\n⏰ ${when}\n\n📆 Добавлено в Google Calendar\n📊 Записано в Google Sheets`
+            };
 
         } catch (error) {
             console.error('❌ Ошибка создания личного напоминания:', error);
@@ -384,7 +413,49 @@ class ReminderService {
     extractReminderInfo(text) {
         const lowerText = text.toLowerCase();
         
-        // Паттерны для извлечения контактов
+        // Слова, указывающие на личное напоминание
+        const personalPronouns = ['мне', 'себе', 'мной', 'собой'];
+        
+        // Сначала проверяем, личное ли это напоминание
+        const hasPersonalPronoun = personalPronouns.some(pronoun => 
+            lowerText.includes(pronoun)
+        );
+        
+        if (hasPersonalPronoun) {
+            // Это личное напоминание
+            console.log('🔍 Определено как личное напоминание');
+            
+            // Извлекаем что напомнить (убираем "напомни мне")
+            const personalMatch = text.match(/(?:напомни|напомнить)\s+(?:мне|себе)\s+(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i) ||
+                                text.match(/(?:напомни|напомнить)\s+(?:мне|себе)\s+(.+)/i);
+            
+            let what = '';
+            if (personalMatch) {
+                what = personalMatch[1].trim();
+                // Убираем временные маркеры из описания
+                what = what.replace(/(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2})\s*/gi, '').trim();
+            }
+            
+            // Извлекаем время
+            const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
+            const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+            
+            let whenParts = [];
+            if (dayMatch) whenParts.push(dayMatch[0]);
+            if (timeMatch) whenParts.push(timeMatch[0]);
+            
+            const when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
+            
+            return {
+                contact: null, // Личное напоминание
+                what: what || 'напоминание',
+                when: when,
+                originalText: text,
+                isPersonal: true
+            };
+        }
+        
+        // Паттерны для извлечения команд.ых напоминаний (для других людей)
         const contactPatterns = [
             /(?:напомни|напомнить)\s+(?:для\s+)?([а-яё]+)\s+(?:о\s+)?(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i,
             /(?:напомни|напомнить)\s+([а-яё]+)\s+(?:о\s+)?(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i
@@ -397,42 +468,54 @@ class ReminderService {
         for (const pattern of contactPatterns) {
             const match = text.match(pattern);
             if (match) {
-                contact = match[1];
-                what = match[2].trim();
-                // Извлекаем время из оставшейся части текста
-                const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.\d{4}?)/i);
-                const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+                const potentialContact = match[1];
                 
-                let whenParts = [];
-                if (dayMatch) whenParts.push(dayMatch[0]);
-                if (timeMatch) whenParts.push(timeMatch[0]);
-                
-                when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
-                break;
+                // Проверяем, не является ли это личным местоимением
+                if (!personalPronouns.includes(potentialContact.toLowerCase())) {
+                    contact = potentialContact;
+                    what = match[2].trim();
+                    
+                    // Извлекаем время
+                    const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
+                    const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+                    
+                    let whenParts = [];
+                    if (dayMatch) whenParts.push(dayMatch[0]);
+                    if (timeMatch) whenParts.push(timeMatch[0]);
+                    
+                    when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
+                    break;
+                }
             }
         }
         
-        // Если не нашли контакт, пробуем извлечь личное напоминание
+        // Если не нашли контакт, это личное напоминание по умолчанию
         if (!contact) {
-            const personalMatch = text.match(/(?:напомни|напомнить)\s+(.+?)(?:\s+(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2}))/i);
-            if (personalMatch) {
-                what = personalMatch[1].trim();
-                const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.\d{4}?)/i);
-                const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
-                
-                let whenParts = [];
-                if (dayMatch) whenParts.push(dayMatch[0]);
-                if (timeMatch) whenParts.push(timeMatch[0]);
-                
-                when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
+            console.log('🔍 Определено как личное напоминание (по умолчанию)');
+            
+            const fallbackMatch = text.match(/(?:напомни|напомнить)\s+(.+)/i);
+            if (fallbackMatch) {
+                what = fallbackMatch[1].trim();
+                // Убираем временные маркеры из описания
+                what = what.replace(/(?:завтра|сегодня|\d{1,2}:\d{2}|\d{1,2}\.\d{1,2})\s*/gi, '').trim();
             }
+            
+            const dayMatch = text.match(/(?:завтра|сегодня|\d{1,2}\.\d{1,2}\.?\d{0,4})/i);
+            const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+            
+            let whenParts = [];
+            if (dayMatch) whenParts.push(dayMatch[0]);
+            if (timeMatch) whenParts.push(timeMatch[0]);
+            
+            when = whenParts.length > 0 ? whenParts.join(' в ') : 'завтра';
         }
         
         return {
             contact,
             what: what || text,
             when: when || 'завтра',
-            originalText: text
+            originalText: text,
+            isPersonal: !contact
         };
     }
 }

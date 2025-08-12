@@ -269,9 +269,48 @@ function parseReminderTime(timeString) {
     }
 }
 
+// Функция для создания личного напоминания в календаре
+async function createPersonalCalendarEvent(calendarId, what, when) {
+    try {
+        console.log(`📅 Создаю личное событие в календаре ${calendarId}: ${what} в ${when}`);
+        
+        // Парсим время
+        const reminderTime = parseReminderTime(when);
+        console.log(`⏰ Парсированное время:`, reminderTime);
+        
+        if (!reminderTime) {
+            return {
+                success: false,
+                error: 'Не удалось распознать время'
+            };
+        }
+        
+        // Создаем событие
+        const result = await createCalendarEvent(
+            calendarId,
+            `Напоминание: ${what}`,
+            `Личное напоминание\n\n${what}\n\nСоздано ботом`,
+            reminderTime,
+            null, // Длительность 1 час по умолчанию  
+            [] // Участники
+        );
+
+        console.log(`📅 Результат создания личного события:`, result);
+        return result;
+
+    } catch (error) {
+        console.error('❌ Ошибка создания личного напоминания в календаре:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
 module.exports = {
     createCalendarEvent,
     createTeamReminder,
     getContactCalendarId,
-    parseReminderTime
+    parseReminderTime,
+    createPersonalCalendarEvent
 };
