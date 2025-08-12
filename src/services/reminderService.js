@@ -326,7 +326,9 @@ class ReminderService {
             }
             
             const personalCalendarId = user.meta?.personal_calendar_id;
+            const userTimezone = user.meta?.timezone || 'Europe/Moscow';
             console.log(`📅 Personal Calendar ID: ${personalCalendarId}`);
+            console.log(`🌍 User Timezone: ${userTimezone}`);
             
             if (!personalCalendarId) {
                 return {
@@ -337,7 +339,7 @@ class ReminderService {
 
             // Создаем событие в личном календаре
             const { createPersonalCalendarEvent } = require('./googleCalendar');
-            const calendarResult = await createPersonalCalendarEvent(personalCalendarId, what, when);
+            const calendarResult = await createPersonalCalendarEvent(personalCalendarId, what, when, userTimezone);
             
             if (!calendarResult.success) {
                 console.error('❌ Ошибка создания события в календаре:', calendarResult.error);
@@ -386,7 +388,15 @@ class ReminderService {
             console.log('📅 Информация о напоминании:', reminderInfo);
             
             if (reminderInfo.contact && reminderInfo.when) {
-                // Напоминание для конкретного человека
+                // Напоминание для конкретного человека - проверяем конфликт часовых поясов
+                const timezoneConflict = await this.checkTimezoneConflict(context.tenant_id, chatId.toString(), reminderInfo.contact);
+                
+                if (timezoneConflict) {
+                    // Есть конфликт - спрашиваем пользователя
+                    return await this.handleTimezoneConflict(timezoneConflict, reminderInfo, context, chatId);
+                }
+                
+                // Нет конфликта или уже разрешен - создаем напоминание
                 return await this.createTeamReminder({
                     ...reminderInfo,
                     tenantId: context.tenant_id,
@@ -404,6 +414,102 @@ class ReminderService {
         } catch (error) {
             console.error('❌ Ошибка обработки напоминания:', error);
             return { success: false, message: '❌ Ошибка обработки напоминания' };
+        }
+    }
+
+    /**
+     * Проверяет конфликт часовых поясов между отправителем и получателем
+     */
+    async checkTimezoneConflict(tenantId, senderChatId, contactName) {
+        try {
+            // Получаем часовой пояс отправителя
+            const { data: sender, error: senderError } = await supabase
+                .from('users')
+                .select('meta')
+                .eq('tenant_id', tenantId)
+                .eq('tg_chat_id', senderChatId)
+                .single();
+            
+            if (senderError) {
+                console.log('⚠️ Не удалось получить часовой пояс отправителя');
+                return null;
+            }
+
+            // Получаем часовой пояс получателя через участника команды
+            const teamMember = await this.getTeamMember(tenantId, contactName);
+            
+            if (!teamMember || !teamMember.meta) {
+                console.log('⚠️ Не удалось получить часовой пояс получателя');
+                return null;
+            }
+
+            const senderTimezone = sender.meta?.timezone || 'Europe/Moscow';
+            const recipientTimezone = teamMember.meta?.timezone || 'Europe/Moscow';
+
+            console.log(`🌍 Часовой пояс отправителя: ${senderTimezone}`);
+            console.log(`🌍 Часовой пояс получателя: ${recipientTimezone}`);
+
+            if (senderTimezone !== recipientTimezone) {
+                return {
+                    senderTimezone,
+                    recipientTimezone,
+                    senderName: 'Вы',
+                    recipientName: contactName
+                };
+            }
+
+            return null; // Нет конфликта
+            
+        } catch (error) {
+            console.error('❌ Ошибка проверки конфликта часовых поясов:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Обрабатывает конфликт часовых поясов - спрашивает пользователя
+     */
+    async handleTimezoneConflict(conflict, reminderInfo, context, chatId) {
+        try {
+            const message = `🌍 *Конфликт часовых поясов*\n\n` +
+                `Вы создаёте напоминание для *${conflict.recipientName}*:\n` +
+                `📅 ${reminderInfo.what}\n` +
+                `⏰ ${reminderInfo.when}\n\n` +
+                `Ваш часовой пояс: *${conflict.senderTimezone}*\n` +
+                `Часовой пояс ${conflict.recipientName}: *${conflict.recipientTimezone}*\n\n` +
+                `По чьему времени создать напоминание?`;
+
+            const keyboard = {
+                inline_keyboard: [
+                    [
+                        {
+                            text: `🕐 По вашему времени (${conflict.senderTimezone})`,
+                            callback_data: `timezone_conflict_sender_${chatId}_${Date.now()}`
+                        }
+                    ],
+                    [
+                        {
+                            text: `🕑 По времени ${conflict.recipientName} (${conflict.recipientTimezone})`,
+                            callback_data: `timezone_conflict_recipient_${chatId}_${Date.now()}`
+                        }
+                    ]
+                ]
+            };
+
+            await this.bot.sendMessage(chatId, message, {
+                parse_mode: 'Markdown',
+                reply_markup: keyboard
+            });
+
+            return {
+                success: true,
+                message: 'Ожидаю выбор часового пояса...',
+                pendingTimezoneConflict: true
+            };
+
+        } catch (error) {
+            console.error('❌ Ошибка обработки конфликта часовых поясов:', error);
+            return { success: false, message: '❌ Ошибка обработки конфликта часовых поясов' };
         }
     }
 

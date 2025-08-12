@@ -2,7 +2,7 @@
 const { getCalendarAPI } = require('../config/google');
 
 // Функция для создания события в календаре
-async function createCalendarEvent(calendarId, summary, description, startTime, endTime, attendees = []) {
+async function createCalendarEvent(calendarId, summary, description, startTime, endTime, attendees = [], timezone = 'Europe/Moscow') {
     try {
         console.log(`🔗 Подключаемся к Google Calendar API...`);
         const calendar = await getCalendarAPI();
@@ -15,6 +15,7 @@ async function createCalendarEvent(calendarId, summary, description, startTime, 
         console.log(`📅 Создаём событие в календаре ${calendarId}:`);
         console.log(`   Заголовок: ${summary}`);
         console.log(`   Время: ${startTime}`);
+        console.log(`   Часовой пояс: ${timezone}`);
         console.log(`   Участники: ${attendees.join(', ')}`);
         
 
@@ -27,11 +28,11 @@ async function createCalendarEvent(calendarId, summary, description, startTime, 
             description: description,
             start: {
                 dateTime: start.toISOString(),
-                timeZone: 'Europe/Moscow',
+                timeZone: timezone,
             },
             end: {
                 dateTime: end.toISOString(),
-                timeZone: 'Europe/Moscow',
+                timeZone: timezone,
             },
             attendees: attendees.map(email => ({ email })),
             reminders: {
@@ -71,16 +72,18 @@ async function createTeamReminder(contactName, what, when, tenantId) {
     try {
         console.log(`📅 Создаю напоминание для ${contactName}: ${what} в ${when}`);
 
-        // Получаем Google Calendar email контакта из базы данных
-        const calendarId = await getContactCalendarId(tenantId, contactName);
+        // Получаем информацию о контакте включая календарь и часовой пояс
+        const contactInfo = await getContactInfo(tenantId, contactName);
         
-        if (!calendarId) {
+        if (!contactInfo || !contactInfo.calendarId) {
             console.log(`⚠️ Google Calendar ID не найден для ${contactName}`);
             return {
                 success: false,
                 message: `⚠️ Google Calendar не настроен для ${contactName}`
             };
         }
+
+        const { calendarId, timezone } = contactInfo;
 
         // Парсим время напоминания
         const reminderTime = parseReminderTime(when);
@@ -94,6 +97,7 @@ async function createTeamReminder(contactName, what, when, tenantId) {
         // Создаем событие в календаре
         console.log(`📅 Создаём событие в календаре: ${calendarId}`);
         console.log(`⏰ Время события: ${reminderTime}`);
+        console.log(`🌍 Часовой пояс: ${timezone}`);
         
         const result = await createCalendarEvent(
             calendarId,
@@ -101,7 +105,8 @@ async function createTeamReminder(contactName, what, when, tenantId) {
             `Напоминание для ${contactName}\n\n${what}\n\nСоздано ботом`,
             reminderTime,
             null, // Длительность 1 час по умолчанию
-            [] // Участники
+            [], // Участники
+            timezone
         );
 
         console.log(`📅 Результат создания события:`, result);
@@ -165,6 +170,65 @@ async function getContactCalendarId(tenantId, contactName) {
 
     } catch (error) {
         console.error('❌ Ошибка получения Google Calendar email:', error);
+        return null;
+    }
+}
+
+// Функция для получения информации о контакте (календарь + часовой пояс)
+async function getContactInfo(tenantId, contactName) {
+    try {
+        const { supabase } = require('../config/database');
+        
+        console.log(`🔍 Ищем информацию о контакте ${contactName} в базе данных...`);
+
+        // Генерируем варианты имени для поиска
+        const nameVariations = generateNameVariations(contactName);
+        console.log(`🔍 Варианты имени для поиска:`, nameVariations);
+
+        // Пробуем найти по каждому варианту имени
+        for (const variation of nameVariations) {
+            console.log(`🔍 Ищем по варианту: "${variation}"`);
+            
+            const { data, error } = await supabase
+                .from('team_members')
+                .select('id, display_name, aliases, meta')
+                .eq('tenant_id', tenantId)
+                .eq('is_active', true)
+                .ilike('display_name', variation);
+
+            if (error) {
+                console.error(`❌ Ошибка поиска по варианту "${variation}":`, error);
+                continue;
+            }
+
+            if (data && data.length > 0) {
+                const member = data[0];
+                const gcalEmail = member.meta?.gcal_email;
+                const timezone = member.meta?.timezone || 'Europe/Moscow';
+                
+                console.log(`✅ Найден участник "${variation}" → ${member.display_name}`);
+                console.log(`📧 Meta данные:`, member.meta);
+                
+                if (gcalEmail) {
+                    console.log(`✅ Найден Google Calendar email для ${contactName}: ${gcalEmail}`);
+                    console.log(`🌍 Часовой пояс: ${timezone}`);
+                    return {
+                        calendarId: gcalEmail,
+                        timezone: timezone,
+                        memberInfo: member
+                    };
+                } else {
+                    console.log(`⚠️ Google Calendar email не настроен для ${member.display_name}`);
+                    return null;
+                }
+            }
+        }
+
+        console.log(`❌ Участник команды ${contactName} не найден ни по одному варианту`);
+        return null;
+
+    } catch (error) {
+        console.error('❌ Ошибка получения информации о контакте:', error);
         return null;
     }
 }
@@ -270,9 +334,9 @@ function parseReminderTime(timeString) {
 }
 
 // Функция для создания личного напоминания в календаре
-async function createPersonalCalendarEvent(calendarId, what, when) {
+async function createPersonalCalendarEvent(calendarId, what, when, timezone = 'Europe/Moscow') {
     try {
-        console.log(`📅 Создаю личное событие в календаре ${calendarId}: ${what} в ${when}`);
+        console.log(`📅 Создаю личное событие в календаре ${calendarId}: ${what} в ${when} (${timezone})`);
         
         // Парсим время
         const reminderTime = parseReminderTime(when);
@@ -292,7 +356,8 @@ async function createPersonalCalendarEvent(calendarId, what, when) {
             `Личное напоминание\n\n${what}\n\nСоздано ботом`,
             reminderTime,
             null, // Длительность 1 час по умолчанию  
-            [] // Участники
+            [], // Участники
+            timezone
         );
 
         console.log(`📅 Результат создания личного события:`, result);
@@ -311,6 +376,7 @@ module.exports = {
     createCalendarEvent,
     createTeamReminder,
     getContactCalendarId,
+    getContactInfo,
     parseReminderTime,
     createPersonalCalendarEvent
 };

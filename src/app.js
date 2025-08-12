@@ -1261,6 +1261,16 @@ async function handlePersonalCalendarSetup(chatId, context) {
     }
 }
 
+// Популярные часовые пояса
+const TIMEZONES = [
+    { name: '🇷🇺 Москва', value: 'Europe/Moscow', offset: 'UTC+3' },
+    { name: '🇺🇦 Киев', value: 'Europe/Kiev', offset: 'UTC+2' },
+    { name: '🇩🇪 Берлин', value: 'Europe/Berlin', offset: 'UTC+1' },
+    { name: '🇺🇸 Нью-Йорк', value: 'America/New_York', offset: 'UTC-5' },
+    { name: '🇦🇪 Дубай', value: 'Asia/Dubai', offset: 'UTC+4' },
+    { name: '🇯🇵 Токио', value: 'Asia/Tokyo', offset: 'UTC+9' }
+];
+
 async function handleCalendarCommand(chatId, context, calendarId) {
     if (!calendarId || !calendarId.includes('@') || calendarId.length < 10) {
         await bot.sendMessage(chatId, `📅 Настройка личного календаря
@@ -1275,33 +1285,83 @@ async function handleCalendarCommand(chatId, context, calendarId) {
     }
     
     try {
-        // Сохраняем Calendar ID пользователя
-        const { error } = await supabase
-            .from('users')
-            .update({ 
-                meta: {
-                    ...context.meta,
-                    personal_calendar_id: calendarId.trim(),
-                    calendar_setup_date: new Date().toISOString()
-                }
-            })
-            .eq('id', context.user_id);
-            
-        if (error) throw error;
+        // Проверяем, есть ли уже часовой пояс у пользователя
+        const existingTimezone = context.meta?.timezone;
         
-        await bot.sendMessage(chatId, `✅ Личный календарь настроен!
+        if (existingTimezone) {
+            // Если часовой пояс уже есть, сразу сохраняем календарь
+            const { error } = await supabase
+                .from('users')
+                .update({ 
+                    meta: {
+                        ...context.meta,
+                        personal_calendar_id: calendarId.trim(),
+                        calendar_setup_date: new Date().toISOString()
+                    }
+                })
+                .eq('id', context.user_id);
+                
+            if (error) throw error;
+            
+            await bot.sendMessage(chatId, `✅ Личный календарь настроен!
 
 📅 Calendar ID: ${calendarId}
+⏰ Часовой пояс: ${existingTimezone}
 
 Теперь напоминания будут создаваться в вашем Google Calendar.
 
 Попробуйте:
 "Напомни мне завтра в 15:00 позвонить бабушке" 📞`);
+        } else {
+            // Если часового пояса нет, сначала сохраняем Calendar ID и просим выбрать часовой пояс
+            const { error } = await supabase
+                .from('users')
+                .update({ 
+                    meta: {
+                        ...context.meta,
+                        personal_calendar_id: calendarId.trim(),
+                        calendar_setup_date: new Date().toISOString(),
+                        calendar_setup_pending: true
+                    }
+                })
+                .eq('id', context.user_id);
+                
+            if (error) throw error;
+            
+            await showTimezoneSelection(chatId, 'personal');
+        }
         
     } catch (error) {
         console.error('❌ Ошибка сохранения Calendar ID:', error);
         await bot.sendMessage(chatId, '❌ Ошибка сохранения Calendar ID. Попробуйте позже.');
     }
+}
+
+async function showTimezoneSelection(chatId, type, memberData = null) {
+    const keyboard = TIMEZONES.map(tz => [
+        { text: `${tz.name} (${tz.offset})`, callback_data: `timezone_${type}_${tz.value}` }
+    ]);
+    
+    keyboard.push([
+        { text: '🌍 Другой часовой пояс', callback_data: `timezone_${type}_other` }
+    ]);
+    
+    let message = '';
+    if (type === 'personal') {
+        message = `⏰ **Выбор часового пояса**\n\nДля правильного времени в Google Calendar выберите ваш часовой пояс:`;
+    } else if (type === 'team') {
+        message = `⏰ **Часовой пояс участника ${memberData?.name || ''}**\n\nВыберите часовой пояс участника команды:`;
+        keyboard.unshift([
+            { text: '🔄 Такой же как у меня', callback_data: `timezone_team_same` }
+        ]);
+    }
+    
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: keyboard
+        }
+    });
 }
 
 async function handleLLMResponse(result, chatId) {
@@ -1555,6 +1615,23 @@ async function handleCallbackQuery(query) {
             case 'personal_calendar_help':
                 await bot.answerCallbackQuery(query.id, { text: 'Инструкции...' });
                 await showPersonalCalendarInstructions(chatId);
+                break;
+                
+            // Обработка выбора часового пояса
+            case (data.match(/^timezone_personal_(.+)$/) || {}).input:
+                const personalTimezone = data.match(/^timezone_personal_(.+)$/)?.[1];
+                if (personalTimezone) {
+                    await bot.answerCallbackQuery(query.id, { text: 'Сохраняю часовой пояс...' });
+                    await handlePersonalTimezoneSelection(chatId, context, personalTimezone);
+                }
+                break;
+                
+            case (data.match(/^timezone_team_(.+)$/) || {}).input:
+                const teamTimezone = data.match(/^timezone_team_(.+)$/)?.[1];
+                if (teamTimezone) {
+                    await bot.answerCallbackQuery(query.id, { text: 'Сохраняю часовой пояс участника...' });
+                    await handleTeamTimezoneSelection(chatId, context, teamTimezone);
+                }
                 break;
 
             case (data.match(/^edit_member_(\d+)$/) || {}).input:
@@ -2433,6 +2510,137 @@ async function showPersonalCalendarInstructions(chatId) {
     } catch (error) {
         console.error('❌ Ошибка показа инструкций по личному календарю:', error);
         await bot.sendMessage(chatId, '❌ Ошибка показа инструкций');
+    }
+}
+
+async function handlePersonalTimezoneSelection(chatId, context, timezone) {
+    try {
+        if (timezone === 'other') {
+            await bot.sendMessage(chatId, `🌍 **Другой часовой пояс**
+
+Для ручного ввода часового пояса отправьте команду:
+/timezone Europe/Your_City
+
+Примеры:
+/timezone Europe/London
+/timezone Asia/Shanghai  
+/timezone America/Los_Angeles
+
+Полный список: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones`);
+            return;
+        }
+        
+        // Сохраняем часовой пояс
+        const { error } = await supabase
+            .from('users')
+            .update({ 
+                meta: {
+                    ...context.meta,
+                    timezone: timezone,
+                    calendar_setup_pending: false
+                }
+            })
+            .eq('id', context.user_id);
+            
+        if (error) throw error;
+        
+        const timezoneName = TIMEZONES.find(tz => tz.value === timezone)?.name || timezone;
+        
+        await bot.sendMessage(chatId, `✅ **Личный календарь настроен!**
+
+📅 Calendar ID: ${context.meta?.personal_calendar_id}
+⏰ Часовой пояс: ${timezoneName}
+
+Теперь напоминания будут создаваться в вашем Google Calendar с правильным временем.
+
+Попробуйте:
+"Напомни мне завтра в 15:00 позвонить бабушке" 📞`);
+        
+    } catch (error) {
+        console.error('❌ Ошибка сохранения часового пояса:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка сохранения часового пояса. Попробуйте позже.');
+    }
+}
+
+async function handleTeamTimezoneSelection(chatId, context, timezone) {
+    try {
+        // Получаем состояние настройки команды
+        const teamSetupState = context.teamSetupState;
+        if (!teamSetupState || !teamSetupState.memberData) {
+            await bot.sendMessage(chatId, '❌ Состояние настройки команды не найдено. Начните заново с /team');
+            return;
+        }
+        
+        let selectedTimezone = timezone;
+        if (timezone === 'same') {
+            // Используем часовой пояс текущего пользователя
+            selectedTimezone = context.meta?.timezone;
+            if (!selectedTimezone) {
+                await bot.sendMessage(chatId, '❌ У вас не настроен часовой пояс. Сначала настройте свой календарь через /calendar');
+                return;
+            }
+        } else if (timezone === 'other') {
+            await bot.sendMessage(chatId, `🌍 **Другой часовой пояс для участника**
+
+Для ручного ввода отправьте команду:
+/member_timezone Europe/Your_City
+
+Примеры:
+/member_timezone Europe/London
+/member_timezone Asia/Shanghai`);
+            return;
+        }
+        
+        // Сохраняем часовой пояс в данные участника
+        teamSetupState.memberData.timezone = selectedTimezone;
+        teamSetupState.lastUpdated = new Date().toISOString();
+        
+        // Сохраняем состояние в базе данных
+        const { error } = await supabase
+            .from('users')
+            .update({ 
+                meta: {
+                    ...context.meta,
+                    teamSetupState: teamSetupState
+                }
+            })
+            .eq('id', context.user_id);
+            
+        if (error) throw error;
+        
+        const timezoneName = TIMEZONES.find(tz => tz.value === selectedTimezone)?.name || selectedTimezone;
+        
+        // Показываем подтверждение
+        let message = `✅ **Часовой пояс сохранен: ${timezoneName}**\n\n`;
+        message += `📋 **Подтверждение данных участника:**\n\n`;
+        message += `👤 **Имя:** ${teamSetupState.memberData.display_name}\n`;
+        if (teamSetupState.memberData.aliases && teamSetupState.memberData.aliases.length > 0) {
+            message += `🏷️ **Псевдонимы:** ${teamSetupState.memberData.aliases.join(', ')}\n`;
+        }
+        if (teamSetupState.memberData.tg_chat_id) {
+            message += `📱 **Telegram:** настроен\n`;
+        }
+        if (teamSetupState.memberData.gcal_email) {
+            message += `📅 **Google Calendar:** ${teamSetupState.memberData.gcal_email}\n`;
+        }
+        message += `⏰ **Часовой пояс:** ${timezoneName}\n`;
+        message += `\n💾 Сохранить участника?`;
+
+        await bot.sendMessage(chatId, message, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '✅ Сохранить', callback_data: 'team_save_member' },
+                        { text: '❌ Отмена', callback_data: 'team_cancel_add' }
+                    ]
+                ]
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Ошибка сохранения часового пояса участника:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка сохранения часового пояса. Попробуйте позже.');
     }
 }
 
