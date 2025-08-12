@@ -912,7 +912,18 @@ async function handleStartCommand(chatId, context) {
 "Сохрани https://example.com"
 
 /setup - настроить интеграции
-/help - подробная справка`);
+/help - подробная справка`, {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { 
+                            text: '📱 Открыть Dashboard', 
+                            web_app: { url: 'https://reminder-dashboard-6i5jaiyj8-irinashafeevas-projects.vercel.app' }
+                        }
+                    ]
+                ]
+            }
+        });
     } else {
         // New user onboarding
         await bot.sendMessage(chatId, `🎯 Добро пожаловать в AI Assistant!
@@ -936,6 +947,12 @@ async function handleStartCommand(chatId, context) {
                     ],
                     [
                         { text: '3️⃣ Настроить позже', callback_data: 'setup_later' }
+                    ],
+                    [
+                        { 
+                            text: '📱 Открыть Dashboard', 
+                            web_app: { url: 'https://reminder-dashboard-6i5jaiyj8-irinashafeevas-projects.vercel.app' }
+                        }
                     ]
                 ]
             }
