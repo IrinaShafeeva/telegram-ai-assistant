@@ -1,25 +1,23 @@
 {
-  "name": "expense-tracker-bot",
+  "name": "voice-ai-expense-tracker",
   "version": "1.0.0",
-  "description": "Telegram bot for expense tracking with AI categorization and Google Sheets integration",
+  "description": "Voice AI Telegram bot for expense tracking with smart categorization",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "test": "jest",
-    "migrate": "node scripts/migrate.js"
+    "dev": "nodemon src/index.js"
   },
   "keywords": [
     "telegram",
     "bot",
+    "voice",
+    "ai",
     "expense",
     "tracker",
-    "ai",
     "openai",
-    "google-sheets",
-    "finance"
+    "whisper"
   ],
-  "author": "Expense Tracker Team",
+  "author": "Voice AI Tracker Team",
   "license": "MIT",
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
@@ -29,13 +27,11 @@
     "googleapis": "^129.0.0",
     "dotenv": "^16.3.1",
     "axios": "^1.6.7",
-    "multer": "^1.4.5-lts.1",
     "form-data": "^4.0.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.3",
-    "jest": "^29.7.0"
+    "nodemon": "^3.0.3"
   },
   "engines": {
     "node": ">=18.0.0"

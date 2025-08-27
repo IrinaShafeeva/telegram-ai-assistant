@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# DigitalOcean Droplet Setup Script for Expense Tracker Bot
+# DigitalOcean Droplet Setup Script for Voice AI Expense Tracker
 
-echo "🚀 Setting up DigitalOcean Droplet for Expense Tracker Bot..."
+echo "🚀 Setting up DigitalOcean Droplet for Voice AI Expense Tracker..."
 
 # Update system
 sudo apt update && sudo apt upgrade -y
@@ -21,42 +21,27 @@ sudo apt install git -y
 sudo apt install nginx -y
 
 # Create app directory
-sudo mkdir -p /var/www/expense-tracker-bot
-sudo chown $USER:$USER /var/www/expense-tracker-bot
+sudo mkdir -p /var/www/voice-ai-tracker
+sudo chown $USER:$USER /var/www/voice-ai-tracker
 
 # Clone repository (replace with your repo URL)
-cd /var/www/expense-tracker-bot
-git clone https://github.com/IrinaShafeeva/telegram-ai-assistant.git .
+cd /var/www/voice-ai-tracker
+git clone YOUR_REPO_URL_HERE .
 
 # Install dependencies
 npm install --production
 
-# Create .env file
-cat > .env << EOF
-# Telegram Bot
-BOT_TOKEN=8450163657:AAG0c4YmaZga83Iye6ymxWt5syMfgjMvYvs
+# Copy .env file from template
+cp .env.example .env
 
-# OpenAI (для AI-парсинга и аналитики)
-OPENAI_API_KEY=your_openai_api_key
-
-# Supabase
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_KEY=your_supabase_service_role_key
-
-# Google Sheets
-GOOGLE_APPLICATION_CREDENTIALS_JSON={"type":"service_account","project_id":"ai-assistant-sheets","private_key_id":"1dec1a0b1d69ada650622acf6284e490a38de84f","private_key":"-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCy40759u+4c2vq\nv1sxUwcDby/uvQMJAnBTPKgNYpnp47Dl064kCedxNyzxa7cmiWXgTOjuf3Fk1khL\nyJRSHEviQK+S3jsHmHhlBnleyV7UpzjBvwuUaUc51J8m+SeWzfbnSb2dHLtKY2L9\naHj9Ajbj0CaQUZU6cDY5PVDkaWg+IqLBQrvvf4Jj2p1JXaly7eXhr4w9DrVpMhGe\nvwke0RP1+BXOUEGJ8By62Z8R4X1f4qEFtPF4kejWHQV4WU4ULzCpEDah1XPxkKsv\ntwnVEAchn78MnHii0XA/GUWNvcyQscvrI6HSvOkzyMH7dvTKlUXvbFKwc92gtr0C\nq8HqyY07AgMBAAECggEAA8l+bfVuola860bBzlTxXH73PfRZR4eMi3+2YVtOK2xI\n3d3bFDXzwGHWFAZWCkY+X5plyt2jQg8+IbgENPjNhwgcHSa3QljDapb2NkARrU7T\n1MY0VkSSBE5C4pKfL12M4293pCvZ1FcK3yld5li+zCq5pkbKux1pmr7mIu/GDAqr\nKnrcKLzG9RTv5SRdjQsnJwFZvpS4MHGp7aTcuH9SmTYWJ/+B/SJ3k3tDwlwku6oe\n0VOEvhkVzcwKIeiHaJm85YkuTiojPOHrWqK8WX3dsUtVvGfJfB49iTocaISsl3a5\n32Ap9CgFaDPF1A6mXBiiAR75t0ajehEnY1ymzozYgQKBgQDjQebSzD8e1jPVT1Jb\nlwKoRjHxRAQzrtQ8LueYVXcDFSVovUNbE7r7/WmKVr/yM8fIAkjXlyxuDNllpBkI\nNc+cv32PqMRmXwPbNjTbAvMAsWqPrKjUh7aZzRCSR3IVU5UO5p4EhftaquZnq/Ke\nbFstALtJUgfjBF2KDXus7z+7zQKBgQDJg07gdfOv99h47/rH588NjUTz+VMQK0N1\naA0y2vOkmg3WVFQFBndQ/JjraphuvWWr4hhRrKg9NOQcn3alZYrYyoHqyLHmveHA\nKYSwkjtUnccTzGA1Tz2/jv0d6bvNCeP6T22KXhrjr62TfRUu2ZAP9oYgrTkShSQ2\nV42FNXy1JwKBgQCXuckNFhZSVTq4AMSAp9q7VFpFtV6EzwWdxMcU+oKByV13h1zv\n8sVVNkR/exmd8BpDG9tcLO8Z7nQ6mwunYp3hDiwbfNbbbjZZ5d/2FQr+fHUjxWfW\ntWEhYDrfHto5CNus3iXD6Vv+lblMoA1U3g0lh6aC9kSTubdl00iuFfHcRQKBgQC2\n6EbKGoYMbSzB6SF6HgCkTlwOD3rDrGFYyg9g37hS6boxlu2EejAHBKBQ3rppmeQV\nNe3ZBJzYoY+EI4Hv8tEqofV2hKBlzmiAoa7dDn5n+aZfZBzXhouHumQpqKRcIeQa\nqcnF1FEX5bfprZlyouvOcXehZVnuY4dRA/tis//z9QKBgQDG4R5YkO4lCMIrYl+l\nq72WzjltGjeDiPs5bkNJcrg8iB/RrFbu4whTOPVwEJE+nlLXQIhrhmvc1G9E2TlC\nC1i8ksaytpI9lBAwnpqvdmAbnTqU5lGWZFdrxJ2WzduClnyTS8npbtd/x1YlMBsV\nI6fTZfTlefq5vLuZmzh2yAIWxQ==\n-----END PRIVATE KEY-----\n","client_email":"ai-assistant-bot-270@ai-assistant-sheets.iam.gserviceaccount.com","client_id":"106923129060449156363","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/ai-assistant-bot-270%40ai-assistant-sheets.iam.gserviceaccount.com","universe_domain":"googleapis.com"}
-
-# App Settings
-NODE_ENV=production
-PORT=3000
-EOF
+echo "⚠️  IMPORTANT: Edit the .env file with your actual credentials:"
+echo "   nano .env"
 
 # Setup PM2 ecosystem
 cat > ecosystem.config.js << EOF
 module.exports = {
   apps: [{
-    name: 'expense-tracker-bot',
+    name: 'voice-ai-tracker',
     script: 'src/index.js',
     instances: 1,
     autorestart: true,
@@ -75,7 +60,7 @@ pm2 save
 pm2 startup
 
 # Setup Nginx reverse proxy
-sudo tee /etc/nginx/sites-available/expense-tracker-bot << EOF
+sudo tee /etc/nginx/sites-available/voice-ai-tracker << EOF
 server {
     listen 80;
     server_name your-domain.com;  # Replace with your domain
@@ -95,7 +80,7 @@ server {
 EOF
 
 # Enable site
-sudo ln -s /etc/nginx/sites-available/expense-tracker-bot /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/voice-ai-tracker /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
 
@@ -105,7 +90,12 @@ sudo ufw allow 80
 sudo ufw allow 443
 sudo ufw --force enable
 
-echo "✅ Setup complete! Your bot should be running on port 3000"
+echo "✅ Setup complete! Your Voice AI Tracker bot should be running on port 3000"
 echo "📊 Check status: pm2 status"
-echo "📝 View logs: pm2 logs expense-tracker-bot"
-echo "🔄 Restart: pm2 restart expense-tracker-bot"
+echo "📝 View logs: pm2 logs voice-ai-tracker"
+echo "🔄 Restart: pm2 restart voice-ai-tracker"
+echo ""
+echo "⚠️  Don't forget to:"
+echo "   1. Edit .env with your actual credentials: nano .env"
+echo "   2. Update YOUR_REPO_URL_HERE in this script"
+echo "   3. Replace your-domain.com in Nginx config"
