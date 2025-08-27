@@ -12,17 +12,25 @@ class GoogleSheetsService {
   initAuth() {
     try {
       // Check if Google credentials are provided
-      if (!process.env.GOOGLE_CLIENT_EMAIL || process.env.GOOGLE_CLIENT_EMAIL === 'temp@example.com') {
+      let credentials;
+      
+      if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+        // Use JSON credentials from environment variable
+        credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+        logger.info('Using Google credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON');
+      } else if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+        // Fallback to separate environment variables
+        credentials = {
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        };
+        logger.info('Using Google credentials from separate environment variables');
+      } else {
         logger.warn('Google Sheets credentials not provided - Google Sheets integration disabled');
         this.auth = null;
         this.sheets = null;
         return;
       }
-
-      const credentials = {
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      };
 
       this.auth = new google.auth.JWT(
         credentials.client_email,
@@ -32,7 +40,7 @@ class GoogleSheetsService {
       );
 
       this.sheets = google.sheets({ version: 'v4', auth: this.auth });
-      logger.info('Google Sheets API initialized');
+      logger.info('Google Sheets API initialized successfully');
     } catch (error) {
       logger.error('Failed to initialize Google Sheets API:', error);
       this.auth = null;
