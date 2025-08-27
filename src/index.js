@@ -25,24 +25,19 @@ async function startBot() {
     await setupDatabase();
     
     // Initialize bot
-    bot = new TelegramBot(process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+    const botToken = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+    if (!botToken) {
+      throw new Error('BOT_TOKEN is not configured');
+    }
+    
+    // Use polling mode for Vercel (no webhook needed)
+    bot = new TelegramBot(botToken, { polling: true });
     global.bot = bot; // Make bot globally available
     await setupBot(bot);
     
-    logger.info('🏦 Expense Tracker Bot started successfully');
+    logger.info('🏦 Expense Tracker Bot started successfully in polling mode');
     
-    // Start web server for webhook (if needed)
-    if (process.env.NODE_ENV === 'production' && process.env.WEBHOOK_URL) {
-      const botToken = process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-      app.post(`/webhook/${botToken}`, (req, res) => {
-        bot.processUpdate(req.body);
-        res.sendStatus(200);
-      });
-      
-      bot.setWebHook(`${process.env.WEBHOOK_URL}/webhook/${botToken}`);
-      logger.info(`Webhook set to: ${process.env.WEBHOOK_URL}/webhook/${process.env.BOT_TOKEN}`);
-    }
-    
+    // Start web server
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
     });
@@ -56,11 +51,17 @@ async function startBot() {
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  if (bot) {
+    bot.stopPolling();
+  }
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
+  if (bot) {
+    bot.stopPolling();
+  }
   process.exit(0);
 });
 
