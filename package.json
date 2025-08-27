@@ -1,46 +1,43 @@
 {
-  "name": "ai-assistant-new",
-  "version": "2.0.0",
-  "description": "Modern AI Assistant with scalable architecture",
-  "main": "src/app.js",
+  "name": "expense-tracker-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for expense tracking with AI categorization and Google Sheets integration",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "nodemon src/app.js",
-    "legacy": "node server.js",
-    "setup": "node scripts/simple-setup.js",
-    "setup:team": "node scripts/team-setup.js",
-    "test": "jest"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.38.0",
-    "axios": "^1.6.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "googleapis": "^128.0.0",
-    "multer": "^1.4.5-lts.1",
-    "node-cron": "^3.0.3",
-    "node-telegram-bot-api": "^0.66.0",
-    "openai": "^4.20.1",
-    "serverless-http": "^3.2.0",
-    "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "jest": "^29.7.0",
-    "nodemon": "^3.0.1"
-  },
-  "engines": {
-    "node": ">=16.0.0"
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest",
+    "migrate": "node scripts/migrate.js"
   },
   "keywords": [
     "telegram",
+    "bot",
+    "expense",
+    "tracker",
     "ai",
-    "assistant",
-    "expenses",
-    "tasks",
-    "notion",
-    "sheets"
+    "openai",
+    "google-sheets",
+    "finance"
   ],
-  "author": "",
-  "license": "MIT"
+  "author": "Expense Tracker Team",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "express": "^4.18.2",
+    "@supabase/supabase-js": "^2.39.0",
+    "openai": "^4.28.0",
+    "googleapis": "^129.0.0",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.7",
+    "multer": "^1.4.5-lts.1",
+    "form-data": "^4.0.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3",
+    "jest": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

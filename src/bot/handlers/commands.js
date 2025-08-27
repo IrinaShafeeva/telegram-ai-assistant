@@ -1,0 +1,454 @@
+const { userService, projectService, expenseService } = require('../../services/supabase');
+const googleSheetsService = require('../../services/googleSheets');
+const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
+const { getProjectSelectionKeyboard, getStatsDateKeyboard, getSettingsKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
+const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/constants');
+const { getBot } = require('../../utils/bot');
+const logger = require('../../utils/logger');
+
+// Command: /start
+async function handleStart(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    if (!user) {
+      return bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
+    }
+
+    // Check if user already has projects
+    const userProjects = await projectService.findByUserId(user.id);
+    
+    if (userProjects.length === 0) {
+      // First time user - onboarding
+      await bot.sendMessage(chatId, 
+        `🏦 Добро пожаловать в Expense Tracker!
+
+Я помогу вам легко отслеживать расходы:
+• 🎤 Отправляйте голосовые сообщения
+• 💬 Пишите текстом "кофе 200р"
+• 📊 Получайте аналитику с AI
+• 📋 Синхронизация с Google Sheets
+
+Сначала выберите основную валюту:`, 
+        { reply_markup: getCurrencyKeyboard() }
+      );
+    } else {
+      // Existing user - show main menu
+      await bot.sendMessage(chatId, 
+        `👋 С возвращением, ${user.first_name || 'друг'}!
+
+🏦 Expense Tracker готов к работе.
+
+Отправьте голосовое сообщение или напишите трату текстом, например:
+• "кофе 200 рублей"
+• "такси 15 долларов"
+• "продукты 3500"`, 
+        { reply_markup: getMainMenuKeyboard() }
+      );
+    }
+  } catch (error) {
+    logger.error('Start command error:', error);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте позже.');
+  }
+}
+
+// Command: /help
+async function handleHelp(msg, match) {
+  const chatId = msg.chat.id;
+  const bot = getBot();
+  
+  const helpText = `🏦 Expense Tracker - Справка
+
+📝 Как добавить расход:
+• Голосовое: "Потратил 500 рублей на продукты"
+• Текстом: "кофе 200р" или "15$ такси"
+
+🎯 Команды:
+/start - Запуск бота
+/projects - Управление проектами
+/stats - Статистика расходов
+/connect - Подключить Google таблицу
+/sync - Синхронизация с Google Sheets
+/settings - Настройки
+/categories - Свои категории (PRO)
+/upgrade - Информация о PRO плане
+
+💡 Советы:
+• Используйте голосовой ввод для быстроты
+• Бот запомнит ваши привычки и будет предлагать категории
+• Создайте таблицу в Google Sheets и подключите командой /connect
+• В PRO версии доступна работа в команде
+
+❓ Проблемы? Напишите @support_bot`;
+
+  await bot.sendMessage(chatId, helpText);
+}
+
+// Command: /projects
+async function handleProjects(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    const projects = await projectService.findByUserId(user.id);
+    
+    if (projects.length === 0) {
+      await bot.sendMessage(chatId, 
+        '📋 У вас пока нет проектов.\n\nХотите создать первый проект?',
+        { 
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '➕ Создать проект', callback_data: 'create_project' }
+            ]]
+          }
+        }
+      );
+      return;
+    }
+
+    let message = '📋 Ваши проекты:\n\n';
+    projects.forEach((project, index) => {
+      const isOwner = project.owner_id === user.id;
+      const status = project.is_active ? '✅' : '⏸️';
+      message += `${index + 1}. ${project.name} ${status}\n`;
+      message += `   ${isOwner ? '👑 Владелец' : '👤 Участник'}\n`;
+      if (project.google_sheet_url) {
+        message += `   📊 Google Sheets подключены\n`;
+      }
+      message += '\n';
+    });
+
+    await bot.sendMessage(chatId, message, {
+      reply_markup: getProjectSelectionKeyboard(projects, 'manage')
+    });
+  } catch (error) {
+    logger.error('Projects command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка загрузки проектов.');
+  }
+}
+
+// Command: /stats
+async function handleStats(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    // Get user's active project
+    const projects = await projectService.findByUserId(user.id);
+    const activeProject = projects.find(p => p.is_active) || projects[0];
+
+    if (!activeProject) {
+      await bot.sendMessage(chatId, 
+        '📊 Сначала создайте проект для отслеживания расходов.',
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '➕ Создать проект', callback_data: 'create_project' }
+            ]]
+          }
+        }
+      );
+      return;
+    }
+
+    await bot.sendMessage(chatId, 
+      `📊 Статистика по проекту "${activeProject.name}"\n\nВыберите период:`,
+      { reply_markup: getStatsDateKeyboard() }
+    );
+  } catch (error) {
+    logger.error('Stats command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка загрузки статистики.');
+  }
+}
+
+// Command: /sync
+async function handleSync(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    // Check sync limits
+    const canSync = await userService.checkDailyLimits(user.id, 'sync');
+    if (!canSync) {
+      const limit = user.is_premium ? 10 : 1;
+      await bot.sendMessage(chatId, 
+        `⛔ Лимит синхронизации исчерпан (${limit} раз в день).\n\n💎 В PRO плане: до 10 синхронизаций в день.`,
+        { reply_markup: getUpgradeKeyboard() }
+      );
+      return;
+    }
+
+    const projects = await projectService.findByUserId(user.id);
+    const projectsWithSheets = projects.filter(p => p.google_sheet_id);
+
+    if (projectsWithSheets.length === 0) {
+      await bot.sendMessage(chatId, 
+        '📊 У вас нет проектов с подключенными Google Sheets.\n\nGoogle Sheets создаются автоматически при создании проекта.'
+      );
+      return;
+    }
+
+    await bot.sendMessage(chatId, '🔄 Синхронизация с Google Sheets...');
+
+    let totalImported = 0;
+    let totalErrors = 0;
+
+    for (const project of projectsWithSheets) {
+      try {
+        const result = await googleSheetsService.syncFromGoogleSheets(user.id, project.id);
+        totalImported += result.imported;
+        totalErrors += result.errors.length;
+      } catch (error) {
+        logger.error(`Sync failed for project ${project.id}:`, error);
+        totalErrors++;
+      }
+    }
+
+    // Increment usage counter
+    await userService.incrementDailyUsage(user.id, 'sync');
+
+    await bot.sendMessage(chatId, 
+      `✅ Синхронизация завершена!\n\n📥 Импортировано: ${totalImported} записей\n${totalErrors > 0 ? `❌ Ошибок: ${totalErrors}` : ''}\n\nПроверьте свои данные командой /stats`
+    );
+  } catch (error) {
+    logger.error('Sync command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка синхронизации. Попробуйте позже.');
+  }
+}
+
+// Command: /settings
+async function handleSettings(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  const settingsText = `⚙️ Настройки
+
+👤 Пользователь: ${user.first_name} ${user.username ? `(@${user.username})` : ''}
+💱 Основная валюта: ${user.primary_currency}
+🌐 Язык: ${user.language_code === 'ru' ? 'Русский' : 'English'}
+💎 План: ${user.is_premium ? 'PRO' : 'FREE'}
+
+${user.is_premium ? '' : '💎 Обновитесь до PRO для дополнительных возможностей!'}`;
+
+  await bot.sendMessage(chatId, settingsText, {
+    reply_markup: getSettingsKeyboard()
+  });
+}
+
+// Command: /categories (PRO only)
+async function handleCategories(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (!user.is_premium) {
+    await bot.sendMessage(chatId, 
+      '💎 Кастомные категории доступны только в PRO плане!',
+      { reply_markup: getUpgradeKeyboard() }
+    );
+    return;
+  }
+
+  // TODO: Implement custom categories management
+  await bot.sendMessage(chatId, '🚧 Управление категориями будет добавлено в следующем обновлении.');
+}
+
+// Command: /upgrade
+async function handleUpgrade(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (user.is_premium) {
+    await bot.sendMessage(chatId, 
+      '💎 У вас уже есть PRO план!\n\nСпасибо за поддержку! 🙏'
+    );
+    return;
+  }
+
+  const upgradeText = `💎 Expense Tracker PRO
+
+🆓 FREE план:
+• 1 проект
+• 50 записей/месяц
+• 5 AI вопросов/день
+• 1 синхронизация/день
+• Базовые категории
+
+💎 PRO план ($7/месяц):
+• ∞ Неограниченные проекты
+• ∞ Неограниченные записи
+• 20 AI вопросов/день
+• 10 синхронизаций/день
+• Командная работа
+• Кастомные категории
+• Приоритетная поддержка
+
+🚀 Увеличьте продуктивность с PRO!`;
+
+  await bot.sendMessage(chatId, upgradeText, {
+    reply_markup: getUpgradeKeyboard()
+  });
+}
+
+// Command: /invite (PRO only)
+async function handleInvite(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const username = match[1];
+  const bot = getBot();
+
+  if (!user.is_premium) {
+    await bot.sendMessage(chatId, 
+      '💎 Приглашения в команду доступны только в PRO плане!',
+      { reply_markup: getUpgradeKeyboard() }
+    );
+    return;
+  }
+
+  // TODO: Implement team invitations
+  await bot.sendMessage(chatId, `🚧 Командные функции будут добавлены в следующем обновлении.\n\nВы хотели пригласить: @${username}`);
+}
+
+// Command: /email - Set Google email for sheet access
+async function handleEmail(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const email = match[1];
+  const bot = getBot();
+
+  try {
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      await bot.sendMessage(chatId, '❌ Неверный формат email. Попробуйте еще раз.');
+      return;
+    }
+
+    // Update user's email
+    await userService.update(user.id, { email: email });
+
+    // Share existing project sheets with the user
+    const projects = await projectService.findByUserId(user.id);
+    let sharedCount = 0;
+
+    for (const project of projects) {
+      if (project.google_sheet_id) {
+        const shared = await googleSheetsService.shareSheetWithUser(
+          project.google_sheet_id, 
+          email, 
+          user.first_name
+        );
+        if (shared) sharedCount++;
+      }
+    }
+
+    let message = `✅ Email ${email} сохранен!`;
+    if (sharedCount > 0) {
+      message += `\n📊 ${sharedCount} таблиц(ы) теперь доступны в вашем Google Drive`;
+    }
+
+    await bot.sendMessage(chatId, message);
+  } catch (error) {
+    logger.error('Email command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка сохранения email.');
+  }
+}
+
+// Command: /connect - Connect to user's Google Sheet
+async function handleConnect(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const spreadsheetId = match[1];
+  const bot = getBot();
+
+  try {
+    // Extract spreadsheet ID from URL if full URL provided
+    let cleanSpreadsheetId = spreadsheetId;
+    if (spreadsheetId.includes('docs.google.com')) {
+      const match = spreadsheetId.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      if (match) {
+        cleanSpreadsheetId = match[1];
+      } else {
+        await bot.sendMessage(chatId, '❌ Неверная ссылка на Google таблицу.');
+        return;
+      }
+    }
+
+    // Validate spreadsheet ID format
+    if (!/^[a-zA-Z0-9-_]+$/.test(cleanSpreadsheetId)) {
+      await bot.sendMessage(chatId, '❌ Неверный формат ID таблицы.');
+      return;
+    }
+
+    await bot.sendMessage(chatId, '🔄 Подключаюсь к вашей Google таблице...');
+
+    // Connect to the sheet
+    const result = await googleSheetsService.connectToUserSheet(cleanSpreadsheetId, user.email);
+
+    if (!result.success) {
+      await bot.sendMessage(chatId, `❌ ${result.error}`);
+      return;
+    }
+
+    // Get user's active project or create one
+    const projects = await projectService.findByUserId(user.id);
+    let activeProject = projects.find(p => p.is_active) || projects[0];
+
+    if (!activeProject) {
+      // Create new project
+      activeProject = await projectService.create({
+        owner_id: user.id,
+        name: 'Личные траты',
+        description: 'Проект для отслеживания расходов',
+        is_active: true
+      });
+    }
+
+    // Update project with sheet info
+    await projectService.update(activeProject.id, {
+      google_sheet_id: cleanSpreadsheetId,
+      google_sheet_url: result.sheetUrl
+    });
+
+    await bot.sendMessage(chatId, 
+      `✅ Подключение успешно!
+
+📊 Таблица: ${result.title}
+🔗 Ссылка: ${result.sheetUrl}
+
+Теперь все ваши расходы будут автоматически добавляться в эту таблицу.
+
+✨ Попробуйте добавить первую трату:
+• Голосом: "Потратил 200 рублей на кофе"
+• Текстом: "кофе 200р"`,
+      { reply_markup: getMainMenuKeyboard() }
+    );
+
+  } catch (error) {
+    logger.error('Connect command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка подключения к таблице.');
+  }
+}
+
+
+
+module.exports = {
+  handleStart,
+  handleHelp,
+  handleProjects,
+  handleStats,
+  handleSync,
+  handleSettings,
+  handleCategories,
+  handleUpgrade,
+  handleInvite,
+  handleEmail,
+  handleConnect
+};
