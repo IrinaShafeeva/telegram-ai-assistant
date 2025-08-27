@@ -228,8 +228,7 @@ const projectService = {
         *,
         project_members(user_id, role)
       `)
-      .or(`owner_id.eq.${userId},project_members.user_id.eq.${userId}`)
-      .eq('is_active', true);
+      .or(`user_id.eq.${userId}`);
     
     if (error) throw error;
     return data;
