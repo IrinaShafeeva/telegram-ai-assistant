@@ -242,20 +242,39 @@ async function handleCancelExpense(chatId, messageId, data) {
 }
 
 async function handleCreateProject(chatId, user) {
-  // Get user data
-  const userData = await userService.findById(user.id);
-  const userProjects = await projectService.findByUserId(user.id);
+  const bot = getBot();
+  
+  try {
+    // Get user data
+    const userData = await userService.findById(user.id);
+    const userProjects = await projectService.findByUserId(user.id);
 
-  // Check project limits for FREE users
-  if (!userData.is_premium && userProjects.length >= 1) {
+    // Check project limits for FREE users
+    if (!userData.is_premium && userProjects.length >= 1) {
+      await bot.sendMessage(chatId, 
+        '⛔ Лимит проектов исчерпан!\n\n🆓 FREE план: 1 проект\n💎 PRO план: неограниченные проекты',
+        { reply_markup: getUpgradeKeyboard() }
+      );
+      return;
+    }
+
+    // Create default project
+    const projectName = userProjects.length === 0 ? 'Личные расходы' : `Проект ${userProjects.length + 1}`;
+    
+    const newProject = await projectService.create({
+      owner_id: user.id,
+      name: projectName,
+      description: 'Проект для отслеживания расходов',
+      is_active: true
+    });
+
     await bot.sendMessage(chatId, 
-      '⛔ Лимит проектов исчерпан!\n\n🆓 FREE план: 1 проект\n💎 PRO план: неограниченные проекты',
-      { reply_markup: getUpgradeKeyboard() }
+      `✅ Проект "${projectName}" создан!\n\n✨ Теперь можете добавлять расходы:\n• Голосом: "Потратил 200 рублей на кофе"\n• Текстом: "кофе 200р"\n\n📊 Для подключения Google таблицы используйте: /connect [ID_таблицы]`
     );
-    return;
+  } catch (error) {
+    logger.error('Create project error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка создания проекта. Попробуйте позже.');
   }
-
-  await bot.sendMessage(chatId, '🚧 Создание проектов будет добавлено в следующем обновлении.');
 }
 
 async function handleUpgradeAction(chatId, messageId, data) {

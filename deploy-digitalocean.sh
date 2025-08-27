@@ -26,7 +26,7 @@ sudo chown $USER:$USER /var/www/voice-ai-tracker
 
 # Clone repository (replace with your repo URL)
 cd /var/www/voice-ai-tracker
-git clone YOUR_REPO_URL_HERE .
+git clone https://github.com/IrinaShafeeva/telegram-ai-assistant.git .
 
 # Install dependencies
 npm install --production

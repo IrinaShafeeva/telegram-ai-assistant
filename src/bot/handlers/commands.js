@@ -21,7 +21,7 @@ async function handleStart(msg, match) {
     const userProjects = await projectService.findByUserId(user.id);
     
     if (userProjects.length === 0) {
-      // First time user - onboarding
+      // First time user - create project immediately
       await bot.sendMessage(chatId, 
         `🏦 Добро пожаловать в Expense Tracker!
 
@@ -31,8 +31,26 @@ async function handleStart(msg, match) {
 • 📊 Получайте аналитику с AI
 • 📋 Синхронизация с Google Sheets
 
-Сначала выберите основную валюту:`, 
-        { reply_markup: getCurrencyKeyboard() }
+✨ Создаю ваш первый проект...`
+      );
+
+      // Create first project automatically
+      const project = await projectService.create({
+        owner_id: user.id,
+        name: 'Личные расходы',
+        description: 'Проект для отслеживания расходов',
+        is_active: true
+      });
+
+      await bot.sendMessage(chatId, 
+        `✅ Проект "Личные расходы" создан!
+
+✨ Теперь попробуйте добавить трату:
+• Голосом: "Потратил 200 рублей на кофе"
+• Текстом: "кофе 200р"
+
+📊 Для подключения Google таблицы используйте: /connect [ID_таблицы]`,
+        { reply_markup: getMainMenuKeyboard() }
       );
     } else {
       // Existing user - show main menu
