@@ -16,7 +16,29 @@ app.use(express.json());
 
 // Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'Expense Tracker Bot is running!' });
+  res.json({ 
+    status: 'Expense Tracker Bot is running!',
+    bot: bot ? 'Bot initialized' : 'Bot not initialized',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Test bot endpoint
+app.get('/test-bot', async (req, res) => {
+  try {
+    if (!bot) {
+      return res.json({ error: 'Bot not initialized' });
+    }
+    
+    const me = await bot.getMe();
+    res.json({ 
+      bot: me,
+      status: 'Bot is working',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
 });
 
 async function startBot() {

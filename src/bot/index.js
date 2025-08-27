@@ -71,6 +71,21 @@ async function setupBot(bot) {
     bot.onText(/\/email (.+)/, withUser(commandHandlers.handleEmail));
     bot.onText(/\/connect (.+)/, withUser(commandHandlers.handleConnect));
 
+    // Add general message logging
+    bot.on('message', (msg) => {
+      logger.info(`Received message: ${msg.text} from ${msg.from?.id}`);
+    });
+
+    // Add error handling
+    bot.on('error', (error) => {
+      logger.error('Bot error:', error);
+    });
+
+    // Add polling error handling
+    bot.on('polling_error', (error) => {
+      logger.error('Polling error:', error);
+    });
+
     // Voice message handler
     bot.on('voice', withUser(voiceHandlers.handleVoice));
     
