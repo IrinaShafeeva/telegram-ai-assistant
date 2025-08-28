@@ -140,7 +140,7 @@ async function handleProjects(msg, match) {
     });
 
     await bot.sendMessage(chatId, message, {
-      reply_markup: getProjectSelectionKeyboard(projects, 'manage')
+      reply_markup: getProjectSelectionKeyboard(projects, 'manage', user.is_premium)
     });
   } catch (error) {
     logger.error('Projects command error:', error);
@@ -273,8 +273,23 @@ async function handleCategories(msg, match) {
     return;
   }
 
-  // TODO: Implement custom categories management
-  await bot.sendMessage(chatId, '🚧 Управление категориями будет добавлено в следующем обновлении.');
+  await bot.sendMessage(chatId, 
+    `📂 Управление категориями
+    
+🆓 Доступные категории:
+• 🍔 Еда и рестораны
+• 🚗 Транспорт 
+• 🏠 Дом и быт
+• 🛍️ Покупки
+• 💊 Здоровье
+• 🎬 Развлечения
+• 💼 Работа
+• ✈️ Путешествия
+• 🎓 Образование
+
+💎 В PRO плане доступно создание своих категорий с эмодзи!`,
+    { reply_markup: getUpgradeKeyboard() }
+  );
 }
 
 // Command: /upgrade
@@ -330,8 +345,20 @@ async function handleInvite(msg, match) {
     return;
   }
 
-  // TODO: Implement team invitations
-  await bot.sendMessage(chatId, `🚧 Командные функции будут добавлены в следующем обновлении.\n\nВы хотели пригласить: @${username}`);
+  await bot.sendMessage(chatId, 
+    `👥 Командная работа (PRO функция)
+
+Пригласить пользователя @${username} в команду?
+
+💎 В PRO плане доступно:
+• Совместные проекты
+• Приглашения по username
+• Общие Google таблицы
+• Роли и права доступа
+
+🚧 Функция в разработке`,
+    { reply_markup: getUpgradeKeyboard() }
+  );
 }
 
 // Command: /email - Set Google email for sheet access

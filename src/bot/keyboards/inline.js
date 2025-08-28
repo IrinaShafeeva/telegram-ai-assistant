@@ -77,7 +77,7 @@ function getAmountSelectionKeyboard(expenseId) {
   };
 }
 
-function getProjectSelectionKeyboard(projects, action = 'switch') {
+function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = false) {
   const keyboard = [];
   
   projects.forEach(project => {
@@ -87,7 +87,8 @@ function getProjectSelectionKeyboard(projects, action = 'switch') {
     }]);
   });
   
-  if (action === 'switch') {
+  // Only show "New project" button for PRO users or if no projects exist
+  if (action === 'switch' && (isPremium || projects.length === 0)) {
     keyboard.push([{ 
       text: '➕ Новый проект', 
       callback_data: 'create_project' 

@@ -42,6 +42,18 @@ async function handleCallback(callbackQuery) {
       await handleCreateProject(chatId, user);
     } else if (data.startsWith('upgrade:')) {
       await handleUpgradeAction(chatId, messageId, data);
+    } else if (data.startsWith('stats:')) {
+      await handleStatsAction(chatId, messageId, data, user);
+    } else if (data.startsWith('settings:')) {
+      await handleSettingsAction(chatId, messageId, data, user);
+    } else if (data.startsWith('switch_project:')) {
+      await handleSwitchProject(chatId, messageId, data, user);
+    } else if (data.startsWith('custom_category:')) {
+      await handleCustomCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('custom_amount:')) {
+      await handleCustomAmount(chatId, messageId, data, user);
+    } else if (data === 'noop') {
+      // Do nothing - pagination placeholder
     } else {
       logger.warn('Unknown callback data:', data);
     }
@@ -249,7 +261,7 @@ async function handleCreateProject(chatId, user) {
     const userData = await userService.findById(user.id);
     const userProjects = await projectService.findByUserId(user.id);
 
-    // Check project limits for FREE users
+    // For FREE users, only allow 1 project
     if (!userData.is_premium && userProjects.length >= 1) {
       await bot.sendMessage(chatId, 
         '⛔ Лимит проектов исчерпан!\n\n🆓 FREE план: 1 проект\n💎 PRO план: неограниченные проекты',
@@ -258,18 +270,18 @@ async function handleCreateProject(chatId, user) {
       return;
     }
 
-    // Create default project
+    // For PRO users, create additional projects
     const projectName = userProjects.length === 0 ? 'Личные расходы' : `Проект ${userProjects.length + 1}`;
     
     const newProject = await projectService.create({
       owner_id: user.id,
       name: projectName,
       description: 'Проект для отслеживания расходов',
-      is_active: true
+      is_active: false // New projects are inactive by default
     });
 
     await bot.sendMessage(chatId, 
-      `✅ Проект "${projectName}" создан!\n\n✨ Теперь можете добавлять расходы:\n• Голосом: "Потратил 200 рублей на кофе"\n• Текстом: "кофе 200р"\n\n📊 Для подключения Google таблицы используйте: /connect [ID_таблицы]`
+      `✅ Проект "${projectName}" создан!\n\n📋 Переключитесь на него через /projects если хотите использовать.\n\n✨ Или продолжайте добавлять расходы в текущий проект.`
     );
   } catch (error) {
     logger.error('Create project error:', error);
@@ -283,7 +295,24 @@ async function handleUpgradeAction(chatId, messageId, data) {
   switch (action) {
     case 'pro':
       await bot.editMessageText(
-        '💎 Оплата PRO плана\n\n🚧 Интеграция с платежной системой будет добавлена в следующем обновлении.\n\nПока что свяжитесь с поддержкой: @support_bot',
+        `💎 Оплата PRO плана ($7/месяц)
+
+🚀 После оплаты получите:
+• ∞ Неограниченные проекты
+• ∞ Неограниченные записи  
+• 20 AI вопросов/день
+• 10 синхронизаций/день
+• 👥 Командная работа
+• 📂 Кастомные категории
+• ⚡ Приоритетная поддержка
+
+💳 Способы оплаты:
+• Банковская карта
+• PayPal
+• Криптовалюты
+
+📞 Для оплаты свяжитесь с поддержкой: @support_bot
+🚧 Автоматическая оплата скоро будет добавлена`,
         { chat_id: chatId, message_id: messageId }
       );
       break;
@@ -348,6 +377,172 @@ A: Да, поддерживаются все основные платежные
       });
       break;
   }
+}
+
+// Stats handlers
+async function handleStatsAction(chatId, messageId, data, user) {
+  const bot = getBot();
+  const parts = data.split(':');
+  const action = parts[1];
+  
+  try {
+    const projects = await projectService.findByUserId(user.id);
+    const activeProject = projects.find(p => p.is_active) || projects[0];
+    
+    if (!activeProject) {
+      await bot.editMessageText('📊 Сначала создайте проект для отслеживания расходов.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    if (action === 'detailed') {
+      // Detailed analytics
+      await bot.editMessageText(`📊 Детальная аналитика по проекту "${activeProject.name}":\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+    } else if (action === 'last3months') {
+      // Last 3 months stats
+      await bot.editMessageText(`📊 Статистика за последние 3 месяца:\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+    } else if (action === 'year') {
+      // Yearly stats
+      const year = parts[2];
+      await bot.editMessageText(`📊 Статистика за ${year} год:\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+    } else {
+      // Monthly stats
+      const month = parts[1];
+      const year = parts[2];
+      await bot.editMessageText(`📊 Статистика за ${month}/${year}:\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+    }
+  } catch (error) {
+    logger.error('Stats action error:', error);
+    await bot.editMessageText('❌ Ошибка загрузки статистики.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Settings handlers
+async function handleSettingsAction(chatId, messageId, data, user) {
+  const bot = getBot();
+  const action = data.split(':')[1];
+  
+  try {
+    switch (action) {
+      case 'currency':
+        await bot.editMessageText('💱 Выбор валюты:\n\n🚧 Функция в разработке. Пока используется валюта из расходов.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        break;
+        
+      case 'language':
+        await bot.editMessageText('🌐 Выбор языка:\n\n🚧 Функция в разработке. Пока поддерживается русский язык.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        break;
+        
+      case 'export':
+        await bot.editMessageText('📊 Экспорт данных:\n\n🚧 Функция в разработке. Используйте Google Sheets для экспорта.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        break;
+        
+      case 'notifications':
+        await bot.editMessageText('🔔 Настройки уведомлений:\n\n🚧 Функция в разработке.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        break;
+        
+      case 'delete_account':
+        await bot.editMessageText('🗑 Удаление аккаунта:\n\n⚠️ Это действие удалит все ваши данные!\n\n🚧 Функция в разработке. Обратитесь в поддержку.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        break;
+    }
+  } catch (error) {
+    logger.error('Settings action error:', error);
+    await bot.editMessageText('❌ Ошибка настроек.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Project switching
+async function handleSwitchProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+  
+  try {
+    // Deactivate all user's projects
+    const projects = await projectService.findByUserId(user.id);
+    for (const project of projects) {
+      if (project.is_active) {
+        await projectService.update(project.id, { is_active: false });
+      }
+    }
+    
+    // Activate selected project
+    const selectedProject = await projectService.update(projectId, { is_active: true });
+    
+    await bot.editMessageText(`✅ Переключились на проект "${selectedProject.name}"!\n\nТеперь все новые расходы будут сохраняться в этот проект.`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  } catch (error) {
+    logger.error('Switch project error:', error);
+    await bot.editMessageText('❌ Ошибка переключения проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Custom category (PRO feature)
+async function handleCustomCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+  const userData = await userService.findById(user.id);
+  
+  if (!userData.is_premium) {
+    await bot.editMessageText('💎 Кастомные категории доступны только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getUpgradeKeyboard()
+    });
+    return;
+  }
+  
+  await bot.editMessageText('➕ Создание своей категории:\n\n🚧 Функция в разработке.', {
+    chat_id: chatId,
+    message_id: messageId
+  });
+}
+
+// Custom amount input
+async function handleCustomAmount(chatId, messageId, data, user) {
+  const bot = getBot();
+  
+  await bot.editMessageText('✏️ Введение своей суммы:\n\n🚧 Функция в разработке.\nПока используйте готовые варианты или редактируйте расход после создания.', {
+    chat_id: chatId,
+    message_id: messageId
+  });
 }
 
 module.exports = {
