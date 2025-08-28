@@ -314,16 +314,17 @@ async function handleUpgrade(msg, match) {
 • 1 синхронизация/день
 • Базовые категории
 
-💎 PRO план ($7/месяц):
+💎 PRO план (100 ⭐ Stars):
 • ∞ Неограниченные проекты
 • ∞ Неограниченные записи
 • 20 AI вопросов/день
 • 10 синхронизаций/день
-• Командная работа
-• Кастомные категории
-• Приоритетная поддержка
+• 👥 Командная работа
+• 📂 Кастомные категории
+• ⚡ Приоритетная поддержка
 
-🚀 Увеличьте продуктивность с PRO!`;
+🚀 Оплата через Telegram Stars!
+💰 100 Stars ≈ $1-2`;
 
   await bot.sendMessage(chatId, upgradeText, {
     reply_markup: getUpgradeKeyboard()
@@ -484,6 +485,36 @@ async function handleConnect(msg, match) {
 
 
 
+// Secret command: /devpro - Activate PRO for developers
+async function handleDevPro(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    // Update user to PRO status
+    await userService.update(user.id, { is_premium: true });
+
+    await bot.sendMessage(chatId, 
+      `🎉 PRO план активирован!
+
+💎 Теперь вам доступно:
+• ∞ Неограниченные проекты
+• ∞ Неограниченные записи  
+• 20 AI вопросов/день
+• 10 синхронизаций/день
+• 👥 Командная работа
+• 📂 Кастомные категории
+• ⚡ Приоритетная поддержка
+
+Добро пожаловать в PRO! 🚀`
+    );
+  } catch (error) {
+    logger.error('DevPro command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка активации PRO.');
+  }
+}
+
 module.exports = {
   handleStart,
   handleHelp,
@@ -495,5 +526,6 @@ module.exports = {
   handleUpgrade,
   handleInvite,
   handleEmail,
-  handleConnect
+  handleConnect,
+  handleDevPro
 };

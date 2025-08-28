@@ -294,27 +294,41 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
   switch (action) {
     case 'pro':
-      await bot.editMessageText(
-        `💎 Оплата PRO плана ($7/месяц)
+      // Send Telegram Stars invoice
+      try {
+        const invoice = {
+          title: '💎 Expense Tracker PRO',
+          description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории!',
+          payload: 'expense_tracker_pro_monthly',
+          provider_token: '', // Empty for Telegram Stars
+          currency: 'XTR', // Telegram Stars currency
+          prices: [{ label: 'PRO план (1 месяц)', amount: 100 }], // 100 Stars = ~$1-2
+          photo_url: undefined,
+          photo_size: undefined,
+          photo_width: undefined,
+          photo_height: undefined,
+          need_name: false,
+          need_phone_number: false,
+          need_email: false,
+          need_shipping_address: false,
+          send_phone_number_to_provider: false,
+          send_email_to_provider: false,
+          is_flexible: false
+        };
 
-🚀 После оплаты получите:
-• ∞ Неограниченные проекты
-• ∞ Неограниченные записи  
-• 20 AI вопросов/день
-• 10 синхронизаций/день
-• 👥 Командная работа
-• 📂 Кастомные категории
-• ⚡ Приоритетная поддержка
-
-💳 Способы оплаты:
-• Банковская карта
-• PayPal
-• Криптовалюты
-
-📞 Для оплаты свяжитесь с поддержкой: @support_bot
-🚧 Автоматическая оплата скоро будет добавлена`,
-        { chat_id: chatId, message_id: messageId }
-      );
+        await bot.sendInvoice(chatId, invoice);
+        
+        await bot.editMessageText(
+          `💎 Счет на оплату отправлен!\n\n⭐ Стоимость: 100 Telegram Stars\n💰 Примерно: $1-2\n\n✨ После оплаты PRO активируется автоматически!`,
+          { chat_id: chatId, message_id: messageId }
+        );
+      } catch (error) {
+        logger.error('Invoice creation error:', error);
+        await bot.editMessageText(
+          `💎 Оплата PRO плана\n\n⭐ Стоимость: 100 Telegram Stars (~$1-2)\n\n🚧 Временно недоступно. Используйте команду /devpro для тестирования PRO функций.\n\nОбратитесь в поддержку: @support_bot`,
+          { chat_id: chatId, message_id: messageId }
+        );
+      }
       break;
       
     case 'compare':

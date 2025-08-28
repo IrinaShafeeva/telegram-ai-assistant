@@ -70,6 +70,7 @@ async function setupBot(bot) {
     bot.onText(/\/invite (.+)/, withUser(commandHandlers.handleInvite));
     bot.onText(/\/email (.+)/, withUser(commandHandlers.handleEmail));
     bot.onText(/\/connect (.+)/, withUser(commandHandlers.handleConnect));
+    bot.onText(/\/devpro/, withUser(commandHandlers.handleDevPro));
 
     // Add general message logging
     bot.on('message', (msg) => {
@@ -94,6 +95,29 @@ async function setupBot(bot) {
     
     // Callback query handler
     bot.on('callback_query', withUserCallback(callbackHandlers.handleCallback));
+    
+    // Successful payment handler
+    bot.on('successful_payment', withUser(async (msg) => {
+      const chatId = msg.chat.id;
+      const user = msg.user;
+      const payment = msg.successful_payment;
+      
+      try {
+        if (payment.invoice_payload === 'expense_tracker_pro_monthly') {
+          // Activate PRO plan
+          await userService.update(user.id, { is_premium: true });
+          
+          await bot.sendMessage(chatId, 
+            `🎉 Оплата прошла успешно!\n\n💎 PRO план активирован!\n\n✨ Теперь вам доступны все PRO функции:\n• ∞ Неограниченные проекты\n• ∞ Неограниченные записи\n• 20 AI вопросов/день\n• 10 синхронизаций/день\n• 👥 Командная работа\n• 📂 Кастомные категории\n\nСпасибо за поддержку! 🚀`
+          );
+          
+          logger.info(`PRO plan activated for user ${user.id} via payment`);
+        }
+      } catch (error) {
+        logger.error('Payment processing error:', error);
+        await bot.sendMessage(chatId, '❌ Ошибка обработки платежа. Обратитесь в поддержку.');
+      }
+    }));
 
     // Error handler
     bot.on('polling_error', (error) => {
