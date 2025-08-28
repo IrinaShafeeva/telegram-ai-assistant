@@ -103,15 +103,25 @@ async function setupBot(bot) {
       const payment = msg.successful_payment;
       
       try {
-        if (payment.invoice_payload === 'expense_tracker_pro_monthly') {
+        const validPayloads = ['expense_tracker_pro_1month', 'expense_tracker_pro_6months', 'expense_tracker_pro_1year'];
+        
+        if (validPayloads.includes(payment.invoice_payload)) {
           // Activate PRO plan
           await userService.update(user.id, { is_premium: true });
           
+          const periodMap = {
+            'expense_tracker_pro_1month': '1 месяц',
+            'expense_tracker_pro_6months': '6 месяцев', 
+            'expense_tracker_pro_1year': '1 год'
+          };
+          
+          const period = periodMap[payment.invoice_payload];
+          
           await bot.sendMessage(chatId, 
-            `🎉 Оплата прошла успешно!\n\n💎 PRO план активирован!\n\n✨ Теперь вам доступны все PRO функции:\n• ∞ Неограниченные проекты\n• ∞ Неограниченные записи\n• 20 AI вопросов/день\n• 10 синхронизаций/день\n• 👥 Командная работа\n• 📂 Кастомные категории\n\nСпасибо за поддержку! 🚀`
+            `🎉 Оплата прошла успешно!\n\n💎 PRO план активирован на ${period}!\n\n✨ Теперь вам доступны все PRO функции:\n• ∞ Неограниченные проекты\n• ∞ Неограниченные записи\n• 20 AI вопросов/день\n• 10 синхронизаций/день\n• 👥 Командная работа\n• 📂 Кастомные категории\n\nСпасибо за поддержку! 🚀`
           );
           
-          logger.info(`PRO plan activated for user ${user.id} via payment`);
+          logger.info(`PRO plan activated for user ${user.id} via payment (${period})`);
         }
       } catch (error) {
         logger.error('Payment processing error:', error);

@@ -142,7 +142,11 @@ function getUpgradeKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: '💎 Купить PRO ($7/мес)', callback_data: 'upgrade:pro' }
+        { text: '💎 1 месяц (250 ⭐)', callback_data: 'upgrade:pro_month' }
+      ],
+      [
+        { text: '💎 6 месяцев (1200 ⭐) 🔥', callback_data: 'upgrade:pro_6months' },
+        { text: '💎 1 год (2000 ⭐) 🔥🔥', callback_data: 'upgrade:pro_year' }
       ],
       [
         { text: '📋 Сравнить планы', callback_data: 'upgrade:compare' }

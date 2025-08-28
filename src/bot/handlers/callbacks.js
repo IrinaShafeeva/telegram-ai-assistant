@@ -293,42 +293,37 @@ async function handleUpgradeAction(chatId, messageId, data) {
   const action = data.split(':')[1];
 
   switch (action) {
-    case 'pro':
-      // Send Telegram Stars invoice
-      try {
-        const invoice = {
-          title: '💎 Expense Tracker PRO',
-          description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории!',
-          payload: 'expense_tracker_pro_monthly',
-          provider_token: '', // Empty for Telegram Stars
-          currency: 'XTR', // Telegram Stars currency
-          prices: [{ label: 'PRO план (1 месяц)', amount: 100 }], // 100 Stars = ~$1-2
-          photo_url: undefined,
-          photo_size: undefined,
-          photo_width: undefined,
-          photo_height: undefined,
-          need_name: false,
-          need_phone_number: false,
-          need_email: false,
-          need_shipping_address: false,
-          send_phone_number_to_provider: false,
-          send_email_to_provider: false,
-          is_flexible: false
-        };
-
-        await bot.sendInvoice(chatId, invoice);
-        
-        await bot.editMessageText(
-          `💎 Счет на оплату отправлен!\n\n⭐ Стоимость: 100 Telegram Stars\n💰 Примерно: $1-2\n\n✨ После оплаты PRO активируется автоматически!`,
-          { chat_id: chatId, message_id: messageId }
-        );
-      } catch (error) {
-        logger.error('Invoice creation error:', error);
-        await bot.editMessageText(
-          `💎 Оплата PRO плана\n\n⭐ Стоимость: 100 Telegram Stars (~$1-2)\n\n🚧 Временно недоступно. Используйте команду /devpro для тестирования PRO функций.\n\nОбратитесь в поддержку: @support_bot`,
-          { chat_id: chatId, message_id: messageId }
-        );
-      }
+    case 'pro_month':
+      await createInvoice(chatId, messageId, {
+        title: '💎 Expense Tracker PRO (1 месяц)',
+        description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории на 1 месяц!',
+        payload: 'expense_tracker_pro_1month',
+        amount: 250,
+        period: '1 месяц',
+        price: '$5'
+      });
+      break;
+      
+    case 'pro_6months':
+      await createInvoice(chatId, messageId, {
+        title: '💎 Expense Tracker PRO (6 месяцев)',
+        description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории на 6 месяцев! Экономия $6!',
+        payload: 'expense_tracker_pro_6months',
+        amount: 1200,
+        period: '6 месяцев',
+        price: '$24 (экономия $6)'
+      });
+      break;
+      
+    case 'pro_year':
+      await createInvoice(chatId, messageId, {
+        title: '💎 Expense Tracker PRO (1 год)',
+        description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории на целый год! Экономия $20!',
+        payload: 'expense_tracker_pro_1year',
+        amount: 2000,
+        period: '1 год',
+        price: '$40 (экономия $20)'
+      });
       break;
       
     case 'compare':
@@ -557,6 +552,46 @@ async function handleCustomAmount(chatId, messageId, data, user) {
     chat_id: chatId,
     message_id: messageId
   });
+}
+
+// Helper function to create Telegram Stars invoice
+async function createInvoice(chatId, messageId, options) {
+  const bot = getBot();
+  
+  try {
+    const invoice = {
+      title: options.title,
+      description: options.description,
+      payload: options.payload,
+      provider_token: '', // Empty for Telegram Stars
+      currency: 'XTR', // Telegram Stars currency
+      prices: [{ label: `PRO план (${options.period})`, amount: options.amount }],
+      photo_url: undefined,
+      photo_size: undefined,
+      photo_width: undefined,
+      photo_height: undefined,
+      need_name: false,
+      need_phone_number: false,
+      need_email: false,
+      need_shipping_address: false,
+      send_phone_number_to_provider: false,
+      send_email_to_provider: false,
+      is_flexible: false
+    };
+
+    await bot.sendInvoice(chatId, invoice);
+    
+    await bot.editMessageText(
+      `💎 Счет на оплату отправлен!\n\n⭐ Стоимость: ${options.amount} Telegram Stars\n💰 ${options.price}\n📅 Период: ${options.period}\n\n✨ После оплаты PRO активируется автоматически!`,
+      { chat_id: chatId, message_id: messageId }
+    );
+  } catch (error) {
+    logger.error('Invoice creation error:', error);
+    await bot.editMessageText(
+      `💎 Оплата PRO плана\n\n⭐ Стоимость: ${options.amount} Telegram Stars (${options.price})\n📅 Период: ${options.period}\n\n🚧 Временно недоступно. Используйте команду /devpro для тестирования PRO функций.\n\nОбратитесь в поддержку: @support_bot`,
+      { chat_id: chatId, message_id: messageId }
+    );
+  }
 }
 
 module.exports = {

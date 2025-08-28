@@ -314,7 +314,7 @@ async function handleUpgrade(msg, match) {
 • 1 синхронизация/день
 • Базовые категории
 
-💎 PRO план (100 ⭐ Stars):
+💎 PRO планы:
 • ∞ Неограниченные проекты
 • ∞ Неограниченные записи
 • 20 AI вопросов/день
@@ -323,8 +323,10 @@ async function handleUpgrade(msg, match) {
 • 📂 Кастомные категории
 • ⚡ Приоритетная поддержка
 
-🚀 Оплата через Telegram Stars!
-💰 100 Stars ≈ $1-2`;
+💰 Цены (Telegram Stars):
+• 1 месяц: 250 ⭐ (~$5)
+• 6 месяцев: 1200 ⭐ (~$24) 🔥 Экономия $6
+• 1 год: 2000 ⭐ (~$40) 🔥🔥 Экономия $20`;
 
   await bot.sendMessage(chatId, upgradeText, {
     reply_markup: getUpgradeKeyboard()
