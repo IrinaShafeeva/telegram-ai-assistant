@@ -216,9 +216,24 @@ class GoogleSheetsService {
         'bot'
       ]];
 
+      // Try to get the first sheet name from the spreadsheet
+      let sheetName = 'Sheet1'; // Default fallback
+      try {
+        const spreadsheet = await this.sheets.spreadsheets.get({
+          spreadsheetId: project.google_sheet_id,
+          fields: 'sheets.properties.title'
+        });
+        
+        if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
+          sheetName = spreadsheet.data.sheets[0].properties.title;
+        }
+      } catch (error) {
+        logger.warn('Could not get sheet name, using default:', error.message);
+      }
+
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: project.google_sheet_id,
-        range: 'A:G',
+        range: `${sheetName}!A:G`,
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: { values }
@@ -226,9 +241,21 @@ class GoogleSheetsService {
 
       // Mark as synced
       await expenseService.update(expense.id, { synced_to_sheets: true });
-      logger.debug(`Added expense to sheet: ${expense.id}`);
+      logger.info(`✅ Added expense to sheet "${sheetName}": ${expense.description} - ${expense.amount} ${expense.currency}`);
     } catch (error) {
-      logger.error('Failed to add expense to sheet:', error);
+      logger.error('❌ Failed to add expense to sheet:', {
+        error: error.message,
+        expenseId: expense.id,
+        sheetId: project.google_sheet_id,
+        sheetName: sheetName || 'unknown'
+      });
+      
+      // Helpful error message for common issues
+      if (error.message.includes('404')) {
+        logger.error('💡 Hint: Google Sheet not found. Check if sheet ID is correct and service account has access.');
+      } else if (error.message.includes('403')) {
+        logger.error('💡 Hint: Permission denied. Make sure exp-trck@ai-assistant-sheets.iam.gserviceaccount.com is added as Editor to the Google Sheet.');
+      }
     }
   }
 
