@@ -141,6 +141,32 @@ async function createTables() {
   } catch (error) {
     logger.warn('Could not run confidence column migration:', error);
   }
+
+  // Create increment_counter function if it doesn't exist
+  try {
+    const { error: functionError } = await supabase.rpc('execute_sql', {
+      sql: `
+        CREATE OR REPLACE FUNCTION increment_counter(user_id BIGINT, counter_field TEXT)
+        RETURNS VOID AS $$
+        BEGIN
+          -- Update the specified counter field for the user
+          IF counter_field = 'daily_ai_questions_used' THEN
+            UPDATE users SET daily_ai_questions_used = COALESCE(daily_ai_questions_used, 0) + 1 WHERE id = user_id;
+          ELSIF counter_field = 'daily_syncs_used' THEN
+            UPDATE users SET daily_syncs_used = COALESCE(daily_syncs_used, 0) + 1 WHERE id = user_id;
+          END IF;
+        END;
+        $$ LANGUAGE plpgsql SECURITY DEFINER;
+      `
+    });
+    if (functionError) {
+      logger.warn('Could not create increment_counter function:', functionError);
+    } else {
+      logger.info('increment_counter function created successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not create increment_counter function:', error);
+  }
 }
 
 // User operations

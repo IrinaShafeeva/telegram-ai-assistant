@@ -14,18 +14,34 @@ class GoogleSheetsService {
       // Check if Google credentials are provided
       let credentials;
       
-      if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-        // Use JSON credentials from environment variable
+      // Try to read credentials from JSON file first
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const credentialsPath = path.join(process.cwd(), 'ai-assistant-sheets-ddaae7505964.json');
+        
+        if (fs.existsSync(credentialsPath)) {
+          credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+          logger.info('Using Google credentials from JSON file');
+        }
+      } catch (fileError) {
+        logger.debug('Could not read credentials from file:', fileError.message);
+      }
+      
+      // Fallback to environment variable
+      if (!credentials && process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
         credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
         logger.info('Using Google credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON');
-      } else if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+      } else if (!credentials && process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
         // Fallback to separate environment variables
         credentials = {
           client_email: process.env.GOOGLE_CLIENT_EMAIL,
           private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
         };
         logger.info('Using Google credentials from separate environment variables');
-      } else {
+      }
+      
+      if (!credentials) {
         logger.warn('Google Sheets credentials not provided - Google Sheets integration disabled');
         this.auth = null;
         this.sheets = null;
