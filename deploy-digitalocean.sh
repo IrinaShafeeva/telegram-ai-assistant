@@ -34,6 +34,12 @@ npm install --production
 # Copy .env file from template
 cp .env.example .env
 
+# Add Google credentials if JSON file exists
+if [ -f "ai-assistant-sheets-ddaae7505964.json" ]; then
+  echo "GOOGLE_APPLICATION_CREDENTIALS_JSON=$(cat ai-assistant-sheets-ddaae7505964.json | tr -d '\n')" >> .env
+  echo "📄 Google Sheets credentials added to .env"
+fi
+
 echo "⚠️  IMPORTANT: Edit the .env file with your actual credentials:"
 echo "   nano .env"
 

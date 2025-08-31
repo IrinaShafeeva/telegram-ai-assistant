@@ -127,6 +127,20 @@ async function createTables() {
       logger.error('Error creating table:', error);
     }
   }
+
+  // Ensure confidence column exists in user_patterns (migration for existing deployments)
+  try {
+    const { error: migrationError } = await supabase.rpc('execute_sql', {
+      sql: 'ALTER TABLE user_patterns ADD COLUMN IF NOT EXISTS confidence DECIMAL(3,2) DEFAULT 0.5;'
+    });
+    if (migrationError) {
+      logger.warn('Confidence column migration warning:', migrationError);
+    } else {
+      logger.info('Confidence column migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run confidence column migration:', error);
+  }
 }
 
 // User operations
