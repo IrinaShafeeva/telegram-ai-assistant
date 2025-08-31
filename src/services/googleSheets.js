@@ -262,7 +262,7 @@ class GoogleSheetsService {
       logger.error('❌ Failed to add expense to sheet:', {
         error: error.message,
         expenseId: expense.id,
-        sheetId: project.google_sheet_id,
+        sheetId: project?.google_sheet_id || 'unknown',
         sheetName: sheetName || 'unknown'
       });
       
