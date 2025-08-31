@@ -240,8 +240,8 @@ const userService = {
   async incrementDailyUsage(userId, action) {
     const field = action === 'ai_question' ? 'daily_ai_questions_used' : 'daily_syncs_used';
     const { error } = await supabase.rpc('increment_counter', {
-      user_id: userId,
-      counter_field: field
+      p_user_id: userId,
+      p_counter_field: field
     });
     
     if (error) throw error;

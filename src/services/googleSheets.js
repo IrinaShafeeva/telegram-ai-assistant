@@ -325,7 +325,7 @@ class GoogleSheetsService {
             category: row[4] || 'Прочее',
             description: row[1] || 'Manual entry',
             expense_date: this.parseDate(row[0]),
-            source: 'sheets',
+            source_text: 'sheets',
             sheets_row_id: rowNumber,
             synced_to_sheets: true
           };
@@ -361,7 +361,7 @@ class GoogleSheetsService {
   async findExpenseBySheetRow(projectId, rowNumber) {
     try {
       const expenses = await expenseService.findByProject(projectId, 1000, 0);
-      return expenses.find(exp => exp.sheets_row_id === rowNumber && exp.source === 'sheets');
+      return expenses.find(exp => exp.sheets_row_id === rowNumber && exp.source_text === 'sheets');
     } catch (error) {
       logger.error('Failed to find expense by sheet row:', error);
       return null;
