@@ -266,9 +266,24 @@ class GoogleSheetsService {
         return { imported: 0, errors: ['No Google Sheet linked to project'] };
       }
 
+      // Get the first sheet name dynamically
+      let sheetName = 'Sheet1';
+      try {
+        const spreadsheet = await this.sheets.spreadsheets.get({
+          spreadsheetId: project.google_sheet_id,
+          fields: 'sheets.properties.title'
+        });
+        
+        if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
+          sheetName = spreadsheet.data.sheets[0].properties.title;
+        }
+      } catch (error) {
+        logger.warn('Could not get sheet name for sync, using default:', error.message);
+      }
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: project.google_sheet_id,
-        range: 'A2:G', // Skip header row
+        range: `${sheetName}!A2:G`, // Skip header row
       });
 
       const rows = response.data.values || [];
@@ -311,11 +326,19 @@ class GoogleSheetsService {
         }
       }
 
-      logger.info(`Sync completed: ${imported} imported, ${errors.length} errors`);
+      logger.info(`📊 Sync completed from "${sheetName}": ${imported} imported, ${errors.length} errors`);
       return { imported, errors };
     } catch (error) {
-      logger.error('Failed to sync from Google Sheets:', error);
-      throw new Error('Не удалось синхронизировать с Google таблицей');
+      logger.error('❌ Failed to sync from Google Sheets:', error);
+      
+      // Helpful error messages
+      if (error.message.includes('404')) {
+        throw new Error('Google таблица не найдена. Проверьте правильность подключения.');
+      } else if (error.message.includes('403')) {
+        throw new Error('Нет доступа к Google таблице. Проверьте права доступа.');
+      } else {
+        throw new Error('Не удалось синхронизировать с Google таблицей');
+      }
     }
   }
 
