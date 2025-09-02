@@ -317,7 +317,7 @@ class GoogleSheetsService {
           // Skip rows without essential data
           if (!row[0] || !row[2]) continue;
 
-          const expenseData = {
+          let expenseData = {
             user_id: userId,
             project_id: projectId,
             amount: parseFloat(row[2]) || 0,
@@ -333,6 +333,33 @@ class GoogleSheetsService {
           // Check if already imported
           const existing = await this.findExpenseBySheetRow(projectId, rowNumber);
           if (existing) continue;
+
+          // Apply AI categorization if needed
+          try {
+            const { DEFAULT_CATEGORIES } = require('../config/constants');
+            const validCategories = DEFAULT_CATEGORIES.map(cat => cat.replace(/^[^\s]+ /, '')); // Remove emojis
+            
+            // Check if category needs AI processing
+            const needsAIProcessing = !expenseData.category || 
+                                    expenseData.category === 'Прочее' || 
+                                    !validCategories.includes(expenseData.category);
+            
+            if (needsAIProcessing && expenseData.description && expenseData.description !== 'Manual entry') {
+              const openaiService = require('./openai');
+              const userInput = `${expenseData.description} ${expenseData.amount} ${expenseData.currency}`;
+              
+              const aiResult = await openaiService.parseExpense(userInput);
+              if (aiResult && aiResult.category) {
+                expenseData.category = aiResult.category;
+              }
+              if (aiResult && aiResult.description && aiResult.description !== expenseData.description) {
+                expenseData.description = aiResult.description;
+              }
+            }
+          } catch (aiError) {
+            // Continue without AI processing if it fails
+            logger.warn(`AI processing failed for row ${rowNumber}:`, aiError.message);
+          }
 
           await expenseService.create(expenseData);
           imported++;
