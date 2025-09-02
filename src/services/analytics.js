@@ -12,7 +12,7 @@ class AnalyticsService {
       // Get expenses for the period
       const { data: expenses } = await supabase
         .rpc('get_user_expenses_for_period', {
-          user_id: userId,
+          p_user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
           end_date: endDate.toISOString().split('T')[0]
         });
@@ -112,7 +112,7 @@ class AnalyticsService {
       
       const { data: expenses } = await supabase
         .rpc('get_user_expenses_for_period', {
-          user_id: userId,
+          p_user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
           end_date: endDate.toISOString().split('T')[0]
         });
