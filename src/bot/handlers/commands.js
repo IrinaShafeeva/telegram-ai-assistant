@@ -579,7 +579,7 @@ async function handleAsk(msg, match) {
 
     // Use analytics service to generate AI response
     const analyticsService = require('../../services/analytics');
-    const response = await analyticsService.generateAIResponse(question, recentExpenses);
+    const response = await analyticsService.askAIAnalytics(user.id, question);
 
     await bot.sendMessage(chatId, `🤖 ${response}`);
 
