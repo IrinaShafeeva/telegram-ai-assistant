@@ -70,6 +70,7 @@ async function setupBot(bot) {
     bot.onText(/\/invite (.+)/, withUser(commandHandlers.handleInvite));
     bot.onText(/\/email (.+)/, withUser(commandHandlers.handleEmail));
     bot.onText(/\/connect (.+)/, withUser(commandHandlers.handleConnect));
+    bot.onText(/\/ask (.+)/, withUser(commandHandlers.handleAsk));
     bot.onText(/\/devpro/, withUser(commandHandlers.handleDevPro));
 
     // Add general message logging

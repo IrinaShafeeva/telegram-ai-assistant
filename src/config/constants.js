@@ -76,6 +76,7 @@ const BOT_COMMANDS = [
   { command: 'settings', description: 'Настройки бота' },
   { command: 'connect', description: 'Подключить Google таблицу' },
   { command: 'email', description: 'Настроить Google email' },
+  { command: 'ask', description: 'AI-анализ расходов (вопросы о тратах)' },
   { command: 'categories', description: 'Управление категориями' },
   { command: 'upgrade', description: 'Информация о PRO плане' }
 ];

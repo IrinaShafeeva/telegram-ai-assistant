@@ -517,6 +517,81 @@ async function handleDevPro(msg, match) {
   }
 }
 
+// Command: /ask - AI questions about expenses
+async function handleAsk(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+  const question = match[1]?.trim();
+
+  if (!question) {
+    await bot.sendMessage(chatId, 
+      `🤖 AI-анализ расходов\n\nЗадайте вопрос о ваших тратах:\n\n📝 Примеры:\n• /ask сколько я потратил на еду на этой неделе?\n• /ask какая моя самая дорогая категория?\n• /ask сколько в среднем трачу в день?\n• /ask сравни расходы этого месяца с прошлым`
+    );
+    return;
+  }
+
+  try {
+    // Check AI limits
+    const canUseAI = await userService.checkDailyLimits(user.id, 'ai_question');
+    if (!canUseAI) {
+      const limit = user.is_premium ? 20 : 5;
+      await bot.sendMessage(chatId, 
+        `⛔ Лимит AI-вопросов исчерпан (${limit} в день).\n\n💎 В PRO плане: до 20 вопросов в день.`,
+        { reply_markup: getUpgradeKeyboard() }
+      );
+      return;
+    }
+
+    // Get user's active project
+    const projects = await projectService.findByUserId(user.id);
+    const activeProject = projects.find(p => p.is_active);
+
+    if (!activeProject) {
+      await bot.sendMessage(chatId, 
+        '📊 Сначала создайте проект для отслеживания расходов.',
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '➕ Создать проект', callback_data: 'create_project' }
+            ]]
+          }
+        }
+      );
+      return;
+    }
+
+    await bot.sendMessage(chatId, '🤖 Анализирую ваши расходы...');
+
+    // Get recent expenses (last 3 months)
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    
+    const expenses = await expenseService.findByProject(activeProject.id, 1000, 0);
+    const recentExpenses = expenses.filter(exp => 
+      new Date(exp.expense_date) >= threeMonthsAgo
+    );
+
+    if (recentExpenses.length === 0) {
+      await bot.sendMessage(chatId, '📭 У вас пока нет расходов для анализа.');
+      return;
+    }
+
+    // Use analytics service to generate AI response
+    const analyticsService = require('../../services/analytics');
+    const response = await analyticsService.generateAIResponse(question, recentExpenses);
+
+    await bot.sendMessage(chatId, `🤖 ${response}`);
+
+    // Increment usage counter
+    await userService.incrementDailyUsage(user.id, 'ai_question');
+
+  } catch (error) {
+    logger.error('Ask command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка AI-анализа. Попробуйте позже.');
+  }
+}
+
 module.exports = {
   handleStart,
   handleHelp,
@@ -529,5 +604,6 @@ module.exports = {
   handleInvite,
   handleEmail,
   handleConnect,
-  handleDevPro
+  handleDevPro,
+  handleAsk
 };

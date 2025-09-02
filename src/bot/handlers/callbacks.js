@@ -79,17 +79,27 @@ async function handleSaveExpense(chatId, messageId, data, user) {
     // Save expense to database
     const savedExpense = await expenseService.create(expenseData);
 
-    // Add to Google Sheets
-    await googleSheetsService.addExpenseToSheet(savedExpense, expenseData.project_id);
+    // Try to add to Google Sheets (don't fail if this fails)
+    let sheetsSuccess = false;
+    try {
+      await googleSheetsService.addExpenseToSheet(savedExpense, expenseData.project_id);
+      sheetsSuccess = true;
+    } catch (sheetsError) {
+      logger.warn('Google Sheets sync failed but expense saved:', sheetsError.message);
+    }
 
     // Update user patterns for smart defaults
-    await patternsService.updateUserPatterns(
-      user.id, 
-      expenseData.description, 
-      expenseData.category,
-      expenseData.amount,
-      expenseData.currency
-    );
+    try {
+      await patternsService.updateUserPatterns(
+        user.id, 
+        expenseData.description, 
+        expenseData.category,
+        expenseData.amount,
+        expenseData.currency
+      );
+    } catch (patternsError) {
+      logger.warn('Patterns update failed but expense saved:', patternsError.message);
+    }
 
     // Get project name for confirmation
     const project = await projectService.findById(expenseData.project_id);
@@ -99,7 +109,7 @@ async function handleSaveExpense(chatId, messageId, data, user) {
 💰 ${expenseData.description}: -${expenseData.amount} ${expenseData.currency}
 📂 Категория: ${expenseData.category}
 📋 Проект: ${project.name}
-📊 Добавлено в Google Sheets
+${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}
 
 📈 Посмотреть статистику: /stats`;
 
