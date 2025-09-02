@@ -52,12 +52,33 @@ async function startBot() {
       throw new Error('BOT_TOKEN is not configured');
     }
     
-    // Use polling mode for Vercel (no webhook needed)
-    bot = new TelegramBot(botToken, { polling: true });
-    global.bot = bot; // Make bot globally available
-    await setupBot(bot);
+    const webhookUrl = process.env.WEBHOOK_URL;
+    const useWebhook = process.env.USE_WEBHOOK === 'true';
     
-    logger.info('🏦 Expense Tracker Bot started successfully in polling mode');
+    if (useWebhook && webhookUrl) {
+      // Use webhook mode for production
+      bot = new TelegramBot(botToken, { webHook: true });
+      global.bot = bot; // Make bot globally available
+      await setupBot(bot);
+      
+      // Set webhook
+      await bot.setWebHook(`${webhookUrl}/webhook/${botToken}`);
+      logger.info(`🏦 Expense Tracker Bot started successfully in webhook mode: ${webhookUrl}/webhook`);
+      
+      // Start web server with webhook endpoint
+      app.post(`/webhook/${botToken}`, (req, res) => {
+        bot.processUpdate(req.body);
+        res.sendStatus(200);
+      });
+      
+    } else {
+      // Use polling mode for development
+      bot = new TelegramBot(botToken, { polling: true });
+      global.bot = bot; // Make bot globally available
+      await setupBot(bot);
+      
+      logger.info('🏦 Expense Tracker Bot started successfully in polling mode');
+    }
     
     // Start web server
     app.listen(PORT, () => {
@@ -74,7 +95,12 @@ async function startBot() {
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
   if (bot) {
-    bot.stopPolling();
+    const useWebhook = process.env.USE_WEBHOOK === 'true';
+    if (useWebhook) {
+      bot.deleteWebHook();
+    } else {
+      bot.stopPolling();
+    }
   }
   process.exit(0);
 });
@@ -82,7 +108,12 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
   if (bot) {
-    bot.stopPolling();
+    const useWebhook = process.env.USE_WEBHOOK === 'true';
+    if (useWebhook) {
+      bot.deleteWebHook();
+    } else {
+      bot.stopPolling();
+    }
   }
   process.exit(0);
 });
