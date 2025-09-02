@@ -1,5 +1,6 @@
 const { expenseService, userService, supabase } = require('./supabase');
 const openaiService = require('./openai');
+const currencyService = require('./currency');
 const { formatCurrency, formatMultiCurrencyAmount } = require('../utils/currency');
 const { getDateRange, formatDate } = require('../utils/date');
 const logger = require('../utils/logger');
@@ -107,6 +108,10 @@ class AnalyticsService {
         throw new Error(`⛔ Лимит AI вопросов исчерпан (${limit}/день)`);
       }
 
+      // Get user info for primary currency
+      const user = await userService.findById(userId);
+      const primaryCurrency = user.primary_currency || 'RUB';
+
       // Get expenses for last 3 months for AI analysis
       const { startDate, endDate } = getDateRange('last_3_months');
       
@@ -117,20 +122,30 @@ class AnalyticsService {
           end_date: endDate.toISOString().split('T')[0]
         });
 
-      console.log('DEBUG: expenses data:', {
-        expenses: expenses,
-        length: expenses ? expenses.length : 'null',
-        userId: userId,
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0]
-      });
-
       if (!expenses || expenses.length === 0) {
         return 'У вас пока нет данных о расходах для анализа. Начните добавлять траты, и я смогу помочь с аналитикой! 📊';
       }
 
-      // Use AI to analyze expenses
-      const analysis = await openaiService.analyzeExpenses(question, expenses, userId);
+      // Convert all expenses to user's primary currency
+      const convertedExpenses = await currencyService.convertExpenses(expenses, primaryCurrency);
+      
+      // Calculate analytics with proper math
+      const analytics = this.calculateExpenseAnalytics(convertedExpenses, primaryCurrency);
+      
+      // Prepare structured data for AI
+      const analyticsData = {
+        totalAmount: analytics.totalAmount,
+        totalExpenses: analytics.totalExpenses,
+        primaryCurrency: primaryCurrency,
+        categoryBreakdown: analytics.categoryBreakdown,
+        monthlyBreakdown: analytics.monthlyBreakdown,
+        topCategory: analytics.topCategory,
+        averagePerDay: analytics.averagePerDay,
+        question: question
+      };
+
+      // Use AI to analyze expenses with pre-calculated data
+      const analysis = await openaiService.analyzeExpensesWithData(question, analyticsData, userId);
 
       // Increment usage counter
       await userService.incrementDailyUsage(userId, 'ai_question');
@@ -140,6 +155,69 @@ class AnalyticsService {
       logger.error('AI analytics error:', error);
       throw error;
     }
+  }
+
+  calculateExpenseAnalytics(expenses, currency) {
+    const totalAmount = expenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0);
+    const totalExpenses = expenses.length;
+    
+    // Group by category with correct math
+    const categoryTotals = {};
+    expenses.forEach(exp => {
+      const category = exp.category || 'Прочее';
+      if (!categoryTotals[category]) {
+        categoryTotals[category] = { amount: 0, count: 0 };
+      }
+      categoryTotals[category].amount += parseFloat(exp.amount);
+      categoryTotals[category].count += 1;
+    });
+    
+    // Sort categories by amount (descending)
+    const categoryBreakdown = Object.entries(categoryTotals)
+      .map(([category, data]) => ({
+        category,
+        amount: data.amount,
+        count: data.count,
+        percentage: Math.round((data.amount / totalAmount) * 100),
+        formatted: currencyService.formatAmount(data.amount, currency)
+      }))
+      .sort((a, b) => b.amount - a.amount);
+    
+    // Group by month
+    const monthlyTotals = {};
+    expenses.forEach(exp => {
+      const month = new Date(exp.expense_date).toISOString().slice(0, 7); // YYYY-MM
+      if (!monthlyTotals[month]) {
+        monthlyTotals[month] = { amount: 0, count: 0 };
+      }
+      monthlyTotals[month].amount += parseFloat(exp.amount);
+      monthlyTotals[month].count += 1;
+    });
+    
+    const monthlyBreakdown = Object.entries(monthlyTotals)
+      .map(([month, data]) => ({
+        month,
+        amount: data.amount,
+        count: data.count,
+        formatted: currencyService.formatAmount(data.amount, currency)
+      }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+    
+    // Calculate average per day (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recentExpenses = expenses.filter(exp => new Date(exp.expense_date) >= thirtyDaysAgo);
+    const recentTotal = recentExpenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0);
+    const averagePerDay = recentTotal / 30;
+    
+    return {
+      totalAmount: currencyService.formatAmount(totalAmount, currency),
+      totalExpenses,
+      categoryBreakdown,
+      monthlyBreakdown,
+      topCategory: categoryBreakdown[0]?.category || 'Нет данных',
+      averagePerDay: currencyService.formatAmount(averagePerDay, currency)
+    };
   }
 
   async getTopCategories(userId, period = 'this_month', limit = 5) {

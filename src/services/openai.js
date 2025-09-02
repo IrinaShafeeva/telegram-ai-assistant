@@ -126,6 +126,62 @@ class OpenAIService {
     }
   }
 
+  async analyzeExpensesWithData(userQuestion, analyticsData, userId) {
+    try {
+      const categoryList = analyticsData.categoryBreakdown
+        .map(cat => `${cat.category}: ${cat.formatted} (${cat.percentage}%)`)
+        .join('\n');
+      
+      const monthlyList = analyticsData.monthlyBreakdown
+        .map(month => `${month.month}: ${month.formatted}`)
+        .join('\n');
+
+      const prompt = `Пользователь спрашивает: "${userQuestion}"
+
+ТОЧНЫЕ ДАННЫЕ (уже рассчитанные):
+💰 Общая сумма: ${analyticsData.totalAmount}
+📊 Количество трат: ${analyticsData.totalExpenses}
+🏆 Топ категория: ${analyticsData.topCategory}
+📈 Среднее в день: ${analyticsData.averagePerDay}
+
+📋 По категориям:
+${categoryList}
+
+📅 По месяцам:
+${monthlyList}
+
+ВАЖНО: 
+- Используй ТОЛЬКО эти точные цифры, не выдумывай другие
+- Все суммы уже в валюте ${analyticsData.primaryCurrency}
+- Проценты уже рассчитаны правильно
+- Топ категория определена корректно: "${analyticsData.topCategory}"
+
+Дай краткий полезный ответ с конкретными цифрами. Используй эмодзи для категорий.`;
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты AI-аналитик личных финансов. Используй ТОЛЬКО предоставленные точные данные. Не выдумывай цифры.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.2, // Lower temperature for more accurate responses
+        max_tokens: 500
+      });
+
+      return completion.choices[0].message.content.trim();
+
+    } catch (error) {
+      logger.error('OpenAI analytics with data failed:', error);
+      throw new Error('Не удалось проанализировать расходы. Попробуйте позже.');
+    }
+  }
+
   async categorizeExpense(description, availableCategories) {
     try {
       const prompt = `
