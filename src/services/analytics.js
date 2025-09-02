@@ -1,4 +1,4 @@
-const { expenseService, userService } = require('./supabase');
+const { expenseService, userService, supabase } = require('./supabase');
 const openaiService = require('./openai');
 const { formatCurrency, formatMultiCurrencyAmount } = require('../utils/currency');
 const { getDateRange, formatDate } = require('../utils/date');
@@ -10,7 +10,7 @@ class AnalyticsService {
       const { startDate, endDate } = getDateRange(period);
       
       // Get expenses for the period
-      const { data: expenses } = await expenseService.supabase
+      const { data: expenses } = await supabase
         .rpc('get_user_expenses_for_period', {
           user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
@@ -110,7 +110,7 @@ class AnalyticsService {
       // Get expenses for last 3 months for AI analysis
       const { startDate, endDate } = getDateRange('last_3_months');
       
-      const { data: expenses } = await expenseService.supabase
+      const { data: expenses } = await supabase
         .rpc('get_user_expenses_for_period', {
           user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
