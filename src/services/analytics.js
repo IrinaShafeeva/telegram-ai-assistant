@@ -117,6 +117,14 @@ class AnalyticsService {
           end_date: endDate.toISOString().split('T')[0]
         });
 
+      console.log('DEBUG: expenses data:', {
+        expenses: expenses,
+        length: expenses ? expenses.length : 'null',
+        userId: userId,
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+      });
+
       if (!expenses || expenses.length === 0) {
         return 'У вас пока нет данных о расходах для анализа. Начните добавлять траты, и я смогу помочь с аналитикой! 📊';
       }
