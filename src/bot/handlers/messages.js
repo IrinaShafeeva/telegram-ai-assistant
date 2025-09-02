@@ -61,8 +61,8 @@ async function handleCurrencySelection(msg) {
   const bot = getBot();
 
   try {
-    // Extract currency code
-    let currency = 'USD';
+    // Extract currency code  
+    let currency = user.primary_currency || 'RUB';
     for (const curr of SUPPORTED_CURRENCIES) {
       if (text.includes(curr)) {
         currency = curr;

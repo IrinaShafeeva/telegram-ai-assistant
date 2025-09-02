@@ -17,21 +17,47 @@ async function handleStart(msg, match) {
       return bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
     }
 
+    // Check if user needs currency setup
+    if (!user.primary_currency || user.primary_currency === 'USD') {
+      await bot.sendMessage(chatId, 
+        `🏦 Добро пожаловать в Expense Tracker!
+
+Я помогу вам легко отслеживать расходы:
+• 🎤 Отправляйте голосовые сообщения  
+• 💬 Пишите текстом "кофе 200р"
+• 📊 Получайте аналитику с AI
+• 📋 Синхронизация с Google Sheets
+
+💰 Сначала выберите валюту по умолчанию:`
+      );
+
+      const currencyKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '🇷🇺 Рубль (RUB)', callback_data: 'set_currency_RUB' },
+            { text: '🇺🇸 Доллар (USD)', callback_data: 'set_currency_USD' }
+          ],
+          [
+            { text: '🇪🇺 Евро (EUR)', callback_data: 'set_currency_EUR' },
+            { text: '🇬🇧 Фунт (GBP)', callback_data: 'set_currency_GBP' }
+          ],
+          [
+            { text: '🇰🇿 Тенге (KZT)', callback_data: 'set_currency_KZT' },
+            { text: '🇺🇦 Гривна (UAH)', callback_data: 'set_currency_UAH' }
+          ]
+        ]
+      };
+
+      return bot.sendMessage(chatId, 'Выберите валюту:', { reply_markup: currencyKeyboard });
+    }
+
     // Check if user already has projects
     const userProjects = await projectService.findByUserId(user.id);
     
     if (userProjects.length === 0) {
       // First time user - create project immediately
       await bot.sendMessage(chatId, 
-        `🏦 Добро пожаловать в Expense Tracker!
-
-Я помогу вам легко отслеживать расходы:
-• 🎤 Отправляйте голосовые сообщения
-• 💬 Пишите текстом "кофе 200р"
-• 📊 Получайте аналитику с AI
-• 📋 Синхронизация с Google Sheets
-
-✨ Создаю ваш первый проект...`
+        `✨ Создаю ваш первый проект...`
       );
 
       // Create first project automatically

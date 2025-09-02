@@ -22,7 +22,13 @@ async function handleCallback(callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
 
     // Route callback to appropriate handler
-    if (data.startsWith('save_expense:')) {
+    if (data.startsWith('set_currency_')) {
+      await handleSetCurrency(chatId, messageId, data, callbackQuery.user);
+    } else if (data.startsWith('change_currency_')) {
+      await handleChangeCurrency(chatId, messageId, data, callbackQuery.user);
+    } else if (data === 'back_to_settings') {
+      await handleBackToSettings(chatId, messageId, callbackQuery.user);
+    } else if (data.startsWith('save_expense:')) {
       await handleSaveExpense(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:')) {
       await handleEditCategory(chatId, messageId, data, user);
@@ -461,10 +467,30 @@ async function handleSettingsAction(chatId, messageId, data, user) {
   try {
     switch (action) {
       case 'currency':
-        await bot.editMessageText('💱 Выбор валюты:\n\n🚧 Функция в разработке. Пока используется валюта из расходов.', {
-          chat_id: chatId,
-          message_id: messageId
-        });
+        const currencyKeyboard = {
+          inline_keyboard: [
+            [
+              { text: '🇷🇺 Рубль (RUB)', callback_data: 'change_currency_RUB' },
+              { text: '🇺🇸 Доллар (USD)', callback_data: 'change_currency_USD' }
+            ],
+            [
+              { text: '🇪🇺 Евро (EUR)', callback_data: 'change_currency_EUR' },
+              { text: '🇬🇧 Фунт (GBP)', callback_data: 'change_currency_GBP' }
+            ],
+            [
+              { text: '🇰🇿 Тенге (KZT)', callback_data: 'change_currency_KZT' },
+              { text: '🇺🇦 Гривна (UAH)', callback_data: 'change_currency_UAH' }
+            ],
+            [
+              { text: '← Назад', callback_data: 'back_to_settings' }
+            ]
+          ]
+        };
+        
+        await bot.editMessageText(
+          `💱 Смена валюты по умолчанию\n\nТекущая валюта: ${user.primary_currency || 'USD'}\n\nВыберите новую валюту:`, 
+          { chat_id: chatId, message_id: messageId, reply_markup: currencyKeyboard }
+        );
         break;
         
       case 'language':
@@ -601,6 +627,116 @@ async function createInvoice(chatId, messageId, options) {
       `💎 Оплата PRO плана\n\n⭐ Стоимость: ${options.amount} Telegram Stars (${options.price})\n📅 Период: ${options.period}\n\n🚧 Временно недоступно. Используйте команду /devpro для тестирования PRO функций.\n\nОбратитесь в поддержку: @support_bot`,
       { chat_id: chatId, message_id: messageId }
     );
+  }
+}
+
+async function handleSetCurrency(chatId, messageId, data, user) {
+  const bot = getBot();
+  
+  try {
+    const currency = data.replace('set_currency_', '');
+    
+    // Update user's primary currency
+    await userService.update(user.id, { primary_currency: currency });
+    
+    const currencyNames = {
+      'RUB': 'Рубль',
+      'USD': 'Доллар',
+      'EUR': 'Евро', 
+      'GBP': 'Фунт',
+      'KZT': 'Тенге',
+      'UAH': 'Гривна'
+    };
+    
+    await bot.editMessageText(
+      `✅ Валюта установлена: ${currencyNames[currency]} (${currency})\n\n✨ Создаю ваш первый проект...`,
+      { chat_id: chatId, message_id: messageId }
+    );
+    
+    // Create first project automatically
+    const project = await projectService.create({
+      owner_id: user.id,
+      name: 'Личные расходы',
+      description: 'Проект для отслеживания расходов',
+      is_active: true
+    });
+
+    const { getMainMenuKeyboard } = require('../keyboards/reply');
+    await bot.sendMessage(chatId, 
+      `✅ Проект "Личные расходы" создан!
+
+✨ Теперь попробуйте добавить трату:
+• Голосом: "Потратил 200 рублей на кофе"
+• Текстом: "кофе 200р"
+
+📊 Для подключения Google таблицы используйте: /connect [ID_таблицы]`,
+      { reply_markup: getMainMenuKeyboard() }
+    );
+    
+  } catch (error) {
+    logger.error('Set currency error:', error);
+    await bot.editMessageText(
+      '❌ Ошибка при установке валюты. Попробуйте еще раз.',
+      { chat_id: chatId, message_id: messageId }
+    );
+  }
+}
+
+async function handleChangeCurrency(chatId, messageId, data, user) {
+  const bot = getBot();
+  
+  try {
+    const currency = data.replace('change_currency_', '');
+    
+    // Update user's primary currency
+    await userService.update(user.id, { primary_currency: currency });
+    
+    const currencyNames = {
+      'RUB': 'Рубль',
+      'USD': 'Доллар',
+      'EUR': 'Евро', 
+      'GBP': 'Фунт',
+      'KZT': 'Тенге',
+      'UAH': 'Гривна'
+    };
+    
+    await bot.editMessageText(
+      `✅ Валюта изменена на: ${currencyNames[currency]} (${currency})\n\nТеперь новые расходы будут использовать эту валюту по умолчанию.`,
+      { chat_id: chatId, message_id: messageId, reply_markup: { 
+        inline_keyboard: [[{ text: '← Назад к настройкам', callback_data: 'back_to_settings' }]]
+      }}
+    );
+    
+  } catch (error) {
+    logger.error('Change currency error:', error);
+    await bot.editMessageText(
+      '❌ Ошибка при смене валюты. Попробуйте еще раз.',
+      { chat_id: chatId, message_id: messageId }
+    );
+  }
+}
+
+async function handleBackToSettings(chatId, messageId, user) {
+  const bot = getBot();
+  const { getSettingsKeyboard } = require('../keyboards/inline');
+  
+  try {
+    const settingsText = `⚙️ Настройки
+
+👤 Пользователь: ${user.first_name} ${user.username ? `(@${user.username})` : ''}
+💱 Основная валюта: ${user.primary_currency || 'USD'}
+🌐 Язык: ${user.language_code === 'ru' ? 'Русский' : 'English'}
+💎 План: ${user.is_premium ? 'PRO' : 'FREE'}
+
+${user.is_premium ? '' : '💎 Обновитесь до PRO для дополнительных возможностей!'}`;
+
+    await bot.editMessageText(settingsText, {
+      chat_id: chatId, 
+      message_id: messageId,
+      reply_markup: getSettingsKeyboard()
+    });
+  } catch (error) {
+    logger.error('Back to settings error:', error);
   }
 }
 

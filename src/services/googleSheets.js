@@ -306,6 +306,11 @@ class GoogleSheetsService {
       let imported = 0;
       const errors = [];
 
+      // Get user info for default currency
+      const { userService } = require('./supabase');
+      const userInfo = await userService.findById(userId);
+      const defaultCurrency = userInfo?.primary_currency || 'RUB';
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const rowNumber = i + 2; // Account for header and 0-based index
@@ -321,7 +326,7 @@ class GoogleSheetsService {
             user_id: userId,
             project_id: projectId,
             amount: parseFloat(row[2]) || 0,
-            currency: row[3] || 'USD',
+            currency: row[3] || defaultCurrency,
             category: row[4] || 'Прочее',
             description: row[1] || 'Manual entry',
             expense_date: this.parseDate(row[0]),
