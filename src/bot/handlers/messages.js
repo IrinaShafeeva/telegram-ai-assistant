@@ -2,6 +2,7 @@ const { userService, projectService, expenseService } = require('../../services/
 const openaiService = require('../../services/openai');
 const googleSheetsService = require('../../services/googleSheets');
 const patternsService = require('../../services/patterns');
+const analyticsService = require('../../services/analytics');
 const { getExpenseConfirmationKeyboard } = require('../keyboards/inline');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
@@ -44,6 +45,12 @@ async function handleText(msg) {
     }
     if (text === 'ℹ️ Помощь') {
       return require('./commands').handleHelp(msg);
+    }
+
+    // Check if it's an analytics question
+    if (await isAnalyticsQuestion(text)) {
+      await handleAnalyticsQuestion(msg);
+      return;
     }
 
     // Try to parse as expense
@@ -211,6 +218,47 @@ async function handleExpenseText(msg) {
     await bot.sendMessage(chatId, 
       `❌ ${error.message || 'Не удалось обработать расход. Попробуйте написать яснее.'}\n\n💡 Пример: "кофе 200 рублей"`
     );
+  }
+}
+
+async function isAnalyticsQuestion(text) {
+  const lowerText = text.toLowerCase();
+  
+  // Strong analytics indicators (questions, not expenses)
+  const strongIndicators = [
+    'сколько потрат', 'сколько трат', 'сколько на', 'сколько за',
+    'проанализируй', 'анализ', 'статистика', 'аналитика',
+    'где потратил', 'на что потратил', 'больше всего трачу',
+    'отчет', 'итого', 'общая сумма', 'средний чек'
+  ];
+  
+  // Check for strong indicators first
+  if (strongIndicators.some(indicator => lowerText.includes(indicator))) {
+    return true;
+  }
+  
+  // Question patterns with money keywords
+  const hasQuestionWord = ['сколько', 'где', 'когда', 'как много', 'что'].some(q => lowerText.includes(q));
+  const hasMoneyContext = ['потрат', 'трат', 'расход', 'деньг', 'рубл', 'евро', 'доллар'].some(m => lowerText.includes(m));
+  
+  return hasQuestionWord && hasMoneyContext;
+}
+
+async function handleAnalyticsQuestion(msg) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const question = msg.text;
+  const bot = getBot();
+
+  try {
+    await bot.sendMessage(chatId, '🧠 Анализирую ваши расходы...');
+    
+    const analysis = await analyticsService.askAIAnalytics(user.id, question);
+    await bot.sendMessage(chatId, analysis);
+    
+  } catch (error) {
+    logger.error('Analytics question error:', error);
+    await bot.sendMessage(chatId, `❌ ${error.message || 'Не удалось проанализировать расходы.'}`);
   }
 }
 

@@ -182,6 +182,71 @@ ${monthlyList}
     }
   }
 
+  async analyzeExpensesWithFlexibleData(userQuestion, analyticsData, userId) {
+    try {
+      const categoryList = analyticsData.categoryBreakdown
+        .map(cat => `${cat.category}: ${cat.formatted} (${cat.percentage}%)`).join('\\n');
+      
+      const monthlyList = analyticsData.monthlyBreakdown
+        .map(month => `${month.month}: ${month.formatted}`).join('\\n');
+
+      // Prepare detailed expense list for specific queries
+      const expensesList = analyticsData.detailedExpenses
+        .slice(0, 100) // Limit to avoid token overflow
+        .map(exp => `${exp.date}: ${exp.description} - ${exp.amount} ${exp.currency} (${exp.category})`)
+        .join('\\n');
+
+      const prompt = `Пользователь спрашивает: "${userQuestion}"
+
+АГРЕГИРОВАННЫЕ ДАННЫЕ (уже точно рассчитанные):
+💰 Общая сумма: ${analyticsData.totalAmount}
+📊 Количество трат: ${analyticsData.totalExpenses}  
+🏆 Топ категория: ${analyticsData.topCategory}
+📈 Среднее в день: ${analyticsData.averagePerDay}
+
+📋 По категориям:
+${categoryList}
+
+📅 По месяцам:
+${monthlyList}
+
+ДЕТАЛЬНЫЕ ТРАТЫ (для поиска по описанию, местам, датам):
+${expensesList}
+
+ИНСТРУКЦИИ:
+1. Если вопрос о суммах/статистике - используй ТОЛЬКО агрегированные данные
+2. Если нужно найти траты по описанию/месту - ищи в детальных тратах  
+3. ВАЖНО: Ищи по ТОЧНОМУ описанию! "вкусняшки" ≠ "еда", смотри описания трат!
+4. Все суммы уже в валюте ${analyticsData.primaryCurrency}
+5. НЕ выдумывай цифры, используй только предоставленные данные
+6. При поиске по ключевому слову (например "вкусняшки") ищи ИМЕННО это слово в описаниях
+
+Дай точный ответ с конкретными цифрами. Используй эмодзи для категорий.`;
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты AI-аналитик личных финансов. Используй агрегированные данные для статистики, детальные данные для поиска по описаниям. НЕ выдумывай цифры.'
+          },
+          {
+            role: 'user', 
+            content: prompt
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 600
+      });
+
+      return completion.choices[0].message.content.trim();
+
+    } catch (error) {
+      logger.error('OpenAI flexible analytics failed:', error);
+      throw new Error('Не удалось проанализировать расходы. Попробуйте позже.');
+    }
+  }
+
   async categorizeExpense(description, availableCategories) {
     try {
       const prompt = `

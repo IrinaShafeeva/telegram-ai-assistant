@@ -132,7 +132,7 @@ class AnalyticsService {
       // Calculate analytics with proper math
       const analytics = this.calculateExpenseAnalytics(convertedExpenses, primaryCurrency);
       
-      // Prepare structured data for AI
+      // Prepare structured data for AI with detailed expenses
       const analyticsData = {
         totalAmount: analytics.totalAmount,
         totalExpenses: analytics.totalExpenses,
@@ -141,11 +141,20 @@ class AnalyticsService {
         monthlyBreakdown: analytics.monthlyBreakdown,
         topCategory: analytics.topCategory,
         averagePerDay: analytics.averagePerDay,
+        detailedExpenses: convertedExpenses.map(exp => ({
+          date: exp.expense_date,
+          description: exp.description,
+          amount: exp.amount,
+          originalAmount: exp.originalAmount || exp.amount,
+          originalCurrency: exp.originalCurrency || exp.currency,
+          category: exp.category,
+          currency: primaryCurrency
+        })),
         question: question
       };
 
-      // Use AI to analyze expenses with pre-calculated data
-      const analysis = await openaiService.analyzeExpensesWithData(question, analyticsData, userId);
+      // Use AI to analyze expenses with both aggregated and detailed data
+      const analysis = await openaiService.analyzeExpensesWithFlexibleData(question, analyticsData, userId);
 
       // Increment usage counter
       await userService.incrementDailyUsage(userId, 'ai_question');
