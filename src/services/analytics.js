@@ -112,8 +112,13 @@ class AnalyticsService {
       const user = await userService.findById(userId);
       const primaryCurrency = user.primary_currency || 'RUB';
 
-      // Get expenses for last 3 months for AI analysis
-      const { startDate, endDate } = getDateRange('last_3_months');
+      // Get expenses for last year for AI analysis (to capture all data including wrong dates)
+      const { startDate, endDate } = getDateRange('this_year');
+      
+      // Extend to future dates to catch data entry errors
+      const futureEndDate = new Date(endDate);
+      futureEndDate.setFullYear(futureEndDate.getFullYear() + 2);
+      endDate.setTime(futureEndDate.getTime());
       
       const { data: expenses } = await supabase
         .rpc('get_user_expenses_for_period', {
