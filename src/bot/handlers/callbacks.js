@@ -16,8 +16,22 @@ async function handleCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
-  const user = callbackQuery.user || callbackQuery.from;
+  const user = callbackQuery.user; // Should be set by withUserCallback middleware
   const bot = getBot();
+
+  // Debug user data
+  if (!user || !user.id) {
+    logger.error('User data missing in callback:', { 
+      hasUser: !!callbackQuery.user, 
+      hasFrom: !!callbackQuery.from,
+      fromId: callbackQuery.from?.id 
+    });
+    await bot.answerCallbackQuery(callbackQuery.id, { 
+      text: '❌ Ошибка данных пользователя', 
+      show_alert: true 
+    });
+    return;
+  }
 
   try {
     await bot.answerCallbackQuery(callbackQuery.id);
@@ -55,8 +69,12 @@ async function handleCallback(callbackQuery) {
       await handleUpgradeAction(chatId, messageId, data);
     } else if (data.startsWith('settings:')) {
       await handleSettingsAction(chatId, messageId, data, user);
-    } else if (data.startsWith('switch_project:')) {
+    } else if (data.startsWith('switch_project:') || data.startsWith('activate_project:')) {
       await handleSwitchProject(chatId, messageId, data, user);
+    } else if (data.startsWith('delete_project:')) {
+      await handleDeleteProject(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project_name:')) {
+      await handleEditProjectName(chatId, messageId, data, user);
     } else if (data.startsWith('custom_category:')) {
       await handleCustomCategory(chatId, messageId, data, user);
     } else if (data.startsWith('custom_amount:')) {
@@ -207,7 +225,10 @@ async function handleEditProject(chatId, messageId, data, user) {
 
   try {
     // Get user's projects
+    logger.info(`User object:`, JSON.stringify(user, null, 2));
+    logger.info(`Getting projects for user: ${user.id}`);
     const projects = await projectService.findByUserId(user.id);
+    logger.info(`Found ${projects?.length || 0} projects for user ${user.id}`);
     
     if (!projects || projects.length === 0) {
       await bot.editMessageText('❌ У вас нет проектов для выбора.', {

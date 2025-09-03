@@ -61,7 +61,6 @@ async function setupBot(bot) {
     // Command handlers
     bot.onText(/\/start/, withUser(commandHandlers.handleStart));
     bot.onText(/\/help/, withUser(commandHandlers.handleHelp));
-    bot.onText(/\/projects/, withUser(commandHandlers.handleProjects));
     bot.onText(/\/settings/, withUser(commandHandlers.handleSettings));
     bot.onText(/\/connect(?:\s+(.+))?/, withUser(commandHandlers.handleConnect));
     bot.onText(/\/devpro/, withUser(commandHandlers.handleDevPro));

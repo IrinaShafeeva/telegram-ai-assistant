@@ -1,6 +1,7 @@
 function getMainMenuKeyboard() {
   return {
     keyboard: [
+      ['📋 Проекты'],
       ['⚙️ Настройки', 'ℹ️ Помощь']
     ],
     resize_keyboard: true,

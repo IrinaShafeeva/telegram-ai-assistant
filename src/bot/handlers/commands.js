@@ -157,17 +157,32 @@ async function handleProjects(msg, match) {
       return;
     }
 
-    let message = '📋 Ваши проекты:\n\n';
-    projects.forEach((project, index) => {
+    let message = '📋 Управление проектами:\n\n';
+    
+    for (const project of projects) {
       const isOwner = project.owner_id === user.id;
-      const status = project.is_active ? '✅' : '⏸️';
-      message += `${index + 1}. ${project.name} ${status}\n`;
+      const status = project.is_active ? '▶️ Активный' : '⏸️ Неактивный';
+      
+      // Get expense count for this project
+      let expenseCount = 0;
+      try {
+        const expenses = await expenseService.findByProject(project.id, 1);
+        expenseCount = expenses?.length || 0;
+      } catch (error) {
+        logger.warn('Could not get expense count for project:', project.id);
+      }
+      
+      message += `📁 **${project.name}** ${status}\n`;
+      message += `   💰 Расходов: ${expenseCount}\n`;
       message += `   ${isOwner ? '👑 Владелец' : '👤 Участник'}\n`;
-      if (project.google_sheet_url) {
+      if (project.keywords) {
+        message += `   🔍 Ключевые слова: ${project.keywords}\n`;
+      }
+      if (project.google_sheet_id) {
         message += `   📊 Google Sheets подключены\n`;
       }
       message += '\n';
-    });
+    }
 
     await bot.sendMessage(chatId, message, {
       reply_markup: getProjectSelectionKeyboard(projects, 'manage', user.is_premium)

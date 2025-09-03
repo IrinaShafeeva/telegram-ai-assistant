@@ -102,14 +102,56 @@ function getAmountSelectionKeyboard(expenseId) {
 function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = false) {
   const keyboard = [];
   
-  projects.forEach(project => {
-    keyboard.push([{ 
-      text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
-      callback_data: `${action}_project:${project.id}` 
-    }]);
-  });
+  if (action === 'manage') {
+    // Management interface with action buttons for each project
+    projects.forEach(project => {
+      // Project name row
+      keyboard.push([{ 
+        text: `📁 ${project.name}${project.is_active ? ' ▶️' : ''}`, 
+        callback_data: `project_info:${project.id}` 
+      }]);
+      
+      // Action buttons row
+      const actionRow = [];
+      
+      if (!project.is_active) {
+        actionRow.push({ 
+          text: '▶️ Активировать', 
+          callback_data: `activate_project:${project.id}` 
+        });
+      }
+      
+      actionRow.push({ 
+        text: '✏️ Изменить', 
+        callback_data: `edit_project:${project.id}` 
+      });
+      
+      // Can't delete if it's the last project
+      if (projects.length > 1) {
+        actionRow.push({ 
+          text: '🗑️ Удалить', 
+          callback_data: `delete_project:${project.id}` 
+        });
+      }
+      
+      keyboard.push(actionRow);
+      keyboard.push([{ text: '──────────', callback_data: 'noop' }]); // Separator
+    });
+    
+    // Remove last separator
+    if (keyboard.length > 0) keyboard.pop();
+    
+  } else {
+    // Simple switch interface
+    projects.forEach(project => {
+      keyboard.push([{ 
+        text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
+        callback_data: `${action}_project:${project.id}` 
+      }]);
+    });
+  }
   
-  // Only show "New project" button for PRO users or if no projects exist
+  // Add "New project" button for PRO users or if no projects exist
   if ((action === 'switch' || action === 'manage') && (isPremium || projects.length === 0)) {
     keyboard.push([{ 
       text: '➕ Новый проект', 

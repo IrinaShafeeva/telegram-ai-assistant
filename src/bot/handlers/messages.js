@@ -38,9 +38,6 @@ async function handleText(msg) {
     }
 
     // Handle main menu buttons
-    if (text === '📊 Статистика') {
-      return require('./commands').handleStats(msg);
-    }
     if (text === '📋 Проекты') {
       return require('./commands').handleProjects(msg);
     }
@@ -140,9 +137,15 @@ async function handleExpenseText(msg) {
   const bot = getBot();
 
   try {
-    // Try to find project by keywords first, then fallback to active project
-    const detectedProject = await projectService.findProjectByKeywords(user.id, text);
-    const activeProject = detectedProject;
+    // Try AI-detection first, fallback to active project if it fails
+    let activeProject;
+    try {
+      activeProject = await projectService.findProjectByKeywords(user.id, text);
+    } catch (error) {
+      logger.warn('AI project detection failed, using active project:', error.message);
+      const projects = await projectService.findByUserId(user.id);
+      activeProject = projects.find(p => p.is_active) || projects[0];
+    }
 
     if (!activeProject) {
       await bot.sendMessage(chatId, 
