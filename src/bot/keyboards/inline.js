@@ -88,7 +88,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
   });
   
   // Only show "New project" button for PRO users or if no projects exist
-  if (action === 'switch' && (isPremium || projects.length === 0)) {
+  if ((action === 'switch' || action === 'manage') && (isPremium || projects.length === 0)) {
     keyboard.push([{ 
       text: '➕ Новый проект', 
       callback_data: 'create_project' 
