@@ -414,8 +414,8 @@ async function handleConnect(msg, match) {
   try {
     // If no spreadsheet ID provided, ask for link with instructions
     if (!spreadsheetId) {
-      const { stateManager } = require('../../utils/stateManager');
-      stateManager.setState(chatId, 'WAITING_GOOGLE_SHEETS_LINK');
+      const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+      stateManager.setState(chatId, STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK);
       
       await bot.sendMessage(chatId,
         `🔗 **Подключение Google Sheets**\n\n` +

@@ -439,7 +439,7 @@ async function handleProjectNameInput(msg, userState) {
     }
     
     // Ask for keywords
-    stateManager.setState(chatId, 'WAITING_PROJECT_KEYWORDS', { projectName: text });
+    stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_KEYWORDS, { projectName: text });
     
     await bot.sendMessage(chatId, 
       `📝 Отлично! Проект "${text}" почти готов.\n\n🔍 Теперь укажите ключевые слова через запятую, чтобы я автоматически определял расходы для этого проекта:\n\n💡 Например: "маша, машенька, дочка, ребенок" или "работа, офис, командировка"\n\n✅ Если не нужны ключевые слова, отправьте "-"`
