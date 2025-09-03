@@ -408,10 +408,31 @@ async function handleEmail(msg, match) {
 async function handleConnect(msg, match) {
   const chatId = msg.chat.id;
   const user = msg.user;
-  const spreadsheetId = match[1];
+  const spreadsheetId = match ? match[1] : null;
   const bot = getBot();
 
   try {
+    // If no spreadsheet ID provided, ask for link with instructions
+    if (!spreadsheetId) {
+      const { stateManager } = require('../../utils/stateManager');
+      stateManager.setState(chatId, 'WAITING_GOOGLE_SHEETS_LINK');
+      
+      await bot.sendMessage(chatId,
+        `🔗 **Подключение Google Sheets**\n\n` +
+        `**Пошаговая инструкция:**\n\n` +
+        `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
+        `2️⃣ Нажмите **"Настроить доступ"** → **"Предоставить доступ"**\n` +
+        `3️⃣ Добавьте email: **ai-assistant@your-project.iam.gserviceaccount.com**\n` +
+        `4️⃣ Установите права: **"Редактор"**\n` +
+        `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
+        `📝 **Пример ссылки:**\n` +
+        `https://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\n` +
+        `✨ Просто отправьте такую ссылку следующим сообщением!`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
     // Extract spreadsheet ID from URL if full URL provided
     let cleanSpreadsheetId = spreadsheetId;
     if (spreadsheetId.includes('docs.google.com')) {

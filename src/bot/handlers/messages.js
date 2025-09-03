@@ -140,9 +140,9 @@ async function handleExpenseText(msg) {
   const bot = getBot();
 
   try {
-    // Get user's active project
-    const projects = await projectService.findByUserId(user.id);
-    const activeProject = projects.find(p => p.is_active) || projects[0];
+    // Try to find project by keywords first, then fallback to active project
+    const detectedProject = await projectService.findProjectByKeywords(user.id, text);
+    const activeProject = detectedProject;
 
     if (!activeProject) {
       await bot.sendMessage(chatId, 
@@ -270,6 +270,14 @@ async function handleStateInput(msg, userState) {
         
       case STATE_TYPES.WAITING_PROJECT_NAME:
         await handleProjectNameInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_PROJECT_KEYWORDS:
+        await handleProjectKeywordsInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK:
+        await handleGoogleSheetsLinkInput(msg, userState);
         break;
         
       default:
@@ -430,21 +438,132 @@ async function handleProjectNameInput(msg, userState) {
       return;
     }
     
-    // Create new project
-    const newProject = await projectService.create({
-      owner_id: user.id,
-      name: text,
-      description: `Проект "${text}" для отслеживания расходов`,
-      is_active: false // New projects are inactive by default
-    });
+    // Ask for keywords
+    stateManager.setState(chatId, 'WAITING_PROJECT_KEYWORDS', { projectName: text });
     
     await bot.sendMessage(chatId, 
-      `✅ Проект "${text}" создан!\n\n📋 Переключитесь на него через /projects если хотите использовать.\n\n✨ Или продолжайте добавлять расходы в текущий проект.`
+      `📝 Отлично! Проект "${text}" почти готов.\n\n🔍 Теперь укажите ключевые слова через запятую, чтобы я автоматически определял расходы для этого проекта:\n\n💡 Например: "маша, машенька, дочка, ребенок" или "работа, офис, командировка"\n\n✅ Если не нужны ключевые слова, отправьте "-"`
     );
     
   } catch (error) {
-    logger.error('Error creating project:', error);
+    logger.error('Error in project creation step:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка. Попробуйте позже.');
+    stateManager.clearState(chatId);
+  }
+}
+
+// Handle project keywords input
+async function handleProjectKeywordsInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { projectName } = userState.data;
+  
+  try {
+    let keywords = null;
+    
+    if (text !== '-' && text.length > 0) {
+      // Validate keywords (allow letters, spaces, commas, and common punctuation)
+      if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        return;
+      }
+      
+      keywords = text;
+    }
+    
+    // Create project with keywords
+    const newProject = await projectService.create({
+      owner_id: user.id,
+      name: projectName,
+      description: `Проект "${projectName}" для отслеживания расходов`,
+      keywords: keywords,
+      is_active: false // New projects are inactive by default
+    });
+    
+    const keywordsText = keywords ? 
+      `\n🔍 Ключевые слова: ${keywords}\n\n✨ Теперь при упоминании этих слов расходы будут автоматически попадать в этот проект!` : 
+      `\n📝 Без ключевых слов - расходы попадут в проект только при ручном переключении.`;
+    
+    // Check if user has any Google Sheets connected and create worksheet automatically
+    let sheetText = '';
+    try {
+      const userProjects = await projectService.findByUserId(user.id);
+      const connectedProject = userProjects.find(p => p.google_sheet_id);
+      
+      if (connectedProject && connectedProject.google_sheet_id) {
+        const googleSheetsService = require('../../services/googleSheets');
+        await googleSheetsService.createWorksheet(connectedProject.google_sheet_id, projectName);
+        
+        // Update new project with same Google Sheets ID to share the spreadsheet
+        await projectService.update(newProject.id, {
+          google_sheet_id: connectedProject.google_sheet_id
+        });
+        
+        sheetText = `\n\n📊 Автоматически создан лист "${projectName}" в вашей Google таблице!`;
+      }
+    } catch (error) {
+      logger.error('Error creating worksheet for project:', error);
+      // Don't fail project creation if worksheet creation fails
+    }
+    
+    await bot.sendMessage(chatId, 
+      `✅ Проект "${projectName}" создан!${keywordsText}${sheetText}\n\n📋 Переключитесь на него через /projects если хотите использовать.`
+    );
+    
+  } catch (error) {
+    logger.error('Error creating project with keywords:', error);
     await bot.sendMessage(chatId, '❌ Ошибка создания проекта. Попробуйте позже.');
+  }
+  
+  // Clear state
+  stateManager.clearState(chatId);
+}
+
+// Handle Google Sheets link input
+async function handleGoogleSheetsLinkInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  
+  try {
+    // Extract Google Sheets ID from URL
+    const urlRegex = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
+    const match = text.match(urlRegex);
+    
+    if (!match) {
+      await bot.sendMessage(chatId, 
+        '❌ Неверный формат ссылки!\n\n✅ Пример правильной ссылки:\nhttps://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\nПожалуйста, отправьте правильную ссылку на таблицу.'
+      );
+      return;
+    }
+    
+    const sheetId = match[1];
+    
+    // Get user's active project
+    const projects = await projectService.findByUserId(user.id);
+    const activeProject = projects.find(p => p.is_active) || projects[0];
+    
+    if (!activeProject) {
+      await bot.sendMessage(chatId, '❌ Сначала создайте проект для подключения таблицы.');
+      stateManager.clearState(chatId);
+      return;
+    }
+    
+    // Update project with Google Sheets ID
+    await projectService.update(activeProject.id, {
+      google_sheet_id: sheetId
+    });
+    
+    await bot.sendMessage(chatId, 
+      `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n📊 Теперь ваши расходы будут синхронизироваться с таблицей.\n\n💡 Используйте кнопку "📊 Экспорт данных" в настройках для синхронизации.`
+    );
+    
+  } catch (error) {
+    logger.error('Error connecting Google Sheets:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка подключения таблицы. Убедитесь, что предоставили доступ к таблице.');
   }
   
   // Clear state

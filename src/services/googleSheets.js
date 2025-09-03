@@ -232,19 +232,28 @@ class GoogleSheetsService {
         'bot'
       ]];
 
-      // Try to get the first sheet name from the spreadsheet
-      let sheetName = 'Sheet1'; // Default fallback
+      // Use project name as sheet name, fallback to first sheet
+      let sheetName = project.name;
       try {
         const spreadsheet = await this.sheets.spreadsheets.get({
           spreadsheetId: project.google_sheet_id,
           fields: 'sheets.properties.title'
         });
         
-        if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
+        // Check if project sheet exists
+        const projectSheet = spreadsheet.data.sheets.find(
+          sheet => sheet.properties.title === project.name
+        );
+        
+        if (projectSheet) {
+          sheetName = project.name;
+        } else if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
+          // Fallback to first sheet if project sheet doesn't exist
           sheetName = spreadsheet.data.sheets[0].properties.title;
         }
       } catch (error) {
-        logger.warn('Could not get sheet name, using default:', error.message);
+        logger.warn('Could not get sheet name, using project name:', error.message);
+        sheetName = project.name;
       }
 
       await this.sheets.spreadsheets.values.append({
@@ -483,6 +492,70 @@ class GoogleSheetsService {
       return expenses.length;
     } catch (error) {
       logger.error('Bulk sync failed:', error);
+      throw error;
+    }
+  }
+
+  async createWorksheet(spreadsheetId, sheetTitle) {
+    try {
+      if (!this.auth) {
+        throw new Error('Google Sheets service not initialized');
+      }
+
+      // Check if sheet with this name already exists
+      const spreadsheet = await this.sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties.title'
+      });
+
+      const existingSheet = spreadsheet.data.sheets.find(
+        sheet => sheet.properties.title === sheetTitle
+      );
+
+      if (existingSheet) {
+        logger.info(`Sheet "${sheetTitle}" already exists`);
+        return existingSheet.properties.sheetId;
+      }
+
+      // Create new worksheet
+      const response = await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: {
+          requests: [{
+            addSheet: {
+              properties: {
+                title: sheetTitle
+              }
+            }
+          }]
+        }
+      });
+
+      const newSheetId = response.data.replies[0].addSheet.properties.sheetId;
+
+      // Add header row to the new sheet
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${sheetTitle}!A1:G1`,
+        valueInputOption: 'RAW',
+        resource: {
+          values: [[
+            'Дата',
+            'Описание',
+            'Сумма',
+            'Валюта', 
+            'Категория',
+            'Пользователь',
+            'Источник'
+          ]]
+        }
+      });
+
+      logger.info(`Created new sheet "${sheetTitle}" with ID: ${newSheetId}`);
+      return newSheetId;
+
+    } catch (error) {
+      logger.error(`Failed to create worksheet "${sheetTitle}":`, error);
       throw error;
     }
   }
