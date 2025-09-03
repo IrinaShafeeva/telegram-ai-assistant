@@ -70,6 +70,7 @@ const ANALYTICS_PROMPT = `
 const BOT_COMMANDS = [
   { command: 'start', description: 'Начать работу с ботом' },
   { command: 'help', description: 'Справка по командам' },
+  { command: 'projects', description: 'Управление проектами' },
   { command: 'settings', description: 'Настройки бота' },
   { command: 'connect', description: 'Подключить Google таблицу' }
 ];

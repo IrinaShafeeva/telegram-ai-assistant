@@ -166,10 +166,11 @@ async function handleProjects(msg, match) {
       // Get expense count for this project
       let expenseCount = 0;
       try {
-        const expenses = await expenseService.findByProject(project.id, 1);
+        const expenses = await expenseService.findByProject(project.id, 100, 0);
         expenseCount = expenses?.length || 0;
       } catch (error) {
         logger.warn('Could not get expense count for project:', project.id);
+        expenseCount = '?';
       }
       
       message += `📁 **${project.name}** ${status}\n`;
