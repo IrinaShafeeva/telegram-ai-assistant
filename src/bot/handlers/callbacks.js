@@ -16,7 +16,7 @@ async function handleCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
-  const user = callbackQuery.from;
+  const user = callbackQuery.user || callbackQuery.from;
   const bot = getBot();
 
   try {
@@ -195,6 +195,7 @@ async function handleEditDescription(chatId, messageId, data, user) {
 async function handleEditProject(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
   const expenseData = tempExpenses.get(tempId);
+  const bot = getBot();
 
   if (!expenseData) {
     await bot.editMessageText('❌ Данные расхода устарели.', {
@@ -235,6 +236,7 @@ async function handleSetProject(chatId, messageId, data, user) {
   const tempId = parts[1];
   const projectId = parts[2];
   const expenseData = tempExpenses.get(tempId);
+  const bot = getBot();
 
   if (!expenseData) {
     await bot.editMessageText('❌ Данные расхода устарели.', {
