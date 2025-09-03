@@ -1,7 +1,7 @@
 const { userService, projectService, expenseService } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
-const { getProjectSelectionKeyboard, getStatsDateKeyboard, getSettingsKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
+const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
 const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
@@ -174,40 +174,6 @@ async function handleProjects(msg, match) {
   }
 }
 
-// Command: /stats
-async function handleStats(msg, match) {
-  const chatId = msg.chat.id;
-  const user = msg.user;
-  const bot = getBot();
-
-  try {
-    // Get user's active project
-    const projects = await projectService.findByUserId(user.id);
-    const activeProject = projects.find(p => p.is_active) || projects[0];
-
-    if (!activeProject) {
-      await bot.sendMessage(chatId, 
-        '📊 Сначала создайте проект для отслеживания расходов.',
-        {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '➕ Создать проект', callback_data: 'create_project' }
-            ]]
-          }
-        }
-      );
-      return;
-    }
-
-    await bot.sendMessage(chatId, 
-      `📊 Статистика по проекту "${activeProject.name}"\n\nВыберите период:`,
-      { reply_markup: getStatsDateKeyboard() }
-    );
-  } catch (error) {
-    logger.error('Stats command error:', error);
-    await bot.sendMessage(chatId, '❌ Ошибка загрузки статистики.');
-  }
-}
 
 // Command: /sync
 async function handleSync(msg, match) {
@@ -281,7 +247,7 @@ async function handleSettings(msg, match) {
 ${user.is_premium ? '' : '💎 Обновитесь до PRO для дополнительных возможностей!'}`;
 
   await bot.sendMessage(chatId, settingsText, {
-    reply_markup: getSettingsKeyboard()
+    reply_markup: getSettingsKeyboard(user.is_premium)
   });
 }
 
@@ -622,7 +588,6 @@ module.exports = {
   handleStart,
   handleHelp,
   handleProjects,
-  handleStats,
   handleSync,
   handleSettings,
   handleCategories,

@@ -98,44 +98,20 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
   return { inline_keyboard: keyboard };
 }
 
-function getStatsDateKeyboard() {
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-  
-  return {
-    inline_keyboard: [
-      [
-        { text: 'Этот месяц', callback_data: `stats:${currentMonth + 1}:${currentYear}` },
-        { text: 'Прошлый месяц', callback_data: `stats:${currentMonth}:${currentYear}` }
-      ],
-      [
-        { text: 'Последние 3 месяца', callback_data: 'stats:last3months' },
-        { text: 'Весь год', callback_data: `stats:year:${currentYear}` }
-      ],
-      [
-        { text: '📊 Подробная аналитика', callback_data: 'stats:detailed' }
-      ]
-    ]
-  };
-}
 
-function getSettingsKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: '💱 Валюта', callback_data: 'settings:currency' },
-        { text: '🌐 Язык', callback_data: 'settings:language' }
-      ],
-      [
-        { text: '📊 Экспорт данных', callback_data: 'settings:export' },
-        { text: '🔔 Уведомления', callback_data: 'settings:notifications' }
-      ],
-      [
-        { text: '🗑 Удалить аккаунт', callback_data: 'settings:delete_account' }
-      ]
-    ]
-  };
+function getSettingsKeyboard(isPremium = false) {
+  const keyboard = [
+    [{ text: '💱 Валюта', callback_data: 'settings:currency' }],
+    [{ text: '📊 Экспорт данных', callback_data: 'settings:export' }]
+  ];
+  
+  if (isPremium) {
+    keyboard.push([{ text: '📂 Мои категории', callback_data: 'settings:categories' }]);
+  } else {
+    keyboard.push([{ text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }]);
+  }
+  
+  return { inline_keyboard: keyboard };
 }
 
 function getUpgradeKeyboard() {
@@ -201,7 +177,6 @@ module.exports = {
   getCategorySelectionKeyboard,
   getAmountSelectionKeyboard,
   getProjectSelectionKeyboard,
-  getStatsDateKeyboard,
   getSettingsKeyboard,
   getUpgradeKeyboard,
   getConfirmationKeyboard,

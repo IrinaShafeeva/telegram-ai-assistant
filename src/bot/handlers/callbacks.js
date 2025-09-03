@@ -1,6 +1,5 @@
-const { userService, projectService, expenseService } = require('../../services/supabase');
+const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
-const patternsService = require('../../services/patterns');
 const { tempExpenses } = require('./messages');
 const { 
   getCategorySelectionKeyboard, 
@@ -9,6 +8,7 @@ const {
   getUpgradeKeyboard
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
+const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 
 async function handleCallback(callbackQuery) {
@@ -48,8 +48,6 @@ async function handleCallback(callbackQuery) {
       await handleCreateProject(chatId, user);
     } else if (data.startsWith('upgrade:')) {
       await handleUpgradeAction(chatId, messageId, data);
-    } else if (data.startsWith('stats:')) {
-      await handleStatsAction(chatId, messageId, data, user);
     } else if (data.startsWith('settings:')) {
       await handleSettingsAction(chatId, messageId, data, user);
     } else if (data.startsWith('switch_project:')) {
@@ -59,7 +57,9 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('custom_amount:')) {
       await handleCustomAmount(chatId, messageId, data, user);
     } else if (data === 'noop') {
-      // Do nothing - pagination placeholder
+      // Pagination placeholder - answer callback query to remove loading state
+      await bot.answerCallbackQuery(callbackQuery.id, { text: '' });
+      return;
     } else {
       logger.warn('Unknown callback data:', data);
     }
@@ -92,19 +92,6 @@ async function handleSaveExpense(chatId, messageId, data, user) {
       sheetsSuccess = true;
     } catch (sheetsError) {
       logger.warn('Google Sheets sync failed but expense saved:', sheetsError.message);
-    }
-
-    // Update user patterns for smart defaults
-    try {
-      await patternsService.updateUserPatterns(
-        user.id, 
-        expenseData.description, 
-        expenseData.category,
-        expenseData.amount,
-        expenseData.currency
-      );
-    } catch (patternsError) {
-      logger.warn('Patterns update failed but expense saved:', patternsError.message);
     }
 
     // Get project name for confirmation
@@ -148,8 +135,15 @@ async function handleEditCategory(chatId, messageId, data, user) {
     return;
   }
 
-  // TODO: Get user's custom categories if PRO
-  const customCategories = [];
+  // Get user's custom categories if PRO
+  let customCategories = [];
+  if (user.is_premium) {
+    try {
+      customCategories = await customCategoryService.findByUserId(user.id);
+    } catch (error) {
+      logger.error('Error loading custom categories:', error);
+    }
+  }
 
   await bot.editMessageText('📂 Выберите категорию:', {
     chat_id: chatId,
@@ -179,14 +173,18 @@ async function handleEditAmount(chatId, messageId, data, user) {
 
 async function handleEditDescription(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
+  const bot = getBot();
+  
+  // Set state to wait for description input
+  stateManager.setState(chatId, STATE_TYPES.WAITING_EXPENSE_DESCRIPTION, { 
+    tempId,
+    messageId 
+  });
   
   await bot.editMessageText('📝 Отправьте новое описание расхода:', {
     chat_id: chatId,
     message_id: messageId
   });
-
-  // TODO: Set up state to wait for description input
-  // This would require implementing a state machine or using session storage
 }
 
 async function handleSetCategory(chatId, messageId, data, user) {
@@ -286,19 +284,33 @@ async function handleCreateProject(chatId, user) {
       return;
     }
 
-    // For PRO users, create additional projects
-    const projectName = userProjects.length === 0 ? 'Личные расходы' : `Проект ${userProjects.length + 1}`;
-    
-    const newProject = await projectService.create({
-      owner_id: user.id,
-      name: projectName,
-      description: 'Проект для отслеживания расходов',
-      is_active: false // New projects are inactive by default
-    });
+    // For first project, create automatically
+    if (userProjects.length === 0) {
+      const newProject = await projectService.create({
+        owner_id: user.id,
+        name: 'Личные расходы',
+        description: 'Проект для отслеживания расходов',
+        is_active: true
+      });
 
-    await bot.sendMessage(chatId, 
-      `✅ Проект "${projectName}" создан!\n\n📋 Переключитесь на него через /projects если хотите использовать.\n\n✨ Или продолжайте добавлять расходы в текущий проект.`
-    );
+      await bot.sendMessage(chatId, 
+        `✅ Проект "Личные расходы" создан!\n\n✨ Теперь можете добавлять расходы.`
+      );
+    } else {
+      // For additional projects (PRO only), ask for name
+      if (userData.is_premium) {
+        stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME, {});
+        
+        await bot.sendMessage(chatId, 
+          '📋 Создание нового проекта\n\nОтправьте название проекта:\n\n📝 Пример: "Отпуск в Турции" или "Рабочие расходы"'
+        );
+      } else {
+        await bot.sendMessage(chatId, 
+          '💎 Создание дополнительных проектов доступно только в PRO плане!',
+          { reply_markup: getUpgradeKeyboard() }
+        );
+      }
+    }
   } catch (error) {
     logger.error('Create project error:', error);
     await bot.sendMessage(chatId, '❌ Ошибка создания проекта. Попробуйте позже.');
@@ -404,60 +416,6 @@ A: Да, поддерживаются все основные платежные
   }
 }
 
-// Stats handlers
-async function handleStatsAction(chatId, messageId, data, user) {
-  const bot = getBot();
-  const parts = data.split(':');
-  const action = parts[1];
-  
-  try {
-    const projects = await projectService.findByUserId(user.id);
-    const activeProject = projects.find(p => p.is_active) || projects[0];
-    
-    if (!activeProject) {
-      await bot.editMessageText('📊 Сначала создайте проект для отслеживания расходов.', {
-        chat_id: chatId,
-        message_id: messageId
-      });
-      return;
-    }
-
-    if (action === 'detailed') {
-      // Detailed analytics
-      await bot.editMessageText(`📊 Детальная аналитика по проекту "${activeProject.name}":\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
-        chat_id: chatId,
-        message_id: messageId
-      });
-    } else if (action === 'last3months') {
-      // Last 3 months stats
-      await bot.editMessageText(`📊 Статистика за последние 3 месяца:\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
-        chat_id: chatId,
-        message_id: messageId
-      });
-    } else if (action === 'year') {
-      // Yearly stats
-      const year = parts[2];
-      await bot.editMessageText(`📊 Статистика за ${year} год:\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
-        chat_id: chatId,
-        message_id: messageId
-      });
-    } else {
-      // Monthly stats
-      const month = parts[1];
-      const year = parts[2];
-      await bot.editMessageText(`📊 Статистика за ${month}/${year}:\n\n🚧 Функция в разработке. Скоро будет доступна!`, {
-        chat_id: chatId,
-        message_id: messageId
-      });
-    }
-  } catch (error) {
-    logger.error('Stats action error:', error);
-    await bot.editMessageText('❌ Ошибка загрузки статистики.', {
-      chat_id: chatId,
-      message_id: messageId
-    });
-  }
-}
 
 // Settings handlers
 async function handleSettingsAction(chatId, messageId, data, user) {
@@ -493,13 +451,6 @@ async function handleSettingsAction(chatId, messageId, data, user) {
         );
         break;
         
-      case 'language':
-        await bot.editMessageText('🌐 Выбор языка:\n\n🚧 Функция в разработке. Пока поддерживается русский язык.', {
-          chat_id: chatId,
-          message_id: messageId
-        });
-        break;
-        
       case 'export':
         await bot.editMessageText('📊 Экспорт данных:\n\n🚧 Функция в разработке. Используйте Google Sheets для экспорта.', {
           chat_id: chatId,
@@ -507,18 +458,40 @@ async function handleSettingsAction(chatId, messageId, data, user) {
         });
         break;
         
-      case 'notifications':
-        await bot.editMessageText('🔔 Настройки уведомлений:\n\n🚧 Функция в разработке.', {
-          chat_id: chatId,
-          message_id: messageId
-        });
-        break;
-        
-      case 'delete_account':
-        await bot.editMessageText('🗑 Удаление аккаунта:\n\n⚠️ Это действие удалит все ваши данные!\n\n🚧 Функция в разработке. Обратитесь в поддержку.', {
-          chat_id: chatId,
-          message_id: messageId
-        });
+      case 'categories':
+        if (!user.is_premium) {
+          await bot.editMessageText('💎 Управление категориями доступно только в PRO плане!', {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: getUpgradeKeyboard()
+          });
+        } else {
+          // Show user's custom categories
+          try {
+            const categories = await customCategoryService.findByUserId(user.id);
+            
+            let message = '📂 Ваши кастомные категории:\n\n';
+            if (categories.length === 0) {
+              message += '❌ У вас пока нет кастомных категорий.\n\n💡 Создайте их при добавлении расходов через кнопку "➕ Своя категория"';
+            } else {
+              categories.forEach((cat, index) => {
+                message += `${index + 1}. ${cat.emoji} ${cat.name}\n`;
+              });
+              message += `\n📊 Всего: ${categories.length}/50`;
+            }
+            
+            await bot.editMessageText(message, {
+              chat_id: chatId,
+              message_id: messageId
+            });
+          } catch (error) {
+            logger.error('Error loading categories:', error);
+            await bot.editMessageText('❌ Ошибка загрузки категорий.', {
+              chat_id: chatId,
+              message_id: messageId
+            });
+          }
+        }
         break;
     }
   } catch (error) {
@@ -563,9 +536,9 @@ async function handleSwitchProject(chatId, messageId, data, user) {
 // Custom category (PRO feature)
 async function handleCustomCategory(chatId, messageId, data, user) {
   const bot = getBot();
-  const userData = await userService.findById(user.id);
+  const tempId = data.split(':')[1];
   
-  if (!userData.is_premium) {
+  if (!user.is_premium) {
     await bot.editMessageText('💎 Кастомные категории доступны только в PRO плане!', {
       chat_id: chatId,
       message_id: messageId,
@@ -574,7 +547,25 @@ async function handleCustomCategory(chatId, messageId, data, user) {
     return;
   }
   
-  await bot.editMessageText('➕ Создание своей категории:\n\n🚧 Функция в разработке.', {
+  // Check limit for FREE vs PRO
+  const categoryCount = await customCategoryService.getCountByUserId(user.id);
+  const maxCategories = user.is_premium ? 50 : 10; // PRO can have 50, FREE would be 10 (but FREE can't create)
+  
+  if (categoryCount >= maxCategories) {
+    await bot.editMessageText(`📂 Достигнут лимит категорий (${maxCategories})\n\nУдалите старые категории или обновитесь до более высокого плана.`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+  
+  // Set state to wait for category name input
+  stateManager.setState(chatId, STATE_TYPES.WAITING_CUSTOM_CATEGORY, { 
+    tempId,
+    messageId 
+  });
+  
+  await bot.editMessageText('➕ Создание кастомной категории\n\nОтправьте название категории с эмодзи:\n\n📝 Пример: "🎮 Игры" или "🏥 Медицина"\n\n💡 Формат: эмодзи + пробел + название', {
     chat_id: chatId,
     message_id: messageId
   });

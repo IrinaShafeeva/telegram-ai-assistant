@@ -1,7 +1,6 @@
 const axios = require('axios');
 const { userService, projectService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
-const patternsService = require('../../services/patterns');
 const { getExpenseConfirmationKeyboard } = require('../keyboards/inline');
 const { tempExpenses } = require('./messages');
 const { getBot } = require('../../utils/bot');
@@ -54,25 +53,8 @@ async function handleVoice(msg) {
 
     await bot.sendMessage(chatId, `🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю расход...`);
 
-    // Get user patterns for smart suggestions
-    const userPatterns = await patternsService.getUserPatterns(user.id);
-
     // Parse expense with AI
-    const parsedExpense = await openaiService.parseExpense(transcription, userPatterns);
-
-    // Apply smart defaults if category not detected
-    if (!parsedExpense.category) {
-      const suggestion = await openaiService.generateSmartSuggestions(parsedExpense.description, userPatterns);
-      if (suggestion) {
-        parsedExpense.category = suggestion.category;
-        if (!parsedExpense.currency) {
-          parsedExpense.currency = suggestion.currency;
-        }
-        if (!parsedExpense.amount || parsedExpense.amount === 0) {
-          parsedExpense.amount = suggestion.amount;
-        }
-      }
-    }
+    const parsedExpense = await openaiService.parseExpense(transcription);
 
     // Use user's primary currency if not specified
     if (!parsedExpense.currency) {

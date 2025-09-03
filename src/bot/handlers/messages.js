@@ -1,12 +1,12 @@
-const { userService, projectService, expenseService } = require('../../services/supabase');
+const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
 const googleSheetsService = require('../../services/googleSheets');
-const patternsService = require('../../services/patterns');
 const analyticsService = require('../../services/analytics');
 const { getExpenseConfirmationKeyboard } = require('../keyboards/inline');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
+const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
@@ -23,6 +23,13 @@ async function handleText(msg) {
   if (text.startsWith('/')) return;
 
   try {
+    // Check if user has active state
+    const userState = stateManager.getState(chatId);
+    if (userState) {
+      await handleStateInput(msg, userState);
+      return;
+    }
+
     // Handle currency selection during onboarding
     if (text.includes('🇷🇺') || text.includes('🇺🇸') || text.includes('🇪🇺') || 
         SUPPORTED_CURRENCIES.some(curr => text.includes(curr))) {
@@ -151,27 +158,10 @@ async function handleExpenseText(msg) {
       return;
     }
 
-    // Get user patterns for smart suggestions
-    const userPatterns = await patternsService.getUserPatterns(user.id);
-
     await bot.sendMessage(chatId, '🤖 Обрабатываю ваш расход...');
 
     // Parse expense with AI
-    const parsedExpense = await openaiService.parseExpense(text, userPatterns);
-
-    // Apply smart defaults if category not detected
-    if (!parsedExpense.category) {
-      const suggestion = await openaiService.generateSmartSuggestions(parsedExpense.description, userPatterns);
-      if (suggestion) {
-        parsedExpense.category = suggestion.category;
-        if (!parsedExpense.currency) {
-          parsedExpense.currency = suggestion.currency;
-        }
-        if (!parsedExpense.amount || parsedExpense.amount === 0) {
-          parsedExpense.amount = suggestion.amount;
-        }
-      }
-    }
+    const parsedExpense = await openaiService.parseExpense(text);
 
     // Use user's primary currency if not specified
     if (!parsedExpense.currency) {
@@ -260,6 +250,205 @@ async function handleAnalyticsQuestion(msg) {
     logger.error('Analytics question error:', error);
     await bot.sendMessage(chatId, `❌ ${error.message || 'Не удалось проанализировать расходы.'}`);
   }
+}
+
+// Handle input when user is in a state
+async function handleStateInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  
+  try {
+    switch (userState.type) {
+      case STATE_TYPES.WAITING_EXPENSE_DESCRIPTION:
+        await handleDescriptionInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_CUSTOM_CATEGORY:
+        await handleCustomCategoryInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_PROJECT_NAME:
+        await handleProjectNameInput(msg, userState);
+        break;
+        
+      default:
+        logger.warn(`Unknown state type: ${userState.type}`);
+        stateManager.clearState(chatId);
+    }
+  } catch (error) {
+    logger.error('Error handling state input:', error);
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
+  }
+}
+
+// Handle description input for expense
+async function handleDescriptionInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { tempId, messageId } = userState.data;
+  
+  if (text.length < 1) {
+    await bot.sendMessage(chatId, '❌ Описание не может быть пустым.');
+    return;
+  }
+  
+  if (text.length > 100) {
+    await bot.sendMessage(chatId, '❌ Описание слишком длинное (максимум 100 символов).');
+    return;
+  }
+  
+  // Update expense data
+  const expenseData = tempExpenses.get(tempId);
+  if (expenseData) {
+    expenseData.description = text;
+    tempExpenses.set(tempId, expenseData);
+    
+    // Update the confirmation message
+    const confirmationText = `💰 Подтвердите расход:
+
+📝 Описание: ${expenseData.description}
+💵 Сумма: ${expenseData.amount} ${expenseData.currency}
+📂 Категория: ${expenseData.category}
+
+✅ Описание обновлено!`;
+    
+    await bot.editMessageText(confirmationText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getExpenseConfirmationKeyboard(tempId)
+    });
+  } else {
+    await bot.sendMessage(chatId, '❌ Данные расхода устарели.');
+  }
+  
+  // Clear state
+  stateManager.clearState(chatId);
+}
+
+// Placeholder functions for other state types
+async function handleCustomCategoryInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { tempId, messageId } = userState.data;
+  
+  // Validate format: emoji + space + name
+  const emojiRegex = /^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Extended_Pictographic})\s+(.+)$/u;
+  const match = text.match(emojiRegex);
+  
+  if (!match) {
+    await bot.sendMessage(chatId, '❌ Неверный формат!\n\n📝 Нужно: эмодзи + пробел + название\n\n✅ Пример: "🎮 Игры"');
+    return;
+  }
+  
+  const emoji = match[1];
+  const name = match[2].trim();
+  
+  if (name.length < 2 || name.length > 20) {
+    await bot.sendMessage(chatId, '❌ Название должно быть от 2 до 20 символов!');
+    return;
+  }
+  
+  try {
+    // Check if category already exists
+    const existing = await customCategoryService.findByUserIdAndName(user.id, name);
+    if (existing) {
+      await bot.sendMessage(chatId, `❌ Категория "${name}" уже существует!`);
+      return;
+    }
+    
+    // Create new category
+    const category = await customCategoryService.create({
+      user_id: user.id,
+      name: name,
+      emoji: emoji
+    });
+    
+    // Update expense with new category
+    const expenseData = tempExpenses.get(tempId);
+    if (expenseData) {
+      expenseData.category = name;
+      tempExpenses.set(tempId, expenseData);
+      
+      // Update the confirmation message
+      const confirmationText = `💰 Подтвердите расход:
+
+📝 Описание: ${expenseData.description}
+💵 Сумма: ${expenseData.amount} ${expenseData.currency}
+📂 Категория: ${emoji} ${expenseData.category}
+
+✅ Категория "${name}" создана!`;
+      
+      const { getCategorySelectionKeyboard, getExpenseConfirmationKeyboard } = require('../keyboards/inline');
+      
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: getExpenseConfirmationKeyboard(tempId)
+      });
+    } else {
+      await bot.sendMessage(chatId, `✅ Категория "${emoji} ${name}" создана!\n\n❌ Данные расхода устарели.`);
+    }
+    
+  } catch (error) {
+    logger.error('Error creating custom category:', error);
+    if (error.code === '23505') { // Unique constraint violation
+      await bot.sendMessage(chatId, `❌ Категория "${name}" уже существует!`);
+    } else {
+      await bot.sendMessage(chatId, '❌ Ошибка создания категории. Попробуйте позже.');
+    }
+  }
+  
+  // Clear state
+  stateManager.clearState(chatId);
+}
+
+async function handleProjectNameInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  
+  if (text.length < 2 || text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название проекта должно быть от 2 до 50 символов!');
+    return;
+  }
+  
+  try {
+    // Check if project name already exists for this user
+    const existingProjects = await projectService.findByUserId(user.id);
+    const nameExists = existingProjects.some(p => 
+      p.name.toLowerCase() === text.toLowerCase()
+    );
+    
+    if (nameExists) {
+      await bot.sendMessage(chatId, `❌ Проект "${text}" уже существует!`);
+      return;
+    }
+    
+    // Create new project
+    const newProject = await projectService.create({
+      owner_id: user.id,
+      name: text,
+      description: `Проект "${text}" для отслеживания расходов`,
+      is_active: false // New projects are inactive by default
+    });
+    
+    await bot.sendMessage(chatId, 
+      `✅ Проект "${text}" создан!\n\n📋 Переключитесь на него через /projects если хотите использовать.\n\n✨ Или продолжайте добавлять расходы в текущий проект.`
+    );
+    
+  } catch (error) {
+    logger.error('Error creating project:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка создания проекта. Попробуйте позже.');
+  }
+  
+  // Clear state
+  stateManager.clearState(chatId);
 }
 
 // Export temp expenses store for callback handlers

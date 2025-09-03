@@ -401,11 +401,81 @@ const patternService = {
   }
 };
 
+// Custom Categories Service
+const customCategoryService = {
+  async findByUserId(userId) {
+    const { data, error } = await supabase
+      .from('custom_categories')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+    
+    if (error) throw error;
+    return data || [];
+  },
+
+  async create(categoryData) {
+    const { data, error } = await supabase
+      .from('custom_categories')
+      .insert(categoryData)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from('custom_categories')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
+  async delete(id) {
+    const { error } = await supabase
+      .from('custom_categories')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
+    return true;
+  },
+
+  async findByUserIdAndName(userId, name) {
+    const { data, error } = await supabase
+      .from('custom_categories')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('name', name)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
+
+  async getCountByUserId(userId) {
+    const { count, error } = await supabase
+      .from('custom_categories')
+      .select('*', { count: 'exact' })
+      .eq('user_id', userId);
+    
+    if (error) throw error;
+    return count || 0;
+  }
+};
+
 module.exports = {
   supabase,
   setupDatabase,
   userService,
   projectService,
   expenseService,
-  patternService
+  patternService,
+  customCategoryService
 };

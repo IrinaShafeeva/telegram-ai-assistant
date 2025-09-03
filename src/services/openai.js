@@ -33,18 +33,9 @@ class OpenAIService {
     }
   }
 
-  async parseExpense(userInput, userPatterns = null) {
+  async parseExpense(userInput) {
     try {
       let prompt = EXPENSE_PARSING_PROMPT.replace('{{userInput}}', userInput);
-      
-      // Add smart defaults context if available
-      if (userPatterns && userPatterns.length > 0) {
-        const patternsContext = userPatterns.map(p => 
-          `"${p.keyword}" → ${p.category} (${p.avg_amount} ${p.currency})`
-        ).join('\n');
-        
-        prompt += `\n\nИстория пользователя (для улучшения точности):\n${patternsContext}`;
-      }
 
       const completion = await openai.chat.completions.create({
         model: 'gpt-4',
@@ -290,33 +281,6 @@ ${availableCategories.join('\n')}
     }
   }
 
-  async generateSmartSuggestions(description, userPatterns) {
-    if (!userPatterns || userPatterns.length === 0) return null;
-
-    // Find patterns that match the description
-    const matchingPatterns = userPatterns.filter(pattern =>
-      description.toLowerCase().includes(pattern.keyword.toLowerCase()) ||
-      pattern.keyword.toLowerCase().includes(description.toLowerCase())
-    );
-
-    if (matchingPatterns.length === 0) return null;
-
-    // Return the pattern with highest confidence
-    const bestPattern = matchingPatterns.reduce((best, current) =>
-      current.confidence > best.confidence ? current : best
-    );
-
-    if (bestPattern.confidence > 0.6) {
-      return {
-        category: bestPattern.category,
-        amount: bestPattern.avg_amount,
-        currency: bestPattern.currency,
-        confidence: bestPattern.confidence
-      };
-    }
-
-    return null;
-  }
 }
 
 module.exports = new OpenAIService();
