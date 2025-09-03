@@ -309,29 +309,36 @@ const projectService = {
   },
 
   async findProjectByKeywords(userId, text) {
-    // Get all user's projects with keywords
-    const projects = await this.findByUserId(userId);
-    
-    if (!projects || projects.length === 0) return null;
-    
-    const textLower = text.toLowerCase();
-    
-    // Check each project's keywords
-    for (const project of projects) {
-      if (project.keywords) {
-        const keywords = project.keywords.split(',').map(k => k.trim().toLowerCase());
-        
-        // Check if any keyword is found in the text
-        for (const keyword of keywords) {
-          if (textLower.includes(keyword)) {
-            return project;
+    try {
+      // Get all user's projects with keywords
+      const projects = await this.findByUserId(userId);
+      
+      if (!projects || projects.length === 0) return null;
+      
+      const textLower = text.toLowerCase();
+      
+      // Check each project's keywords (only if keywords field exists)
+      for (const project of projects) {
+        if (project.keywords) {
+          const keywords = project.keywords.split(',').map(k => k.trim().toLowerCase());
+          
+          // Check if any keyword is found in the text
+          for (const keyword of keywords) {
+            if (textLower.includes(keyword)) {
+              return project;
+            }
           }
         }
       }
+      
+      // Return default active project if no keywords match
+      return projects.find(p => p.is_active) || projects[0];
+    } catch (error) {
+      logger.error('Error in findProjectByKeywords (possibly missing keywords field):', error);
+      // Fallback to regular findByUserId
+      const projects = await this.findByUserId(userId);
+      return projects?.find(p => p.is_active) || projects?.[0] || null;
     }
-    
-    // Return default active project if no keywords match
-    return projects.find(p => p.is_active) || projects[0];
   }
 };
 

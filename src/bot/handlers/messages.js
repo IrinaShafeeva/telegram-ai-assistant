@@ -474,13 +474,19 @@ async function handleProjectKeywordsInput(msg, userState) {
     }
     
     // Create project with keywords
-    const newProject = await projectService.create({
+    const projectData = {
       owner_id: user.id,
       name: projectName,
       description: `Проект "${projectName}" для отслеживания расходов`,
-      keywords: keywords,
       is_active: false // New projects are inactive by default
-    });
+    };
+    
+    // Add keywords only if provided and DB supports it
+    if (keywords) {
+      projectData.keywords = keywords;
+    }
+    
+    const newProject = await projectService.create(projectData);
     
     const keywordsText = keywords ? 
       `\n🔍 Ключевые слова: ${keywords}\n\n✨ Теперь при упоминании этих слов расходы будут автоматически попадать в этот проект!` : 
