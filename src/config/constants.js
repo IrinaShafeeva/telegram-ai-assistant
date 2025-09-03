@@ -70,15 +70,9 @@ const ANALYTICS_PROMPT = `
 const BOT_COMMANDS = [
   { command: 'start', description: 'Начать работу с ботом' },
   { command: 'help', description: 'Справка по командам' },
-  { command: 'projects', description: 'Управление проектами' },
-  { command: 'stats', description: 'Статистика расходов' },
-  { command: 'sync', description: 'Синхронизация с Google Sheets' },
+  { command: 'projects', description: 'Управление проектами (PRO)' },
   { command: 'settings', description: 'Настройки бота' },
-  { command: 'connect', description: 'Подключить Google таблицу' },
-  { command: 'email', description: 'Настроить Google email' },
-  { command: 'ask', description: 'AI-анализ расходов (вопросы о тратах)' },
-  { command: 'categories', description: 'Управление категориями' },
-  { command: 'upgrade', description: 'Информация о PRO плане' }
+  { command: 'connect', description: 'Подключить Google таблицу' }
 ];
 
 module.exports = {

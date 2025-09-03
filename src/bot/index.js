@@ -62,15 +62,8 @@ async function setupBot(bot) {
     bot.onText(/\/start/, withUser(commandHandlers.handleStart));
     bot.onText(/\/help/, withUser(commandHandlers.handleHelp));
     bot.onText(/\/projects/, withUser(commandHandlers.handleProjects));
-    bot.onText(/\/stats/, withUser(commandHandlers.handleStats));
-    bot.onText(/\/sync/, withUser(commandHandlers.handleSync));
     bot.onText(/\/settings/, withUser(commandHandlers.handleSettings));
-    bot.onText(/\/categories/, withUser(commandHandlers.handleCategories));
-    bot.onText(/\/upgrade/, withUser(commandHandlers.handleUpgrade));
-    bot.onText(/\/invite (.+)/, withUser(commandHandlers.handleInvite));
-    bot.onText(/\/email (.+)/, withUser(commandHandlers.handleEmail));
     bot.onText(/\/connect (.+)/, withUser(commandHandlers.handleConnect));
-    bot.onText(/\/ask (.+)/, withUser(commandHandlers.handleAsk));
     bot.onText(/\/devpro/, withUser(commandHandlers.handleDevPro));
 
     // Add general message logging
