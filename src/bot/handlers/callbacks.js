@@ -5,6 +5,7 @@ const {
   getCategorySelectionKeyboard, 
   getAmountSelectionKeyboard,
   getExpenseConfirmationKeyboard,
+  getProjectSelectionKeyboardForExpense,
   getUpgradeKeyboard
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
@@ -36,6 +37,10 @@ async function handleCallback(callbackQuery) {
       await handleEditAmount(chatId, messageId, data, user);
     } else if (data.startsWith('edit_description:')) {
       await handleEditDescription(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project:')) {
+      await handleEditProject(chatId, messageId, data, user);
+    } else if (data.startsWith('set_project:')) {
+      await handleSetProject(chatId, messageId, data, user);
     } else if (data.startsWith('set_category:')) {
       await handleSetCategory(chatId, messageId, data, user);
     } else if (data.startsWith('set_amount:')) {
@@ -187,8 +192,98 @@ async function handleEditDescription(chatId, messageId, data, user) {
   });
 }
 
+async function handleEditProject(chatId, messageId, data, user) {
+  const tempId = data.split(':')[1];
+  const expenseData = tempExpenses.get(tempId);
+
+  if (!expenseData) {
+    await bot.editMessageText('❌ Данные расхода устарели.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  try {
+    // Get user's projects
+    const projects = await projectService.findByUserId(user.id);
+    
+    if (!projects || projects.length === 0) {
+      await bot.editMessageText('❌ У вас нет проектов для выбора.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    await bot.editMessageText('📋 Выберите проект:', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getProjectSelectionKeyboardForExpense(tempId, projects)
+    });
+  } catch (error) {
+    logger.error('Error loading projects for expense:', error);
+    await bot.editMessageText('❌ Ошибка загрузки проектов.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleSetProject(chatId, messageId, data, user) {
+  const parts = data.split(':');
+  const tempId = parts[1];
+  const projectId = parts[2];
+  const expenseData = tempExpenses.get(tempId);
+
+  if (!expenseData) {
+    await bot.editMessageText('❌ Данные расхода устарели.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  try {
+    // Get project info
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      throw new Error('Project not found');
+    }
+
+    // Update expense data
+    expenseData.project_id = projectId;
+    tempExpenses.set(tempId, expenseData);
+
+    // Show updated confirmation
+    const confirmationText = `💰 Подтвердите расход:
+
+📝 Описание: ${expenseData.description}
+💵 Сумма: ${expenseData.amount} ${expenseData.currency}  
+📂 Категория: ${expenseData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+✅ Проект обновлен!`;
+
+    await bot.editMessageText(confirmationText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getExpenseConfirmationKeyboard(tempId)
+    });
+  } catch (error) {
+    logger.error('Error setting project for expense:', error);
+    await bot.editMessageText('❌ Ошибка обновления проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
 async function handleSetCategory(chatId, messageId, data, user) {
-  const [, tempId, category] = data.split(':');
+  const parts = data.split(':');
+  const tempId = parts[1];
+  const category = parts.slice(2).join(':'); // Join back all parts after tempId
   const expenseData = tempExpenses.get(tempId);
 
   if (!expenseData) {
@@ -207,7 +302,9 @@ async function handleSetCategory(chatId, messageId, data, user) {
 }
 
 async function handleSetAmount(chatId, messageId, data, user) {
-  const [, tempId, amount] = data.split(':');
+  const parts = data.split(':');
+  const tempId = parts[1];
+  const amount = parts[2];
   const expenseData = tempExpenses.get(tempId);
 
   if (!expenseData) {

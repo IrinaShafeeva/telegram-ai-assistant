@@ -12,6 +12,9 @@ function getExpenseConfirmationKeyboard(expenseId) {
         { text: '📝 Описание', callback_data: `edit_description:${expenseId}` }
       ],
       [
+        { text: '📋 Проект', callback_data: `edit_project:${expenseId}` }
+      ],
+      [
         { text: '❌ Отменить', callback_data: `cancel_expense:${expenseId}` }
       ]
     ]
@@ -44,6 +47,25 @@ function getCategorySelectionKeyboard(expenseId, customCategories = []) {
     text: '➕ Своя категория', 
     callback_data: `custom_category:${expenseId}` 
   }]);
+  
+  // Add back button
+  keyboard.push([{ 
+    text: '⬅️ Назад', 
+    callback_data: `back_to_confirmation:${expenseId}` 
+  }]);
+  
+  return { inline_keyboard: keyboard };
+}
+
+function getProjectSelectionKeyboardForExpense(expenseId, projects) {
+  const keyboard = [];
+  
+  projects.forEach(project => {
+    keyboard.push([{ 
+      text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
+      callback_data: `set_project:${expenseId}:${project.id}` 
+    }]);
+  });
   
   // Add back button
   keyboard.push([{ 
@@ -177,6 +199,7 @@ module.exports = {
   getCategorySelectionKeyboard,
   getAmountSelectionKeyboard,
   getProjectSelectionKeyboard,
+  getProjectSelectionKeyboardForExpense,
   getSettingsKeyboard,
   getUpgradeKeyboard,
   getConfirmationKeyboard,
