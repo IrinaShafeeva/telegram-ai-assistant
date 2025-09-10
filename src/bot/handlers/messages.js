@@ -1,8 +1,8 @@
-const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
+const { userService, projectService, expenseService, customCategoryService, incomeService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
 const googleSheetsService = require('../../services/googleSheets');
 const analyticsService = require('../../services/analytics');
-const { getExpenseConfirmationKeyboard } = require('../keyboards/inline');
+const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
@@ -12,6 +12,8 @@ const { v4: uuidv4 } = require('uuid');
 
 // Store temporary expense data
 const tempExpenses = new Map();
+// Store temporary income data
+const tempIncomes = new Map();
 
 async function handleText(msg) {
   const chatId = msg.chat.id;
@@ -140,11 +142,14 @@ async function handleExpenseText(msg) {
     // Try AI-detection first, fallback to active project if it fails
     let activeProject;
     try {
+      logger.info(`🤖 AI analyzing text for project: "${text}"`);
       activeProject = await projectService.findProjectByKeywords(user.id, text);
+      logger.info(`🎯 AI selected project: ${activeProject?.name || 'none'} (ID: ${activeProject?.id})`);
     } catch (error) {
       logger.warn('AI project detection failed, using active project:', error.message);
       const projects = await projectService.findByUserId(user.id);
       activeProject = projects.find(p => p.is_active) || projects[0];
+      logger.info(`📋 Fallback to active project: ${activeProject?.name}`);
     }
 
     if (!activeProject) {
@@ -161,33 +166,70 @@ async function handleExpenseText(msg) {
       return;
     }
 
-    await bot.sendMessage(chatId, '🤖 Обрабатываю ваш расход...');
+    await bot.sendMessage(chatId, '🤖 Обрабатываю вашу транзакцию...');
 
-    // Parse expense with AI
-    const parsedExpense = await openaiService.parseExpense(text);
+    // Parse transaction with AI (could be income or expense)
+    const parsedTransaction = await openaiService.parseTransaction(text);
 
     // Use user's primary currency if not specified
-    if (!parsedExpense.currency) {
-      parsedExpense.currency = user.primary_currency;
+    if (!parsedTransaction.currency) {
+      parsedTransaction.currency = user.primary_currency;
     }
 
-    // Generate temporary expense ID for confirmation
-    const tempId = uuidv4();
-    const expenseData = {
-      user_id: user.id,
-      project_id: activeProject.id,
-      amount: parsedExpense.amount,
-      currency: parsedExpense.currency,
-      category: parsedExpense.category || 'Прочее',
-      description: parsedExpense.description,
-      expense_date: new Date().toISOString().split('T')[0]
-    };
+    if (parsedTransaction.type === 'income') {
+      // Handle income transaction
+      const tempId = uuidv4();
+      const incomeData = {
+        user_id: user.id,
+        project_id: activeProject.id,
+        amount: parsedTransaction.amount,
+        currency: parsedTransaction.currency,
+        category: parsedTransaction.category || 'Прочие доходы',
+        description: parsedTransaction.description,
+        income_date: new Date().toISOString().split('T')[0]
+      };
 
-    // Store temporarily
-    tempExpenses.set(tempId, expenseData);
+      // Store temporarily for income
+      tempIncomes.set(tempId, incomeData);
 
-    // Show confirmation
-    const confirmationText = `💰 Подтвердите расход:
+      // Show income confirmation
+      const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${activeProject.name}
+
+Всё верно?`;
+
+      await bot.sendMessage(chatId, confirmationText, {
+        reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+      });
+
+      // Auto-expire temp income after 5 minutes
+      setTimeout(() => {
+        tempIncomes.delete(tempId);
+      }, 5 * 60 * 1000);
+
+    } else {
+      // Handle expense transaction
+      const tempId = uuidv4();
+      const expenseData = {
+        user_id: user.id,
+        project_id: activeProject.id,
+        amount: parsedTransaction.amount,
+        currency: parsedTransaction.currency,
+        category: parsedTransaction.category || 'Прочее',
+        description: parsedTransaction.description,
+        expense_date: new Date().toISOString().split('T')[0]
+      };
+
+      // Store temporarily
+      tempExpenses.set(tempId, expenseData);
+
+      // Show confirmation
+      const confirmationText = `💰 Подтвердите расход:
 
 📝 Описание: ${expenseData.description}
 💵 Сумма: ${expenseData.amount} ${expenseData.currency}
@@ -197,14 +239,15 @@ async function handleExpenseText(msg) {
 
 Всё верно?`;
 
-    await bot.sendMessage(chatId, confirmationText, {
-      reply_markup: getExpenseConfirmationKeyboard(tempId)
-    });
+      await bot.sendMessage(chatId, confirmationText, {
+        reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+      });
 
-    // Auto-expire temp expense after 5 minutes
-    setTimeout(() => {
-      tempExpenses.delete(tempId);
-    }, 5 * 60 * 1000);
+      // Auto-expire temp expense after 5 minutes
+      setTimeout(() => {
+        tempExpenses.delete(tempId);
+      }, 5 * 60 * 1000);
+    }
 
   } catch (error) {
     logger.error('Expense text processing error:', error);
@@ -267,6 +310,10 @@ async function handleStateInput(msg, userState) {
         await handleDescriptionInput(msg, userState);
         break;
         
+      case STATE_TYPES.WAITING_CUSTOM_AMOUNT:
+        await handleCustomAmountInput(msg, userState);
+        break;
+        
       case STATE_TYPES.WAITING_CUSTOM_CATEGORY:
         await handleCustomCategoryInput(msg, userState);
         break;
@@ -281,6 +328,34 @@ async function handleStateInput(msg, userState) {
         
       case STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK:
         await handleGoogleSheetsLinkInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_CATEGORY_NAME:
+        await handleCategoryNameInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_CATEGORY_EMOJI:
+        await handleCategoryEmojiInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_CATEGORY_NAME_EDIT:
+        await handleCategoryNameEditInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_CATEGORY_EMOJI_EDIT:
+        await handleCategoryEmojiEditInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_CUSTOM_EXPORT_DATES:
+        await handleCustomExportDatesInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.EDITING_INCOME_AMOUNT:
+        await handleIncomeAmountEdit(msg, userState);
+        break;
+        
+      case STATE_TYPES.EDITING_INCOME_DESCRIPTION:
+        await handleIncomeDescriptionEdit(msg, userState);
         break;
         
       default:
@@ -329,7 +404,54 @@ async function handleDescriptionInput(msg, userState) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getExpenseConfirmationKeyboard(tempId)
+      reply_markup: getExpenseConfirmationKeyboard(tempId, msg.user.is_premium)
+    });
+  } else {
+    await bot.sendMessage(chatId, '❌ Данные расхода устарели.');
+  }
+  
+  // Clear state
+  stateManager.clearState(chatId);
+}
+
+async function handleCustomAmountInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { tempId, messageId } = userState.data;
+  
+  // Parse amount
+  const amount = parseFloat(text.replace(',', '.').replace(/[^\d.]/g, ''));
+  
+  if (isNaN(amount) || amount <= 0 || amount > 1000000) {
+    await bot.sendMessage(chatId, '❌ Некорректная сумма!\n\n📝 Введите число от 1 до 1 000 000\n\n✅ Примеры: 250, 1500.50, 50');
+    return;
+  }
+  
+  // Update expense data
+  const expenseData = tempExpenses.get(tempId);
+  if (expenseData) {
+    expenseData.amount = amount;
+    tempExpenses.set(tempId, expenseData);
+    
+    // Get project name
+    const project = await projectService.findById(expenseData.project_id);
+    
+    // Update the confirmation message
+    const confirmationText = `💰 Подтвердите расход:
+
+📝 Описание: ${expenseData.description}
+💵 Сумма: ${expenseData.amount} ${expenseData.currency}
+📂 Категория: ${expenseData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+✅ Сумма обновлена!`;
+    
+    await bot.editMessageText(confirmationText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getExpenseConfirmationKeyboard(tempId, msg.user.is_premium)
     });
   } else {
     await bot.sendMessage(chatId, '❌ Данные расхода устарели.');
@@ -399,7 +521,7 @@ async function handleCustomCategoryInput(msg, userState) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: getExpenseConfirmationKeyboard(tempId)
+        reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
       });
     } else {
       await bot.sendMessage(chatId, `✅ Категория "${emoji} ${name}" создана!\n\n❌ Данные расхода устарели.`);
@@ -566,9 +688,32 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
       google_sheet_id: sheetId
     });
     
-    await bot.sendMessage(chatId, 
-      `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n📊 Теперь ваши расходы будут синхронизироваться с таблицей.\n\n💡 Используйте кнопку "📊 Экспорт данных" в настройках для синхронизации.`
+    // Send processing message
+    const processingMsg = await bot.sendMessage(chatId, 
+      `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n⏳ Загружаю существующие расходы в таблицу...`
     );
+    
+    // Sync all existing expenses to Google Sheets
+    try {
+      await syncExistingExpensesToSheets(user.id, activeProject.id, sheetId);
+      
+      await bot.editMessageText(
+        `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n📊 Все существующие расходы синхронизированы с таблицей.\n\n💡 Новые расходы будут автоматически добавляться в таблицу.`,
+        {
+          chat_id: chatId,
+          message_id: processingMsg.message_id
+        }
+      );
+    } catch (syncError) {
+      logger.error('Error syncing existing expenses:', syncError);
+      await bot.editMessageText(
+        `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n⚠️ Таблица подключена, но не удалось синхронизировать существующие данные.\n\n💡 Используйте "📊 Экспорт данных" в настройках для ручной синхронизации.`,
+        {
+          chat_id: chatId,
+          message_id: processingMsg.message_id
+        }
+      );
+    }
     
   } catch (error) {
     logger.error('Error connecting Google Sheets:', error);
@@ -579,10 +724,490 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
   stateManager.clearState(chatId);
 }
 
+// Handle category name input
+async function handleCategoryNameInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { messageId } = userState.data;
+
+  if (!user.is_premium) {
+    await bot.sendMessage(chatId, '💎 Создание кастомных категорий доступно только в PRO плане!');
+    stateManager.clearState(chatId);
+    return;
+  }
+
+  if (text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название категории слишком длинное (максимум 50 символов).');
+    return;
+  }
+
+  if (text.length < 2) {
+    await bot.sendMessage(chatId, '❌ Название категории слишком короткое (минимум 2 символа).');
+    return;
+  }
+
+  try {
+    // Check if category name already exists
+    const existing = await customCategoryService.findByUserIdAndName(user.id, text);
+    if (existing) {
+      await bot.sendMessage(chatId, '❌ Категория с таким названием уже существует.');
+      return;
+    }
+
+    // Move to emoji selection
+    stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_EMOJI, { 
+      messageId,
+      categoryName: text 
+    });
+
+    await bot.editMessageText(`🎨 Выбор эмодзи для категории
+
+📁 Название: **${text}**
+
+🎯 Отправьте эмодзи для категории (один символ):
+
+💡 Примеры: 🐕 🏠 🚗 🍔 💊 🎬 ✈️
+
+Или нажмите "Пропустить" для создания без эмодзи.`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '➡️ Пропустить эмодзи', callback_data: 'skip_emoji' }],
+          [{ text: '❌ Отмена', callback_data: 'manage_categories' }]
+        ]
+      }
+    });
+  } catch (error) {
+    logger.error('Error handling category name input:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка. Попробуйте позже.');
+    stateManager.clearState(chatId);
+  }
+}
+
+// Handle category emoji input
+async function handleCategoryEmojiInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { messageId, categoryName } = userState.data;
+
+  if (!user.is_premium) {
+    await bot.sendMessage(chatId, '💎 Создание кастомных категорий доступно только в PRO плане!');
+    stateManager.clearState(chatId);
+    return;
+  }
+
+  // Validate emoji (should be 1-2 characters for emoji)
+  if (text.length > 2) {
+    await bot.sendMessage(chatId, '❌ Пожалуйста, отправьте только один эмодзи.');
+    return;
+  }
+
+  try {
+    // Create category with emoji
+    const category = await customCategoryService.create({
+      user_id: user.id,
+      name: categoryName,
+      emoji: text
+    });
+
+    await bot.editMessageText(`✅ Категория создана!
+
+${text} **${categoryName}**
+
+Теперь эта категория доступна при записи расходов.`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]]
+      }
+    });
+  } catch (error) {
+    logger.error('Error creating category with emoji:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка создания категории.');
+  }
+
+  stateManager.clearState(chatId);
+}
+
+// Handle category name edit input
+async function handleCategoryNameEditInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { messageId, categoryId, currentName } = userState.data;
+
+  if (!user.is_premium) {
+    await bot.sendMessage(chatId, '💎 Редактирование кастомных категорий доступно только в PRO плане!');
+    stateManager.clearState(chatId);
+    return;
+  }
+
+  if (text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название категории слишком длинное (максимум 50 символов).');
+    return;
+  }
+
+  if (text.length < 2) {
+    await bot.sendMessage(chatId, '❌ Название категории слишком короткое (минимум 2 символа).');
+    return;
+  }
+
+  if (text === currentName) {
+    await bot.sendMessage(chatId, '❌ Новое название должно отличаться от текущего.');
+    return;
+  }
+
+  try {
+    // Check if category name already exists
+    const existing = await customCategoryService.findByUserIdAndName(user.id, text);
+    if (existing && existing.id !== categoryId) {
+      await bot.sendMessage(chatId, '❌ Категория с таким названием уже существует.');
+      return;
+    }
+
+    // Update category name
+    await customCategoryService.update(categoryId, { name: text });
+
+    await bot.editMessageText(`✅ Название категории изменено!
+
+Старое: **${currentName}**
+Новое: **${text}**`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 К категории', callback_data: `edit_category:${categoryId}` }]]
+      }
+    });
+  } catch (error) {
+    logger.error('Error updating category name:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка обновления названия.');
+  }
+
+  stateManager.clearState(chatId);
+}
+
+// Handle category emoji edit input
+async function handleCategoryEmojiEditInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { messageId, categoryId, currentEmoji } = userState.data;
+
+  if (!user.is_premium) {
+    await bot.sendMessage(chatId, '💎 Редактирование кастомных категорий доступно только в PRO плане!');
+    stateManager.clearState(chatId);
+    return;
+  }
+
+  // Validate emoji (should be 1-2 characters for emoji)
+  if (text.length > 2) {
+    await bot.sendMessage(chatId, '❌ Пожалуйста, отправьте только один эмодзи.');
+    return;
+  }
+
+  if (text === currentEmoji) {
+    await bot.sendMessage(chatId, '❌ Новый эмодзи должен отличаться от текущего.');
+    return;
+  }
+
+  try {
+    // Update category emoji
+    await customCategoryService.update(categoryId, { emoji: text });
+
+    await bot.editMessageText(`✅ Эмодзи категории изменен!
+
+Старый: ${currentEmoji || '📁 (по умолчанию)'}
+Новый: ${text}`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 К категории', callback_data: `edit_category:${categoryId}` }]]
+      }
+    });
+  } catch (error) {
+    logger.error('Error updating category emoji:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка обновления эмодзи.');
+  }
+
+  stateManager.clearState(chatId);
+}
+
+async function handleCustomExportDatesInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { format, messageId } = userState.data;
+  
+  // Parse date range format: DD.MM.YYYY - DD.MM.YYYY
+  const dateRangeRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})\s*-\s*(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
+  const match = text.match(dateRangeRegex);
+  
+  if (!match) {
+    await bot.sendMessage(chatId, '❌ Неверный формат даты!\n\n📝 Используйте: ДД.ММ.ГГГГ - ДД.ММ.ГГГГ\n\n✅ Пример: 01.12.2024 - 31.12.2024');
+    return;
+  }
+  
+  try {
+    const [, startDay, startMonth, startYear, endDay, endMonth, endYear] = match;
+    
+    const startDate = new Date(startYear, startMonth - 1, startDay);
+    const endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59);
+    
+    // Validate dates
+    if (startDate > endDate) {
+      await bot.sendMessage(chatId, '❌ Начальная дата не может быть позже конечной!');
+      return;
+    }
+    
+    const now = new Date();
+    if (startDate > now || endDate > now) {
+      await bot.sendMessage(chatId, '❌ Даты не могут быть в будущем!');
+      return;
+    }
+    
+    // Generate export directly (duplicate of callbacks.js logic for now)
+    await generateCustomExport(chatId, messageId, msg.user, format, startDate, endDate);
+    
+  } catch (error) {
+    logger.error('Date parsing error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка обработки дат. Проверьте формат.');
+  }
+  
+  stateManager.clearState(chatId);
+}
+
+async function generateCustomExport(chatId, messageId, user, format, startDate, endDate) {
+  const bot = getBot();
+  const { expenseService } = require('../../services/supabase');
+  const logger = require('../../utils/logger');
+  
+  // Show processing message
+  await bot.editMessageText('⏳ Генерируем экспорт...', {
+    chat_id: chatId,
+    message_id: messageId
+  });
+  
+  try {
+    // Get user's expenses for the period
+    const expenses = await expenseService.getExpensesForExport(user.id, startDate, endDate);
+    
+    if (expenses.length === 0) {
+      await bot.editMessageText('📊 Нет данных за выбранный период для экспорта.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+    
+    // Generate CSV content
+    const headers = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Проект'];
+    const rows = [headers];
+    
+    expenses.forEach(expense => {
+      rows.push([
+        expense.expense_date,
+        expense.description,
+        expense.amount,
+        expense.currency,
+        expense.category,
+        expense.project_name || 'Без проекта'
+      ]);
+    });
+    
+    const csvData = rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    const fileContent = Buffer.from(csvData, 'utf-8');
+    
+    const formatDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '.');
+    const fileName = `expenses_${formatDate(startDate)}_${formatDate(endDate)}.${format === 'xlsx' ? 'xlsx' : 'csv'}`;
+    
+    // Send file
+    await bot.sendDocument(chatId, fileContent, {
+      filename: fileName,
+      contentType: format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv'
+    });
+    
+    // Update message
+    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${expenses.length} записей\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    
+  } catch (error) {
+    logger.error('Export generation error:', error);
+    await bot.editMessageText('❌ Ошибка генерации файла экспорта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function syncExistingExpensesToSheets(userId, projectId, sheetId) {
+  const { expenseService } = require('../../services/supabase');
+  const googleSheetsService = require('../../services/googleSheets');
+  const logger = require('../../utils/logger');
+  
+  try {
+    logger.info(`Starting sync of existing expenses for user ${userId}, project ${projectId} to sheet ${sheetId}`);
+    
+    // Get all expenses for this project
+    const expenses = await expenseService.findByProject(projectId, 1000, 0); // Get up to 1000 expenses
+    
+    if (!expenses || expenses.length === 0) {
+      logger.info('No expenses to sync');
+      return;
+    }
+    
+    logger.info(`Found ${expenses.length} expenses to sync`);
+    
+    // Setup the sheet with headers first
+    await googleSheetsService.setupSheet(sheetId);
+    
+    // Sync expenses in batches to avoid API limits
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < expenses.length; i += BATCH_SIZE) {
+      const batch = expenses.slice(i, i + BATCH_SIZE);
+      
+      logger.info(`Syncing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(expenses.length / BATCH_SIZE)}: ${batch.length} expenses`);
+      
+      for (const expense of batch) {
+        try {
+          await googleSheetsService.addExpense(sheetId, {
+            date: expense.expense_date,
+            description: expense.description,
+            amount: expense.amount,
+            currency: expense.currency,
+            category: expense.category
+          });
+          
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+        } catch (expenseError) {
+          logger.error(`Failed to sync expense ${expense.id}:`, expenseError);
+          // Continue with other expenses even if one fails
+        }
+      }
+      
+      // Longer delay between batches
+      if (i + BATCH_SIZE < expenses.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    logger.info(`Successfully synced ${expenses.length} expenses to Google Sheets`);
+    
+  } catch (error) {
+    logger.error('Error in syncExistingExpensesToSheets:', error);
+    throw error;
+  }
+}
+
+async function handleIncomeAmountEdit(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { tempId } = userState.data;
+  
+  const incomeData = tempIncomes.get(tempId);
+  if (!incomeData) {
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Данные дохода устарели. Попробуйте еще раз.');
+    return;
+  }
+
+  const amount = parseFloat(text);
+  if (isNaN(amount) || amount <= 0) {
+    await bot.sendMessage(chatId, '❌ Введите корректную сумму (число больше 0)');
+    return;
+  }
+
+  incomeData.amount = amount;
+  tempIncomes.set(tempId, incomeData);
+  stateManager.clearState(chatId);
+
+  try {
+    const project = await projectService.findById(incomeData.project_id);
+    
+    const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+    await bot.sendMessage(chatId, confirmationText, {
+      reply_markup: getIncomeConfirmationKeyboard(tempId, msg.user.is_premium)
+    });
+
+  } catch (error) {
+    logger.error('Error updating income amount:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при обновлении суммы.');
+  }
+}
+
+async function handleIncomeDescriptionEdit(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { tempId } = userState.data;
+  
+  const incomeData = tempIncomes.get(tempId);
+  if (!incomeData) {
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Данные дохода устарели. Попробуйте еще раз.');
+    return;
+  }
+
+  if (text.length === 0 || text.length > 200) {
+    await bot.sendMessage(chatId, '❌ Описание должно содержать от 1 до 200 символов');
+    return;
+  }
+
+  incomeData.description = text;
+  tempIncomes.set(tempId, incomeData);
+  stateManager.clearState(chatId);
+
+  try {
+    const project = await projectService.findById(incomeData.project_id);
+    
+    const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+    await bot.sendMessage(chatId, confirmationText, {
+      reply_markup: getIncomeConfirmationKeyboard(tempId, msg.user.is_premium)
+    });
+
+  } catch (error) {
+    logger.error('Error updating income description:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при обновлении описания.');
+  }
+}
+
 // Export temp expenses store for callback handlers
 module.exports = {
   handleText,
   tempExpenses,
+  tempIncomes,
   handleCurrencySelection,
   createFirstProject,
   handleExpenseText

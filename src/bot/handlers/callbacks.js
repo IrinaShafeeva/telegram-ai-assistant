@@ -1,12 +1,15 @@
-const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
+const { userService, projectService, expenseService, customCategoryService, incomeService, supabase } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
-const { tempExpenses } = require('./messages');
+const { tempExpenses, tempIncomes } = require('./messages');
 const { 
   getCategorySelectionKeyboard, 
   getAmountSelectionKeyboard,
   getExpenseConfirmationKeyboard,
   getProjectSelectionKeyboardForExpense,
-  getUpgradeKeyboard
+  getUpgradeKeyboard,
+  getExportFormatKeyboard,
+  getExportPeriodKeyboard,
+  getSettingsKeyboard
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
@@ -46,7 +49,7 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('save_expense:')) {
       await handleSaveExpense(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:')) {
-      await handleEditCategory(chatId, messageId, data, user);
+      await handleEditExpenseCategory(chatId, messageId, data, user);
     } else if (data.startsWith('edit_amount:')) {
       await handleEditAmount(chatId, messageId, data, user);
     } else if (data.startsWith('edit_description:')) {
@@ -57,12 +60,28 @@ async function handleCallback(callbackQuery) {
       await handleSetProject(chatId, messageId, data, user);
     } else if (data.startsWith('set_category:')) {
       await handleSetCategory(chatId, messageId, data, user);
-    } else if (data.startsWith('set_amount:')) {
-      await handleSetAmount(chatId, messageId, data, user);
+    } else if (data.startsWith('set_income_category:')) {
+      await handleSetIncomeCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('set_income_project:')) {
+      await handleSetIncomeProject(chatId, messageId, data, user);
+    } else if (data.startsWith('back_to_income_confirmation:')) {
+      await handleBackToIncomeConfirmation(chatId, messageId, data, user);
+    } else if (data.startsWith('save_income:')) {
+      await handleSaveIncome(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_income_category:')) {
+      await handleEditIncomeCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_income_amount:')) {
+      await handleEditIncomeAmount(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_income_description:')) {
+      await handleEditIncomeDescription(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_income_project:')) {
+      await handleEditIncomeProject(chatId, messageId, data, user);
+    } else if (data.startsWith('cancel_income:')) {
+      await handleCancelIncome(chatId, messageId, data);
     } else if (data.startsWith('cancel_expense:')) {
       await handleCancelExpense(chatId, messageId, data);
     } else if (data.startsWith('back_to_confirmation:')) {
-      await handleBackToConfirmation(chatId, messageId, data);
+      await handleBackToConfirmation(chatId, messageId, data, user);
     } else if (data.startsWith('create_project')) {
       await handleCreateProject(chatId, user);
     } else if (data.startsWith('upgrade:')) {
@@ -79,6 +98,34 @@ async function handleCallback(callbackQuery) {
       await handleCustomCategory(chatId, messageId, data, user);
     } else if (data.startsWith('custom_amount:')) {
       await handleCustomAmount(chatId, messageId, data, user);
+    } else if (data === 'add_custom_category') {
+      await handleAddCustomCategory(chatId, messageId, user);
+    } else if (data === 'manage_categories') {
+      await handleManageCategories(chatId, messageId, user);
+    } else if (data.startsWith('edit_custom_category:')) {
+      await handleEditCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('delete_category:')) {
+      await handleDeleteCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('confirm_delete_category:')) {
+      await handleConfirmDeleteCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_cat_name:')) {
+      await handleEditCategoryName(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_cat_emoji:')) {
+      await handleEditCategoryEmoji(chatId, messageId, data, user);
+    } else if (data.startsWith('remove_emoji:')) {
+      await handleRemoveEmoji(chatId, messageId, data, user);
+    } else if (data === 'skip_emoji') {
+      await handleSkipEmoji(chatId, messageId, user);
+    } else if (data === 'categories') {
+      await handleCategoriesCallback(chatId, messageId, user);
+    } else if (data.startsWith('export_format:')) {
+      await handleExportFormat(chatId, messageId, data, user);
+    } else if (data.startsWith('export_period:')) {
+      await handleExportPeriod(chatId, messageId, data, user);
+    } else if (data === 'confirm_clear_data') {
+      await handleConfirmClearData(chatId, messageId, user);
+    } else if (data === 'cancel_clear_data') {
+      await handleCancelClearData(chatId, messageId, user);
     } else if (data === 'noop') {
       // Pagination placeholder - answer callback query to remove loading state
       await bot.answerCallbackQuery(callbackQuery.id, { text: '' });
@@ -210,10 +257,57 @@ async function handleEditDescription(chatId, messageId, data, user) {
   });
 }
 
+async function handleEditExpenseCategory(chatId, messageId, data, user) {
+  const tempId = data.split(':')[1];
+  const expenseData = tempExpenses.get(tempId);
+  const bot = getBot();
+
+  if (!expenseData) {
+    await bot.editMessageText('❌ Данные расхода устарели.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  try {
+    // Get user's custom categories if PRO
+    let customCategories = [];
+    if (user.is_premium) {
+      try {
+        customCategories = await customCategoryService.findByUserId(user.id);
+      } catch (error) {
+        logger.error('Error loading custom categories:', error);
+      }
+    }
+
+    await bot.editMessageText('📂 Выберите категорию:', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getCategorySelectionKeyboard(tempId, customCategories)
+    });
+  } catch (error) {
+    logger.error('Error loading categories for expense:', error);
+    await bot.editMessageText('❌ Ошибка загрузки категорий.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
 async function handleEditProject(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
   const expenseData = tempExpenses.get(tempId);
   const bot = getBot();
+
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Проекты доступны только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_confirmation:${tempId}` }]] }
+    });
+    return;
+  }
 
   if (!expenseData) {
     await bot.editMessageText('❌ Данные расхода устарели.', {
@@ -292,7 +386,7 @@ async function handleSetProject(chatId, messageId, data, user) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getExpenseConfirmationKeyboard(tempId)
+      reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
     });
   } catch (error) {
     logger.error('Error setting project for expense:', error);
@@ -321,31 +415,11 @@ async function handleSetCategory(chatId, messageId, data, user) {
   expenseData.category = category;
   tempExpenses.set(tempId, expenseData);
 
-  await handleBackToConfirmation(chatId, messageId, `back_to_confirmation:${tempId}`);
+  await handleBackToConfirmation(chatId, messageId, `back_to_confirmation:${tempId}`, user);
 }
 
-async function handleSetAmount(chatId, messageId, data, user) {
-  const parts = data.split(':');
-  const tempId = parts[1];
-  const amount = parts[2];
-  const expenseData = tempExpenses.get(tempId);
 
-  if (!expenseData) {
-    await bot.editMessageText('❌ Данные расхода устарели.', {
-      chat_id: chatId,
-      message_id: messageId
-    });
-    return;
-  }
-
-  // Update amount
-  expenseData.amount = parseFloat(amount);
-  tempExpenses.set(tempId, expenseData);
-
-  await handleBackToConfirmation(chatId, messageId, `back_to_confirmation:${tempId}`);
-}
-
-async function handleBackToConfirmation(chatId, messageId, data) {
+async function handleBackToConfirmation(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
   const expenseData = tempExpenses.get(tempId);
 
@@ -373,7 +447,7 @@ async function handleBackToConfirmation(chatId, messageId, data) {
   await bot.editMessageText(confirmationText, {
     chat_id: chatId,
     message_id: messageId,
-    reply_markup: getExpenseConfirmationKeyboard(tempId)
+    reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
   });
 }
 
@@ -572,9 +646,10 @@ async function handleSettingsAction(chatId, messageId, data, user) {
         break;
         
       case 'export':
-        await bot.editMessageText('📊 Экспорт данных:\n\n🚧 Функция в разработке. Используйте Google Sheets для экспорта.', {
+        await bot.editMessageText('📊 Экспорт данных\n\nВыберите формат экспорта:', {
           chat_id: chatId,
-          message_id: messageId
+          message_id: messageId,
+          reply_markup: getExportFormatKeyboard()
         });
         break;
         
@@ -612,6 +687,18 @@ async function handleSettingsAction(chatId, messageId, data, user) {
             });
           }
         }
+        break;
+        
+      case 'main':
+        await bot.editMessageText('⚙️ Настройки', {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: getSettingsKeyboard(user.is_premium)
+        });
+        break;
+        
+      case 'clear_data':
+        await handleClearDataConfirmation(chatId, messageId, user);
         break;
     }
   } catch (error) {
@@ -694,8 +781,15 @@ async function handleCustomCategory(chatId, messageId, data, user) {
 // Custom amount input
 async function handleCustomAmount(chatId, messageId, data, user) {
   const bot = getBot();
+  const tempId = data.split(':')[1];
   
-  await bot.editMessageText('✏️ Введение своей суммы:\n\n🚧 Функция в разработке.\nПока используйте готовые варианты или редактируйте расход после создания.', {
+  // Set state to wait for custom amount input
+  stateManager.setState(chatId, STATE_TYPES.WAITING_CUSTOM_AMOUNT, { 
+    tempId,
+    messageId 
+  });
+  
+  await bot.editMessageText('💰 Введите сумму:\n\n📝 Примеры: 250, 1500.50, 50', {
     chat_id: chatId,
     message_id: messageId
   });
@@ -848,6 +942,1070 @@ ${user.is_premium ? '' : '💎 Обновитесь до PRO для дополн
     });
   } catch (error) {
     logger.error('Back to settings error:', error);
+  }
+}
+
+// Custom category management functions
+async function handleAddCustomCategory(chatId, messageId, user) {
+  const bot = getBot();
+  const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Кастомные категории доступны только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'manage_categories' }]] }
+    });
+    return;
+  }
+
+  try {
+    const categoryCount = await customCategoryService.getCountByUserId(user.id);
+    if (categoryCount >= 10) {
+      await bot.editMessageText('❌ Достигнут лимит кастомных категорий (10/10)', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'manage_categories' }]] }
+      });
+      return;
+    }
+
+    stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_NAME, { messageId });
+    
+    await bot.editMessageText(`➕ Создание новой категории
+
+📝 Отправьте название категории (максимум 50 символов).
+
+💡 Примеры:
+• Собака
+• Ремонт дома  
+• Фитнес
+
+🎨 Эмодзи можно добавить на следующем шаге.`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'manage_categories' }]] }
+    });
+  } catch (error) {
+    logger.error('Error in handleAddCustomCategory:', error);
+    await bot.editMessageText('❌ Ошибка. Попробуйте позже.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleManageCategories(chatId, messageId, user) {
+  const bot = getBot();
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Управление категориями доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+
+  try {
+    const customCategories = await customCategoryService.findByUserId(user.id);
+    
+    if (customCategories.length === 0) {
+      await bot.editMessageText(`📝 Управление категориями
+
+У вас пока нет кастомных категорий.`, {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { 
+          inline_keyboard: [
+            [{ text: '➕ Добавить первую категорию', callback_data: 'add_custom_category' }],
+            [{ text: '🔙 Назад', callback_data: 'categories' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    let message = `📝 Управление категориями (${customCategories.length}/10)\n\nВыберите категорию для редактирования:`;
+    
+    const keyboard = customCategories.map(cat => ([
+      { text: `${cat.emoji || '📁'} ${cat.name}`, callback_data: `edit_custom_category:${cat.id}` }
+    ]));
+    
+    keyboard.push([{ text: '➕ Добавить новую', callback_data: 'add_custom_category' }]);
+    keyboard.push([{ text: '🔙 Назад', callback_data: 'categories' }]);
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  } catch (error) {
+    logger.error('Error in handleManageCategories:', error);
+    await bot.editMessageText('❌ Ошибка загрузки категорий.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+  const categoryId = data.split(':')[1];
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+  
+  try {
+    const categories = await customCategoryService.findByUserId(user.id);
+    const category = categories.find(cat => cat.id === categoryId);
+    
+    if (!category) {
+      await bot.editMessageText('❌ Категория не найдена.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'manage_categories' }]] }
+      });
+      return;
+    }
+
+    const message = `✏️ Редактирование категории
+
+${category.emoji || '📁'} **${category.name}**
+
+Выберите действие:`;
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ Изменить название', callback_data: `edit_cat_name:${categoryId}` }],
+          [{ text: '🎨 Изменить эмодзи', callback_data: `edit_cat_emoji:${categoryId}` }],
+          [{ text: '🗑️ Удалить', callback_data: `delete_category:${categoryId}` }],
+          [{ text: '🔙 Назад', callback_data: 'manage_categories' }]
+        ]
+      }
+    });
+  } catch (error) {
+    logger.error('Error in handleEditCategory:', error);
+    await bot.editMessageText('❌ Ошибка загрузки категории.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleDeleteCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+  const categoryId = data.split(':')[1];
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Удаление категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+  
+  try {
+    const categories = await customCategoryService.findByUserId(user.id);
+    const category = categories.find(cat => cat.id === categoryId);
+    
+    if (!category) {
+      await bot.editMessageText('❌ Категория не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    await bot.editMessageText(`🗑️ Удаление категории
+
+Вы уверены, что хотите удалить категорию "${category.emoji || '📁'} ${category.name}"?
+
+⚠️ Это действие нельзя отменить!`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Да, удалить', callback_data: `confirm_delete_category:${categoryId}` }],
+          [{ text: '❌ Отмена', callback_data: `edit_custom_category:${categoryId}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    logger.error('Error in handleDeleteCategory:', error);
+    await bot.editMessageText('❌ Ошибка.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleConfirmDeleteCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+  const categoryId = data.split(':')[1];
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Удаление категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+  
+  try {
+    await customCategoryService.delete(categoryId);
+    
+    await bot.editMessageText('✅ Категория успешно удалена!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]]
+      }
+    });
+  } catch (error) {
+    logger.error('Error deleting category:', error);
+    await bot.editMessageText('❌ Ошибка удаления категории.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditCategoryName(chatId, messageId, data, user) {
+  const bot = getBot();
+  const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+  const categoryId = data.split(':')[1];
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+  
+  try {
+    const categories = await customCategoryService.findByUserId(user.id);
+    const category = categories.find(cat => cat.id === categoryId);
+    
+    if (!category) {
+      await bot.editMessageText('❌ Категория не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_NAME_EDIT, { 
+      messageId,
+      categoryId,
+      currentName: category.name
+    });
+    
+    await bot.editMessageText(`✏️ Изменение названия категории
+
+Текущее название: **${category.name}**
+
+📝 Отправьте новое название категории (максимум 50 символов):`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: { 
+        inline_keyboard: [[{ text: '❌ Отмена', callback_data: `edit_category:${categoryId}` }]]
+      }
+    });
+  } catch (error) {
+    logger.error('Error in handleEditCategoryName:', error);
+    await bot.editMessageText('❌ Ошибка.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditCategoryEmoji(chatId, messageId, data, user) {
+  const bot = getBot();
+  const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+  const categoryId = data.split(':')[1];
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+  
+  try {
+    const categories = await customCategoryService.findByUserId(user.id);
+    const category = categories.find(cat => cat.id === categoryId);
+    
+    if (!category) {
+      await bot.editMessageText('❌ Категория не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_EMOJI_EDIT, { 
+      messageId,
+      categoryId,
+      currentEmoji: category.emoji
+    });
+    
+    await bot.editMessageText(`🎨 Изменение эмодзи категории
+
+Категория: **${category.name}**
+Текущий эмодзи: ${category.emoji || '📁 (по умолчанию)'}
+
+🎯 Отправьте новый эмодзи (один символ):
+
+💡 Примеры: 🐕 🏠 🚗 🍔 💊 🎬 ✈️`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: { 
+        inline_keyboard: [
+          [{ text: '🗑️ Убрать эмодзи', callback_data: `remove_emoji:${categoryId}` }],
+          [{ text: '❌ Отмена', callback_data: `edit_custom_category:${categoryId}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    logger.error('Error in handleEditCategoryEmoji:', error);
+    await bot.editMessageText('❌ Ошибка.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleRemoveEmoji(chatId, messageId, data, user) {
+  const bot = getBot();
+  const categoryId = data.split(':')[1];
+  
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+  
+  try {
+    await customCategoryService.update(categoryId, { emoji: null });
+    
+    await bot.editMessageText('✅ Эмодзи удален!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Назад к категории', callback_data: `edit_custom_category:${categoryId}` }]]
+      }
+    });
+  } catch (error) {
+    logger.error('Error removing emoji:', error);
+    await bot.editMessageText('❌ Ошибка удаления эмодзи.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleSkipEmoji(chatId, messageId, user) {
+  const bot = getBot();
+  const { stateManager } = require('../../utils/stateManager');
+  
+  try {
+    const state = stateManager.getState(chatId);
+    if (!state || !state.data || !state.data.categoryName) {
+      await bot.editMessageText('❌ Данные сессии устарели.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const { categoryName } = state.data;
+    
+    // Create category without emoji
+    const category = await customCategoryService.create({
+      user_id: user.id,
+      name: categoryName,
+      emoji: null
+    });
+
+    await bot.editMessageText(`✅ Категория создана!
+
+📁 **${categoryName}**
+
+Теперь эта категория доступна при записи расходов.`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]]
+      }
+    });
+
+    stateManager.clearState(chatId);
+  } catch (error) {
+    logger.error('Error creating category without emoji:', error);
+    await bot.editMessageText('❌ Ошибка создания категории.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCategoriesCallback(chatId, messageId, user) {
+  const { handleCategories } = require('./commands');
+  const bot = getBot();
+  
+  try {
+    // Create a fake message object for handleCategories function
+    const fakeMsg = {
+      chat: { id: chatId },
+      user: user
+    };
+    
+    // Delete the callback message first
+    try {
+      await bot.deleteMessage(chatId, messageId);
+    } catch (e) {
+      // Ignore if message can't be deleted
+    }
+    
+    // Call the categories command handler
+    await handleCategories(fakeMsg);
+  } catch (error) {
+    logger.error('Error handling categories callback:', error);
+    await bot.editMessageText('❌ Ошибка загрузки категорий.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Export handlers
+async function handleExportFormat(chatId, messageId, data, user) {
+  const bot = getBot();
+  const format = data.split(':')[1]; // xlsx or csv
+  
+  await bot.editMessageText('📅 Выберите период для экспорта:', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: getExportPeriodKeyboard(format)
+  });
+}
+
+async function handleExportPeriod(chatId, messageId, data, user) {
+  const bot = getBot();
+  const parts = data.split(':');
+  const format = parts[1]; // xlsx or csv
+  const period = parts[2]; // today, week, month, custom
+  
+  if (period === 'custom') {
+    // Set state for custom date range input
+    stateManager.setState(chatId, 'WAITING_CUSTOM_EXPORT_DATES', { 
+      format,
+      messageId 
+    });
+    
+    await bot.editMessageText('📅 Укажите период экспорта:\n\n📝 Формат: ДД.ММ.ГГГГ - ДД.ММ.ГГГГ\n\n✅ Пример: 01.12.2024 - 31.12.2024', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+  
+  try {
+    // Calculate date range
+    const { startDate, endDate } = getDateRange(period);
+    
+    // Generate export
+    await generateExport(chatId, messageId, user, format, startDate, endDate);
+    
+  } catch (error) {
+    logger.error('Export error:', error);
+    await bot.editMessageText('❌ Ошибка создания экспорта. Попробуйте позже.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+function getDateRange(period) {
+  const today = new Date();
+  let startDate, endDate;
+  
+  switch (period) {
+    case 'today':
+      startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+      break;
+    case 'week':
+      startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+      endDate = today;
+      break;
+    case 'month':
+      startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+      endDate = today;
+      break;
+    default:
+      throw new Error('Unknown period');
+  }
+  
+  return { startDate, endDate };
+}
+
+async function generateExport(chatId, messageId, user, format, startDate, endDate) {
+  const bot = getBot();
+  
+  // Show processing message
+  await bot.editMessageText('⏳ Генерируем экспорт...', {
+    chat_id: chatId,
+    message_id: messageId
+  });
+  
+  try {
+    // Get user's expenses for the period
+    const expenses = await expenseService.getExpensesForExport(user.id, startDate, endDate);
+    
+    if (expenses.length === 0) {
+      await bot.editMessageText('📊 Нет данных за выбранный период для экспорта.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+    
+    let fileContent, fileName, mimeType;
+    
+    if (format === 'csv') {
+      // Generate CSV
+      const csvData = generateCSV(expenses);
+      fileContent = Buffer.from(csvData, 'utf-8');
+      fileName = `expenses_${formatDate(startDate)}_${formatDate(endDate)}.csv`;
+      mimeType = 'text/csv';
+    } else {
+      // Generate Excel - for now, use CSV format as placeholder
+      const csvData = generateCSV(expenses);
+      fileContent = Buffer.from(csvData, 'utf-8');
+      fileName = `expenses_${formatDate(startDate)}_${formatDate(endDate)}.xlsx`;
+      mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    
+    // Send file
+    await bot.sendDocument(chatId, fileContent, {
+      filename: fileName,
+      contentType: mimeType
+    });
+    
+    // Update message
+    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${expenses.length} записей\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    
+  } catch (error) {
+    logger.error('Export generation error:', error);
+    await bot.editMessageText('❌ Ошибка генерации файла экспорта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+function generateCSV(expenses) {
+  const headers = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Проект'];
+  const rows = [headers];
+  
+  expenses.forEach(expense => {
+    rows.push([
+      expense.expense_date,
+      expense.description,
+      expense.amount,
+      expense.currency,
+      expense.category,
+      expense.project_name || 'Без проекта'
+    ]);
+  });
+  
+  return rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+}
+
+function formatDate(date) {
+  return date.toISOString().split('T')[0].replace(/-/g, '.');
+}
+
+// Clear data handlers
+async function handleClearDataConfirmation(chatId, messageId, user) {
+  const bot = getBot();
+  
+  const warningText = `⚠️ ВНИМАНИЕ! Полная очистка данных
+  
+🗑️ Будут УДАЛЕНЫ:
+• Все расходы
+• Все проекты  
+• Все кастомные категории
+• История и статистика
+
+❌ ВОССТАНОВИТЬ данные будет НЕВОЗМОЖНО!
+
+Вы уверены, что хотите продолжить?`;
+
+  await bot.editMessageText(warningText, {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '❌ ДА, УДАЛИТЬ ВСЁ', callback_data: 'confirm_clear_data' }
+        ],
+        [
+          { text: '✅ Отмена', callback_data: 'cancel_clear_data' }
+        ]
+      ]
+    }
+  });
+}
+
+async function handleConfirmClearData(chatId, messageId, user) {
+  const bot = getBot();
+  
+  try {
+    // Show processing message
+    await bot.editMessageText('🗑️ Удаляем данные...', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    
+    // Delete all user data
+    await clearAllUserData(user.id);
+    
+    await bot.editMessageText(`✅ Все данные удалены!
+    
+📊 Ваш аккаунт очищен:
+• Удалены все расходы
+• Удалены все проекты
+• Удалены кастомные категории
+• Очищена история
+
+💡 Можете начать заново с создания проекта.`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    
+  } catch (error) {
+    logger.error('Error clearing user data:', error);
+    await bot.editMessageText('❌ Ошибка удаления данных. Попробуйте позже.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCancelClearData(chatId, messageId, user) {
+  const bot = getBot();
+  
+  await bot.editMessageText('⚙️ Настройки', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: getSettingsKeyboard(user.is_premium)
+  });
+}
+
+async function clearAllUserData(userId) {
+  // Delete in order due to foreign key constraints
+  
+  // 1. Delete expenses first
+  await supabase
+    .from('expenses')
+    .delete()
+    .eq('user_id', userId);
+  
+  // 2. Delete custom categories
+  await supabase
+    .from('custom_categories')
+    .delete()
+    .eq('user_id', userId);
+  
+  // 3. Delete projects
+  await supabase
+    .from('projects')
+    .delete()
+    .eq('owner_id', userId);
+  
+  // 4. Reset user settings (keep user record but reset data)
+  await supabase
+    .from('users')
+    .update({
+      primary_currency: 'RUB', // Reset to default
+      google_sheets_url: null,
+      settings: null
+    })
+    .eq('id', userId);
+    
+  logger.info(`All data cleared for user ${userId}`);
+}
+
+// Income handlers
+
+async function handleSaveIncome(chatId, messageId, data, user) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  try {
+    // Save income to database
+    const savedIncome = await incomeService.create(incomeData);
+
+    // Get project name for confirmation
+    const project = await projectService.findById(incomeData.project_id);
+
+    const successText = `✅ Доход сохранён!
+
+💰 ${incomeData.description}: +${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📋 Проект: ${project.name}
+
+📈 Посмотреть статистику: /stats`;
+
+    await bot.editMessageText(successText, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+
+    // Clean up temp data
+    tempIncomes.delete(tempId);
+
+  } catch (error) {
+    logger.error('Save income error:', error);
+    await bot.editMessageText('❌ Ошибка при сохранении дохода. Попробуйте позже.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCancelIncome(chatId, messageId, data) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  
+  // Clean up temp data
+  tempIncomes.delete(tempId);
+
+  await bot.editMessageText('❌ Добавление дохода отменено.', {
+    chat_id: chatId,
+    message_id: messageId
+  });
+}
+
+async function handleEditIncomeCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  const incomeCategories = ['💰 Зарплата', '💼 Фриланс', '📊 Продажи', '🎁 Подарки', '💳 Прочие доходы'];
+  const keyboard = [];
+  
+  // Split categories into rows of 2
+  for (let i = 0; i < incomeCategories.length; i += 2) {
+    const row = [];
+    row.push({ 
+      text: incomeCategories[i], 
+      callback_data: `set_income_category:${tempId}:${incomeCategories[i].split(' ').slice(1).join(' ')}` 
+    });
+    
+    if (incomeCategories[i + 1]) {
+      row.push({ 
+        text: incomeCategories[i + 1], 
+        callback_data: `set_income_category:${tempId}:${incomeCategories[i + 1].split(' ').slice(1).join(' ')}` 
+      });
+    }
+    keyboard.push(row);
+  }
+  
+  keyboard.push([{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]);
+
+  await bot.editMessageText('📂 Выберите категорию дохода:', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: { inline_keyboard: keyboard }
+  });
+}
+
+async function handleEditIncomeAmount(chatId, messageId, data, user) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  await bot.editMessageText('💰 Введите новую сумму дохода:', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: {
+      inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]]
+    }
+  });
+
+  stateManager.setState(chatId, STATE_TYPES.EDITING_INCOME_AMOUNT, { tempId });
+}
+
+async function handleEditIncomeDescription(chatId, messageId, data, user) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  await bot.editMessageText('📝 Введите новое описание дохода:', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: {
+      inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]]
+    }
+  });
+
+  stateManager.setState(chatId, STATE_TYPES.EDITING_INCOME_DESCRIPTION, { tempId });
+}
+
+async function handleEditIncomeProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Изменение проекта доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]]
+      }
+    });
+    return;
+  }
+
+  try {
+    const projects = await projectService.findByUserId(user.id);
+    if (projects.length === 0) {
+      await bot.editMessageText('📋 У вас нет проектов. Создайте проект в настройках.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]]
+        }
+      });
+      return;
+    }
+
+    const keyboard = projects.map(project => [{
+      text: project.name,
+      callback_data: `set_income_project:${tempId}:${project.id}`
+    }]);
+    
+    keyboard.push([{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]);
+
+    await bot.editMessageText('📋 Выберите проект для дохода:', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+  } catch (error) {
+    logger.error('Error loading projects for income:', error);
+    await bot.editMessageText('❌ Ошибка при загрузке проектов.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]]
+      }
+    });
+  }
+}
+
+async function handleSetIncomeCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, tempId, category] = data.split(':');
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  incomeData.category = category;
+  tempIncomes.set(tempId, incomeData);
+
+  // Show updated confirmation
+  const project = await projectService.findById(incomeData.project_id);
+  
+  const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+  const { getIncomeConfirmationKeyboard } = require('../keyboards/inline');
+  await bot.editMessageText(confirmationText, {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+  });
+}
+
+async function handleSetIncomeProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, tempId, projectId] = data.split(':');
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  try {
+    const project = await projectService.findById(projectId);
+    if (!project || project.user_id !== user.id) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    incomeData.project_id = projectId;
+    tempIncomes.set(tempId, incomeData);
+
+    // Show updated confirmation
+    const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+    const { getIncomeConfirmationKeyboard } = require('../keyboards/inline');
+    await bot.editMessageText(confirmationText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+    });
+
+  } catch (error) {
+    logger.error('Error setting income project:', error);
+    await bot.editMessageText('❌ Ошибка при выборе проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleBackToIncomeConfirmation(chatId, messageId, data, user) {
+  const bot = getBot();
+  const tempId = data.split(':')[1];
+  const incomeData = tempIncomes.get(tempId);
+
+  if (!incomeData) {
+    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+    return;
+  }
+
+  try {
+    const project = await projectService.findById(incomeData.project_id);
+    
+    const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+    const { getIncomeConfirmationKeyboard } = require('../keyboards/inline');
+    await bot.editMessageText(confirmationText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+    });
+
+  } catch (error) {
+    logger.error('Error showing income confirmation:', error);
+    await bot.editMessageText('❌ Ошибка при отображении подтверждения.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
   }
 }
 

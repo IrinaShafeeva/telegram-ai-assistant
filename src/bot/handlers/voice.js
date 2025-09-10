@@ -1,8 +1,8 @@
 const axios = require('axios');
-const { userService, projectService } = require('../../services/supabase');
+const { userService, projectService, incomeService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
-const { getExpenseConfirmationKeyboard } = require('../keyboards/inline');
-const { tempExpenses } = require('./messages');
+const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
+const { tempExpenses, tempIncomes } = require('./messages');
 const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
 const { v4: uuidv4 } = require('uuid');
@@ -51,34 +51,73 @@ async function handleVoice(msg) {
       return;
     }
 
-    await bot.sendMessage(chatId, `🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю расход...`);
+    await bot.sendMessage(chatId, `🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю транзакцию...`);
 
-    // Parse expense with AI
-    const parsedExpense = await openaiService.parseExpense(transcription);
+    // Parse transaction with AI (could be income or expense)
+    const parsedTransaction = await openaiService.parseTransaction(transcription);
 
     // Use user's primary currency if not specified
-    if (!parsedExpense.currency) {
-      parsedExpense.currency = user.primary_currency;
+    if (!parsedTransaction.currency) {
+      parsedTransaction.currency = user.primary_currency;
     }
 
-    // Generate temporary expense ID for confirmation
     const tempId = uuidv4();
-    const expenseData = {
-      user_id: user.id,
-      project_id: activeProject.id,
-      amount: parsedExpense.amount,
-      currency: parsedExpense.currency,
-      category: parsedExpense.category || 'Прочее',
-      description: parsedExpense.description,
-      expense_date: new Date().toISOString().split('T')[0],
-      source_text: transcription // Store original transcription
-    };
+    
+    if (parsedTransaction.type === 'income') {
+      // Handle income transaction
+      const incomeData = {
+        user_id: user.id,
+        project_id: activeProject.id,
+        amount: parsedTransaction.amount,
+        currency: parsedTransaction.currency,
+        category: parsedTransaction.category || 'Прочие доходы',
+        description: parsedTransaction.description,
+        income_date: new Date().toISOString().split('T')[0],
+        source_text: transcription
+      };
 
-    // Store temporarily
-    tempExpenses.set(tempId, expenseData);
+      // Store temporarily
+      tempIncomes.set(tempId, incomeData);
 
-    // Show confirmation
-    const confirmationText = `💰 Подтвердите расход:
+      // Show confirmation
+      const confirmationText = `💰 Подтвердите доход:
+
+🎤 Распознано: "${transcription}"
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${activeProject.name}
+
+Всё верно?`;
+
+      await bot.sendMessage(chatId, confirmationText, {
+        reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+      });
+
+      // Auto-expire temp income after 5 minutes
+      setTimeout(() => {
+        tempIncomes.delete(tempId);
+      }, 5 * 60 * 1000);
+      
+    } else {
+      // Handle expense transaction
+      const expenseData = {
+        user_id: user.id,
+        project_id: activeProject.id,
+        amount: parsedTransaction.amount,
+        currency: parsedTransaction.currency,
+        category: parsedTransaction.category || 'Прочее',
+        description: parsedTransaction.description,
+        expense_date: new Date().toISOString().split('T')[0],
+        source_text: transcription
+      };
+
+      // Store temporarily
+      tempExpenses.set(tempId, expenseData);
+
+      // Show confirmation
+      const confirmationText = `💰 Подтвердите расход:
 
 🎤 Распознано: "${transcription}"
 📝 Описание: ${expenseData.description}
@@ -89,14 +128,15 @@ async function handleVoice(msg) {
 
 Всё верно?`;
 
-    await bot.sendMessage(chatId, confirmationText, {
-      reply_markup: getExpenseConfirmationKeyboard(tempId)
-    });
+      await bot.sendMessage(chatId, confirmationText, {
+        reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+      });
 
-    // Auto-expire temp expense after 5 minutes
-    setTimeout(() => {
-      tempExpenses.delete(tempId);
-    }, 5 * 60 * 1000);
+      // Auto-expire temp expense after 5 minutes
+      setTimeout(() => {
+        tempExpenses.delete(tempId);
+      }, 5 * 60 * 1000);
+    }
 
   } catch (error) {
     logger.error('Voice processing error:', error);
@@ -106,7 +146,7 @@ async function handleVoice(msg) {
     if (error.message.includes('transcription')) {
       errorMessage = '❌ Не удалось распознать речь. Говорите четче и попробуйте еще раз.';
     } else if (error.message.includes('parsing')) {
-      errorMessage = '❌ Не удалось понять сумму расхода. Попробуйте сказать яснее.';
+      errorMessage = '❌ Не удалось понять сумму транзакции. Попробуйте сказать яснее.';
     } else if (error.message.includes('timeout')) {
       errorMessage = '❌ Превышено время обработки. Попробуйте записать более короткое сообщение.';
     }

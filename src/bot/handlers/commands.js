@@ -1,4 +1,4 @@
-const { userService, projectService, expenseService } = require('../../services/supabase');
+const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
@@ -284,9 +284,13 @@ async function handleCategories(msg, match) {
     return;
   }
 
-  await bot.sendMessage(chatId, 
-    `📂 Управление категориями
-    
+  try {
+    // Get user's custom categories
+    const customCategories = await customCategoryService.findByUserId(user.id);
+    const categoryCount = await customCategoryService.getCountByUserId(user.id);
+
+    let message = `📂 Управление категориями
+
 🆓 Доступные категории:
 • 🍔 Еда и рестораны
 • 🚗 Транспорт 
@@ -298,9 +302,31 @@ async function handleCategories(msg, match) {
 • ✈️ Путешествия
 • 🎓 Образование
 
-💎 В PRO плане доступно создание своих категорий с эмодзи!`,
-    { reply_markup: getUpgradeKeyboard() }
-  );
+💎 Ваши кастомные категории (${categoryCount}/10):`;
+
+    if (customCategories.length === 0) {
+      message += '\nПока нет кастомных категорий.';
+    } else {
+      customCategories.forEach(cat => {
+        message += `\n• ${cat.emoji || '📁'} ${cat.name}`;
+      });
+    }
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '➕ Добавить категорию', callback_data: 'add_custom_category' },
+          { text: '📝 Управлять', callback_data: 'manage_categories' }
+        ],
+        [{ text: '🔙 Назад', callback_data: 'main_menu' }]
+      ]
+    };
+
+    await bot.sendMessage(chatId, message, { reply_markup: keyboard });
+  } catch (error) {
+    logger.error('Error showing categories:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка загрузки категорий.');
+  }
 }
 
 // Command: /upgrade
@@ -438,7 +464,7 @@ async function handleConnect(msg, match) {
         `**Пошаговая инструкция:**\n\n` +
         `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
         `2️⃣ Нажмите **"Настроить доступ"** → **"Предоставить доступ"**\n` +
-        `3️⃣ Добавьте email: **ai-assistant@your-project.iam.gserviceaccount.com**\n` +
+        `3️⃣ Добавьте email: **exp-trck@ai-assistant-sheets.iam.gserviceaccount.com**\n` +
         `4️⃣ Установите права: **"Редактор"**\n` +
         `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
         `📝 **Пример ссылки:**\n` +

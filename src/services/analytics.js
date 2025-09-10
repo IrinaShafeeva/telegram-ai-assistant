@@ -1,4 +1,4 @@
-const { expenseService, userService, supabase } = require('./supabase');
+const { expenseService, userService, incomeService, supabase } = require('./supabase');
 const openaiService = require('./openai');
 const currencyService = require('./currency');
 const { formatCurrency, formatMultiCurrencyAmount } = require('../utils/currency');
@@ -112,54 +112,85 @@ class AnalyticsService {
       const user = await userService.findById(userId);
       const primaryCurrency = user.primary_currency || 'RUB';
 
-      // Get expenses for last year for AI analysis (to capture all data including wrong dates)
+      // Get time range for analysis (last year + future dates to catch errors)
       const { startDate, endDate } = getDateRange('this_year');
-      
-      // Extend to future dates to catch data entry errors
       const futureEndDate = new Date(endDate);
       futureEndDate.setFullYear(futureEndDate.getFullYear() + 2);
       endDate.setTime(futureEndDate.getTime());
       
-      const { data: expenses } = await supabase
-        .rpc('get_user_expenses_for_period', {
+      // Get both expenses and incomes in parallel
+      const [expensesResult, incomes] = await Promise.all([
+        supabase.rpc('get_user_expenses_for_period', {
           p_user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
           end_date: endDate.toISOString().split('T')[0]
-        });
+        }),
+        incomeService.findByProject(null, userId, startDate, endDate)
+      ]);
 
-      if (!expenses || expenses.length === 0) {
-        return 'У вас пока нет данных о расходах для анализа. Начните добавлять траты, и я смогу помочь с аналитикой! 📊';
+      const expenses = expensesResult.data || [];
+
+      // If no data at all, return appropriate message
+      if ((!expenses || expenses.length === 0) && (!incomes || incomes.length === 0)) {
+        return 'У вас пока нет финансовых данных для анализа. Начните добавлять доходы и расходы, и я смогу помочь с аналитикой! 📊💰';
       }
 
-      // Convert all expenses to user's primary currency
-      const convertedExpenses = await currencyService.convertExpenses(expenses, primaryCurrency);
+      // Convert expenses to user's primary currency
+      const convertedExpenses = expenses.length > 0 ? 
+        await currencyService.convertExpenses(expenses, primaryCurrency) : [];
       
-      // Calculate analytics with proper math
-      const analytics = this.calculateExpenseAnalytics(convertedExpenses, primaryCurrency);
+      // Calculate analytics
+      const expenseAnalytics = expenses.length > 0 ? 
+        this.calculateExpenseAnalytics(convertedExpenses, primaryCurrency) : null;
+      const incomeAnalytics = incomes.length > 0 ? 
+        this.calculateIncomeAnalytics(incomes, primaryCurrency) : null;
       
-      // Prepare structured data for AI with detailed expenses
+      // Prepare comprehensive data for AI
       const analyticsData = {
-        totalAmount: analytics.totalAmount,
-        totalExpenses: analytics.totalExpenses,
         primaryCurrency: primaryCurrency,
-        categoryBreakdown: analytics.categoryBreakdown,
-        monthlyBreakdown: analytics.monthlyBreakdown,
-        topCategory: analytics.topCategory,
-        averagePerDay: analytics.averagePerDay,
+        
+        // Expense data
+        totalExpenses: expenseAnalytics?.totalAmount || '0',
+        expenseCount: expenses.length,
+        expenseCategories: expenseAnalytics?.categoryBreakdown || [],
+        expenseMonthly: expenseAnalytics?.monthlyBreakdown || [],
+        topExpenseCategory: expenseAnalytics?.topCategory || 'Нет данных',
+        averageExpensePerDay: expenseAnalytics?.averagePerDay || '0',
+        
+        // Income data
+        totalIncome: incomeAnalytics?.totalAmount || '0',
+        incomeCount: incomes.length,
+        incomeCategories: incomeAnalytics?.categoryBreakdown || [],
+        incomeMonthly: incomeAnalytics?.monthlyBreakdown || [],
+        topIncomeCategory: incomeAnalytics?.topCategory || 'Нет данных',
+        averageIncomePerDay: incomeAnalytics?.averagePerDay || '0',
+        
+        // Financial summary
+        profit: this.calculateProfit(incomeAnalytics?.totalAmount || '0', expenseAnalytics?.totalAmount || '0', primaryCurrency),
+        
+        // Detailed transactions for specific queries
         detailedExpenses: convertedExpenses.map(exp => ({
           date: exp.expense_date,
           description: exp.description,
           amount: exp.amount,
-          originalAmount: exp.originalAmount || exp.amount,
-          originalCurrency: exp.originalCurrency || exp.currency,
           category: exp.category,
-          currency: primaryCurrency
+          currency: primaryCurrency,
+          type: 'expense'
         })),
+        detailedIncomes: incomes.map(inc => ({
+          date: inc.income_date,
+          description: inc.description,
+          amount: inc.amount,
+          category: inc.category,
+          currency: inc.currency,
+          type: 'income'
+        })),
+        
         question: question
       };
 
-      // Use AI to analyze expenses with both aggregated and detailed data
-      const analysis = await openaiService.analyzeExpensesWithFlexibleData(question, analyticsData, userId);
+      // Use AI to analyze complete financial data
+      const analysis = await openaiService.analyzeFinancialData(question, analyticsData, userId);
 
       // Increment usage counter
       await userService.incrementDailyUsage(userId, 'ai_question');
@@ -232,6 +263,76 @@ class AnalyticsService {
       topCategory: categoryBreakdown[0]?.category || 'Нет данных',
       averagePerDay: currencyService.formatAmount(averagePerDay, currency)
     };
+  }
+
+  calculateIncomeAnalytics(incomes, currency) {
+    const totalAmount = incomes.reduce((sum, inc) => sum + parseFloat(inc.amount), 0);
+    const totalIncomes = incomes.length;
+    
+    // Group by category with correct math
+    const categoryTotals = {};
+    incomes.forEach(inc => {
+      const category = inc.category || 'Прочие доходы';
+      if (!categoryTotals[category]) {
+        categoryTotals[category] = { amount: 0, count: 0 };
+      }
+      categoryTotals[category].amount += parseFloat(inc.amount);
+      categoryTotals[category].count += 1;
+    });
+    
+    // Sort categories by amount (descending)
+    const categoryBreakdown = Object.entries(categoryTotals)
+      .map(([category, data]) => ({
+        category,
+        amount: data.amount,
+        count: data.count,
+        percentage: Math.round((data.amount / totalAmount) * 100),
+        formatted: currencyService.formatAmount(data.amount, currency)
+      }))
+      .sort((a, b) => b.amount - a.amount);
+    
+    // Group by month
+    const monthlyTotals = {};
+    incomes.forEach(inc => {
+      const month = new Date(inc.income_date).toISOString().slice(0, 7); // YYYY-MM
+      if (!monthlyTotals[month]) {
+        monthlyTotals[month] = { amount: 0, count: 0 };
+      }
+      monthlyTotals[month].amount += parseFloat(inc.amount);
+      monthlyTotals[month].count += 1;
+    });
+    
+    const monthlyBreakdown = Object.entries(monthlyTotals)
+      .map(([month, data]) => ({
+        month,
+        amount: data.amount,
+        count: data.count,
+        formatted: currencyService.formatAmount(data.amount, currency)
+      }))
+      .sort((a, b) => b.month.localeCompare(a.month));
+    
+    // Calculate average per day (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recentIncomes = incomes.filter(inc => new Date(inc.income_date) >= thirtyDaysAgo);
+    const recentTotal = recentIncomes.reduce((sum, inc) => sum + parseFloat(inc.amount), 0);
+    const averagePerDay = recentTotal / 30;
+    
+    return {
+      totalAmount: currencyService.formatAmount(totalAmount, currency),
+      totalIncomes,
+      categoryBreakdown,
+      monthlyBreakdown,
+      topCategory: categoryBreakdown[0]?.category || 'Нет данных',
+      averagePerDay: currencyService.formatAmount(averagePerDay, currency)
+    };
+  }
+
+  calculateProfit(incomeAmount, expenseAmount, currency) {
+    const income = parseFloat(incomeAmount.replace(/[^\d.-]/g, '') || '0');
+    const expense = parseFloat(expenseAmount.replace(/[^\d.-]/g, '') || '0');
+    const profit = income - expense;
+    return currencyService.formatAmount(profit, currency);
   }
 
   async getTopCategories(userId, period = 'this_month', limit = 5) {
@@ -347,10 +448,162 @@ class AnalyticsService {
       'Здоровье': '💊',
       'Образование': '📚',
       'Финансы': '💳',
-      'Прочее': '❓'
+      'Прочее': '❓',
+      // Income categories
+      'Зарплата': '💰',
+      'Фриланс': '💼',
+      'Продажи': '📊',
+      'Подарки': '🎁',
+      'Прочие доходы': '💳'
     };
     
     return emojiMap[category] || '📊';
+  }
+
+  async getIncomeAnalytics(userId, period = 'this_month') {
+    try {
+      const { startDate, endDate } = getDateRange(period);
+      
+      // Get incomes for the period
+      const incomes = await incomeService.findByProject(null, userId, startDate, endDate);
+
+      if (!incomes || incomes.length === 0) {
+        return {
+          totalAmount: '0',
+          totalIncomes: 0,
+          categories: [],
+          currencies: [],
+          averagePerDay: '0',
+          periodName: this.getPeriodName(period)
+        };
+      }
+
+      // Group by category
+      const categoryTotals = incomes.reduce((acc, income) => {
+        const key = `${income.category}_${income.currency}`;
+        if (!acc[key]) {
+          acc[key] = {
+            category: income.category,
+            currency: income.currency,
+            amount: 0,
+            count: 0
+          };
+        }
+        acc[key].amount += parseFloat(income.amount);
+        acc[key].count += 1;
+        return acc;
+      }, {});
+
+      // Group by currency
+      const currencyTotals = incomes.reduce((acc, income) => {
+        if (!acc[income.currency]) {
+          acc[income.currency] = 0;
+        }
+        acc[income.currency] += parseFloat(income.amount);
+        return acc;
+      }, {});
+
+      // Calculate total in primary currency
+      const user = await userService.findById(userId);
+      const primaryCurrency = user.primary_currency || 'RUB';
+      
+      let totalInPrimaryCurrency = 0;
+      for (const [currency, amount] of Object.entries(currencyTotals)) {
+        if (currency === primaryCurrency) {
+          totalInPrimaryCurrency += amount;
+        } else {
+          // For now, we'll assume 1:1 conversion or use a simple rate
+          // In production, you'd want proper currency conversion
+          totalInPrimaryCurrency += amount;
+        }
+      }
+
+      // Calculate average per day
+      const daysDiff = Math.max(1, Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)));
+      const averagePerDay = totalInPrimaryCurrency / daysDiff;
+
+      // Format categories for response
+      const categories = Object.values(categoryTotals)
+        .sort((a, b) => b.amount - a.amount)
+        .map(cat => ({
+          category: cat.category,
+          amount: formatCurrency(cat.amount, cat.currency),
+          currency: cat.currency,
+          count: cat.count,
+          percentage: Math.round((cat.amount / totalInPrimaryCurrency) * 100)
+        }));
+
+      // Format currencies
+      const currencies = Object.entries(currencyTotals)
+        .map(([currency, amount]) => ({
+          currency,
+          amount: formatCurrency(amount, currency),
+          count: incomes.filter(i => i.currency === currency).length
+        }))
+        .sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
+
+      return {
+        totalAmount: formatCurrency(totalInPrimaryCurrency, primaryCurrency),
+        totalIncomes: incomes.length,
+        categories,
+        currencies,
+        averagePerDay: formatCurrency(averagePerDay, primaryCurrency),
+        periodName: this.getPeriodName(period),
+        period: {
+          startDate: formatDate(startDate),
+          endDate: formatDate(endDate)
+        },
+        primaryCurrency
+      };
+
+    } catch (error) {
+      logger.error('Income analytics error:', error);
+      return {
+        totalAmount: '0',
+        totalIncomes: 0,
+        categories: [],
+        currencies: [],
+        averagePerDay: '0',
+        periodName: this.getPeriodName(period),
+        error: 'Ошибка при расчёте аналитики доходов'
+      };
+    }
+  }
+
+  async getFinancialSummary(userId, period = 'this_month') {
+    try {
+      const [expenseAnalytics, incomeAnalytics] = await Promise.all([
+        this.getExpenseAnalytics(userId, period),
+        this.getIncomeAnalytics(userId, period)
+      ]);
+
+      const user = await userService.findById(userId);
+      const primaryCurrency = user.primary_currency || 'RUB';
+
+      // Parse amounts (remove currency symbols and convert to numbers)
+      const totalExpenses = parseFloat(expenseAnalytics.totalAmount.replace(/[^\d.-]/g, '') || '0');
+      const totalIncome = parseFloat(incomeAnalytics.totalAmount.replace(/[^\d.-]/g, '') || '0');
+      const profit = totalIncome - totalExpenses;
+
+      return {
+        period: expenseAnalytics.periodName,
+        totalIncome: formatCurrency(totalIncome, primaryCurrency),
+        totalExpenses: formatCurrency(totalExpenses, primaryCurrency),
+        profit: formatCurrency(profit, primaryCurrency),
+        profitStatus: profit > 0 ? 'positive' : profit < 0 ? 'negative' : 'neutral',
+        incomeCount: incomeAnalytics.totalIncomes,
+        expenseCount: expenseAnalytics.totalExpenses,
+        topIncomeCategory: incomeAnalytics.categories[0]?.category || 'Нет данных',
+        topExpenseCategory: expenseAnalytics.categories[0]?.category || 'Нет данных',
+        primaryCurrency
+      };
+
+    } catch (error) {
+      logger.error('Financial summary error:', error);
+      return {
+        error: 'Ошибка при расчёте финансовой сводки'
+      };
+    }
   }
 }
 

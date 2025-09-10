@@ -83,6 +83,87 @@ class OpenAIService {
     }
   }
 
+  async parseTransaction(userInput) {
+    try {
+      const prompt = `
+Определи тип транзакции из текста пользователя и извлеки информацию.
+
+Текст: "${userInput}"
+
+Верни JSON в точном формате:
+{
+  "type": "income" | "expense",
+  "amount": число,
+  "currency": "RUB" | "USD" | "EUR" | null,
+  "description": "описание транзакции", 
+  "category": "категория" | null
+}
+
+Правила:
+1. type: "income" для доходов (зарплата, премия, продажа, получил деньги), "expense" для расходов (потратил, купил, заплатил)
+2. amount: только число без валюты
+3. currency: определи из контекста или null
+4. description: краткое описание на русском
+5. category: для доходов (Зарплата, Фриланс, Продажи, Прочие доходы), для расходов (обычные категории)
+
+Примеры:
+"Получил зарплату 50000" → {"type": "income", "amount": 50000, "currency": "RUB", "description": "Зарплата", "category": "Зарплата"}
+"Потратил 200 на кофе" → {"type": "expense", "amount": 200, "currency": "RUB", "description": "Кофе", "category": "Еда"}
+`;
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты помощник по анализу финансовых транзакций. Возвращай только валидный JSON без дополнительных комментариев.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 200
+      });
+
+      const result = completion.choices[0].message.content.trim();
+      
+      // Remove markdown code blocks if present
+      const cleanResult = result.replace(/```json\n?|\n?```/g, '');
+      
+      try {
+        const parsed = JSON.parse(cleanResult);
+        
+        // Validate required fields
+        if (!parsed.amount || isNaN(parsed.amount)) {
+          throw new Error('Invalid amount');
+        }
+        
+        if (!['income', 'expense'].includes(parsed.type)) {
+          throw new Error('Invalid transaction type');
+        }
+        
+        // Clean and validate data
+        return {
+          type: parsed.type,
+          amount: parseFloat(parsed.amount),
+          currency: parsed.currency || null,
+          description: parsed.description || (parsed.type === 'income' ? 'Доход' : 'Расход'),
+          category: parsed.category || null
+        };
+        
+      } catch (parseError) {
+        logger.error('JSON parsing failed:', parseError, 'Raw result:', cleanResult);
+        throw new Error('parsing');
+      }
+
+    } catch (error) {
+      logger.error('Transaction parsing failed:', error);
+      throw error;
+    }
+  }
+
   async analyzeExpenses(userQuestion, expensesData, userId) {
     try {
       // Prepare expense data for context
@@ -278,6 +359,100 @@ ${availableCategories.join('\n')}
     } catch (error) {
       logger.error('Expense categorization failed:', error);
       return 'Прочее';
+    }
+  }
+
+  async analyzeFinancialData(userQuestion, financialData, userId) {
+    try {
+      // Prepare financial summary
+      const incomeSummary = financialData.incomeCategories
+        .map(cat => `${cat.category}: ${cat.formatted} (${cat.percentage}%)`)
+        .join('\n');
+      
+      const expenseSummary = financialData.expenseCategories
+        .map(cat => `${cat.category}: ${cat.formatted} (${cat.percentage}%)`)
+        .join('\n');
+
+      const incomeMonthly = financialData.incomeMonthly
+        .map(month => `${month.month}: ${month.formatted}`)
+        .join('\n');
+        
+      const expenseMonthly = financialData.expenseMonthly
+        .map(month => `${month.month}: ${month.formatted}`)
+        .join('\n');
+
+      // Prepare detailed transactions (limit to avoid token overflow)
+      const allTransactions = [
+        ...financialData.detailedIncomes.map(t => ({ ...t, type: 'income' })),
+        ...financialData.detailedExpenses.map(t => ({ ...t, type: 'expense' }))
+      ]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 100);
+
+      const transactionsList = allTransactions
+        .map(t => `${t.date}: ${t.description} - ${t.type === 'income' ? '+' : '-'}${t.amount} ${t.currency} (${t.category})`)
+        .join('\n');
+
+      const prompt = `Пользователь спрашивает: "${userQuestion}"
+
+ФИНАНСОВАЯ СВОДКА (уже рассчитанная):
+💰 Общие доходы: ${financialData.totalIncome}
+💸 Общие расходы: ${financialData.totalExpenses}
+💵 Прибыль/убыток: ${financialData.profit}
+📈 Количество доходов: ${financialData.incomeCount}
+📊 Количество расходов: ${financialData.expenseCount}
+🏆 Топ категория доходов: ${financialData.topIncomeCategory}
+🏆 Топ категория расходов: ${financialData.topExpenseCategory}
+📅 Средний доход в день: ${financialData.averageIncomePerDay}
+📅 Средний расход в день: ${financialData.averageExpensePerDay}
+
+📋 ДОХОДЫ ПО КАТЕГОРИЯМ:
+${incomeSummary || 'Нет данных'}
+
+💸 РАСХОДЫ ПО КАТЕГОРИЯМ:
+${expenseSummary || 'Нет данных'}
+
+📅 ДОХОДЫ ПО МЕСЯЦАМ:
+${incomeMonthly || 'Нет данных'}
+
+📅 РАСХОДЫ ПО МЕСЯЦАМ:
+${expenseMonthly || 'Нет данных'}
+
+ДЕТАЛЬНЫЕ ТРАНЗАКЦИИ (для поиска по описанию/датам):
+${transactionsList}
+
+ИНСТРУКЦИИ:
+1. Если вопрос о суммах/статистике - используй ТОЛЬКО агрегированные данные выше
+2. Если нужно найти транзакции по описанию/датам - ищи в детальных транзакциях
+3. Все суммы уже в валюте ${financialData.primaryCurrency}
+4. НЕ выдумывай цифры, используй только предоставленные данные
+5. Отвечай на вопросы о доходах, расходах, прибыли, балансе
+6. При анализе рентабельности сравнивай доходы с расходами
+7. Давай финансовые рекомендации на основе данных
+
+Дай точный ответ с конкретными цифрами. Используй эмодзи для категорий.`;
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты AI-аналитик личных финансов. Анализируй доходы, расходы, прибыль и финансовое здоровье. Используй ТОЛЬКО предоставленные точные данные. НЕ выдумывай цифры.'
+          },
+          {
+            role: 'user', 
+            content: prompt
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 700
+      });
+
+      return completion.choices[0].message.content.trim();
+
+    } catch (error) {
+      logger.error('Financial data analysis failed:', error);
+      throw new Error('Не удалось проанализировать финансовые данные. Попробуйте позже.');
     }
   }
 

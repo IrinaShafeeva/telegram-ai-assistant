@@ -54,6 +54,7 @@ async function createTables() {
       owner_id BIGINT REFERENCES users(id),
       name VARCHAR(100) NOT NULL,
       description TEXT,
+      keywords TEXT,
       is_active BOOLEAN DEFAULT TRUE,
       google_sheet_id VARCHAR(100),
       google_sheet_url TEXT,
@@ -85,6 +86,24 @@ async function createTables() {
       category VARCHAR(50) NOT NULL,
       description TEXT,
       expense_date DATE NOT NULL,
+      source VARCHAR(20) DEFAULT 'bot',
+      sheets_row_id INTEGER,
+      synced_to_sheets BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    `,
+    
+    // Incomes table
+    `
+    CREATE TABLE IF NOT EXISTS incomes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id BIGINT REFERENCES users(id),
+      project_id UUID REFERENCES projects(id),
+      amount DECIMAL(10,2) NOT NULL,
+      currency VARCHAR(3) NOT NULL,
+      category VARCHAR(50) NOT NULL,
+      description TEXT,
+      income_date DATE NOT NULL,
       source VARCHAR(20) DEFAULT 'bot',
       sheets_row_id INTEGER,
       synced_to_sheets BOOLEAN DEFAULT FALSE,
@@ -140,6 +159,37 @@ async function createTables() {
     }
   } catch (error) {
     logger.warn('Could not run confidence column migration:', error);
+  }
+
+  // Ensure keywords column exists in projects (migration for existing deployments)
+  try {
+    const { error: keywordsMigrationError } = await supabase.rpc('execute_sql', {
+      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS keywords TEXT;'
+    });
+    if (keywordsMigrationError) {
+      logger.warn('Keywords column migration warning:', keywordsMigrationError);
+    } else {
+      logger.info('Keywords column migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run keywords column migration:', error);
+  }
+
+  // Ensure PRO subscription columns exist (migration for existing deployments)
+  try {
+    const { error: proMigrationError } = await supabase.rpc('execute_sql', {
+      sql: `
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_expires_at TIMESTAMP;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_plan_type VARCHAR(20);
+      `
+    });
+    if (proMigrationError) {
+      logger.warn('PRO columns migration warning:', proMigrationError);
+    } else {
+      logger.info('PRO columns migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run PRO columns migration:', error);
   }
 
   // Create increment_counter function if it doesn't exist
@@ -312,19 +362,28 @@ const projectService = {
     try {
       // Get all user's projects with keywords
       const projects = await this.findByUserId(userId);
+      logger.info(`🔍 Found ${projects?.length || 0} projects for user ${userId}`);
       
       if (!projects || projects.length === 0) return null;
       
       const textLower = text.toLowerCase();
+      logger.info(`🔤 Analyzing text: "${textLower}"`);
+      
+      // Log all projects and their keywords
+      projects.forEach(p => {
+        logger.info(`📁 Project: ${p.name}, Active: ${p.is_active}, Keywords: ${p.keywords || 'none'}`);
+      });
       
       // Check each project's keywords (only if keywords field exists)
       for (const project of projects) {
         if (project.keywords) {
           const keywords = project.keywords.split(',').map(k => k.trim().toLowerCase());
+          logger.info(`🔍 Checking keywords for ${project.name}: ${keywords.join(', ')}`);
           
           // Check if any keyword is found in the text
           for (const keyword of keywords) {
             if (textLower.includes(keyword)) {
+              logger.info(`✅ MATCH! Keyword "${keyword}" found in text, selecting project: ${project.name}`);
               return project;
             }
           }
@@ -332,7 +391,9 @@ const projectService = {
       }
       
       // Return default active project if no keywords match
-      return projects.find(p => p.is_active) || projects[0];
+      const defaultProject = projects.find(p => p.is_active) || projects[0];
+      logger.info(`❌ No keyword matches, using default: ${defaultProject?.name}`);
+      return defaultProject;
     } catch (error) {
       logger.error('Error in findProjectByKeywords (possibly missing keywords field):', error);
       // Fallback to regular findByUserId
@@ -390,6 +451,87 @@ const expenseService = {
     
     if (error) throw error;
     return data;
+  },
+
+  async getExpensesForExport(userId, startDate, endDate) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select(`
+        *,
+        projects!inner(name)
+      `)
+      .eq('user_id', userId)
+      .gte('expense_date', startDate.toISOString().split('T')[0])
+      .lte('expense_date', endDate.toISOString().split('T')[0])
+      .order('expense_date', { ascending: false });
+    
+    if (error) throw error;
+    
+    // Transform data for export
+    return data.map(expense => ({
+      ...expense,
+      project_name: expense.projects?.name
+    }));
+  }
+};
+
+// Income operations
+const incomeService = {
+  async create(incomeData) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .insert(incomeData)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
+  async findByProject(projectId, limit = 50, offset = 0) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('income_date', { ascending: false })
+      .range(offset, offset + limit - 1);
+    
+    if (error) throw error;
+    return data;
+  },
+
+  async delete(id, userId) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
+  async getIncomesForExport(userId, startDate, endDate) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .select(`
+        *,
+        projects!inner(name)
+      `)
+      .eq('user_id', userId)
+      .gte('income_date', startDate.toISOString().split('T')[0])
+      .lte('income_date', endDate.toISOString().split('T')[0])
+      .order('income_date', { ascending: false });
+    
+    if (error) throw error;
+    
+    // Transform data for export
+    return data.map(income => ({
+      ...income,
+      project_name: income.projects?.name
+    }));
   }
 };
 
@@ -509,6 +651,7 @@ module.exports = {
   userService,
   projectService,
   expenseService,
+  incomeService,
   patternService,
   customCategoryService
 };

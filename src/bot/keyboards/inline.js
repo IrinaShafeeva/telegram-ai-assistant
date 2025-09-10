@@ -1,24 +1,55 @@
 const { DEFAULT_CATEGORIES } = require('../../config/constants');
 
-function getExpenseConfirmationKeyboard(expenseId) {
-  return {
-    inline_keyboard: [
-      [
-        { text: '✅ Сохранить', callback_data: `save_expense:${expenseId}` },
-        { text: '✏️ Категория', callback_data: `edit_category:${expenseId}` }
-      ],
-      [
-        { text: '💰 Сумма', callback_data: `edit_amount:${expenseId}` },
-        { text: '📝 Описание', callback_data: `edit_description:${expenseId}` }
-      ],
-      [
-        { text: '📋 Проект', callback_data: `edit_project:${expenseId}` }
-      ],
-      [
-        { text: '❌ Отменить', callback_data: `cancel_expense:${expenseId}` }
-      ]
+function getExpenseConfirmationKeyboard(expenseId, isPremium = false) {
+  const keyboard = [
+    [
+      { text: '✅ Сохранить', callback_data: `save_expense:${expenseId}` },
+      { text: '✏️ Категория', callback_data: `edit_category:${expenseId}` }
+    ],
+    [
+      { text: '💰 Сумма', callback_data: `edit_amount:${expenseId}` },
+      { text: '📝 Описание', callback_data: `edit_description:${expenseId}` }
     ]
-  };
+  ];
+
+  // Add project editing only for PRO users
+  if (isPremium) {
+    keyboard.push([
+      { text: '📋 Проект', callback_data: `edit_project:${expenseId}` }
+    ]);
+  }
+
+  keyboard.push([
+    { text: '❌ Отменить', callback_data: `cancel_expense:${expenseId}` }
+  ]);
+
+  return { inline_keyboard: keyboard };
+}
+
+function getIncomeConfirmationKeyboard(incomeId, isPremium = false) {
+  const keyboard = [
+    [
+      { text: '✅ Сохранить', callback_data: `save_income:${incomeId}` },
+      { text: '✏️ Категория', callback_data: `edit_income_category:${incomeId}` }
+    ],
+    [
+      { text: '💰 Сумма', callback_data: `edit_income_amount:${incomeId}` },
+      { text: '📝 Описание', callback_data: `edit_income_description:${incomeId}` }
+    ]
+  ];
+
+  // Add project editing only for PRO users
+  if (isPremium) {
+    keyboard.push([
+      { text: '📋 Проект', callback_data: `edit_income_project:${incomeId}` }
+    ]);
+  }
+
+  keyboard.push([
+    { text: '❌ Отменить', callback_data: `cancel_income:${incomeId}` }
+  ]);
+
+  return { inline_keyboard: keyboard };
 }
 
 function getCategorySelectionKeyboard(expenseId, customCategories = []) {
@@ -80,17 +111,7 @@ function getAmountSelectionKeyboard(expenseId) {
   return {
     inline_keyboard: [
       [
-        { text: '100', callback_data: `set_amount:${expenseId}:100` },
-        { text: '200', callback_data: `set_amount:${expenseId}:200` },
-        { text: '500', callback_data: `set_amount:${expenseId}:500` }
-      ],
-      [
-        { text: '1000', callback_data: `set_amount:${expenseId}:1000` },
-        { text: '2000', callback_data: `set_amount:${expenseId}:2000` },
-        { text: '5000', callback_data: `set_amount:${expenseId}:5000` }
-      ],
-      [
-        { text: '✏️ Ввести свою', callback_data: `custom_amount:${expenseId}` }
+        { text: '✏️ Ввести сумму', callback_data: `custom_amount:${expenseId}` }
       ],
       [
         { text: '⬅️ Назад', callback_data: `back_to_confirmation:${expenseId}` }
@@ -175,6 +196,9 @@ function getSettingsKeyboard(isPremium = false) {
     keyboard.push([{ text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }]);
   }
   
+  // Add clear data button for all users
+  keyboard.push([{ text: '🗑️ Очистить все данные', callback_data: 'settings:clear_data' }]);
+  
   return { inline_keyboard: keyboard };
 }
 
@@ -236,8 +260,45 @@ function getPaginationKeyboard(currentPage, totalPages, action, ...params) {
   return { inline_keyboard: keyboard };
 }
 
+function getExportFormatKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '📊 Excel (.xlsx)', callback_data: 'export_format:xlsx' },
+        { text: '📄 CSV', callback_data: 'export_format:csv' }
+      ],
+      [
+        { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
+      ]
+    ]
+  };
+}
+
+function getExportPeriodKeyboard(format) {
+  return {
+    inline_keyboard: [
+      [
+        { text: '📅 Сегодня', callback_data: `export_period:${format}:today` }
+      ],
+      [
+        { text: '📅 Последние 7 дней', callback_data: `export_period:${format}:week` }
+      ],
+      [
+        { text: '📅 Последние 30 дней', callback_data: `export_period:${format}:month` }
+      ],
+      [
+        { text: '📅 Указать период', callback_data: `export_period:${format}:custom` }
+      ],
+      [
+        { text: '⬅️ Назад к форматам', callback_data: 'settings:export' }
+      ]
+    ]
+  };
+}
+
 module.exports = {
   getExpenseConfirmationKeyboard,
+  getIncomeConfirmationKeyboard,
   getCategorySelectionKeyboard,
   getAmountSelectionKeyboard,
   getProjectSelectionKeyboard,
@@ -245,5 +306,7 @@ module.exports = {
   getSettingsKeyboard,
   getUpgradeKeyboard,
   getConfirmationKeyboard,
-  getPaginationKeyboard
+  getPaginationKeyboard,
+  getExportFormatKeyboard,
+  getExportPeriodKeyboard
 };
