@@ -192,7 +192,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
       
       actionRow.push({ 
         text: '✏️ Изменить', 
-        callback_data: `edit_project:${project.id}` 
+        callback_data: `edit_project_name:${project.id}` 
       });
       
       // Can't delete if it's the last project

@@ -329,6 +329,18 @@ async function handleStateInput(msg, userState) {
         await handleProjectNameInput(msg, userState);
         break;
         
+      case STATE_TYPES.WAITING_PROJECT_NAME_EDIT:
+        await handleProjectNameEditInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_PROJECT_NAME_EXISTING_SHEET:
+        await handleProjectNameInputForExistingSheet(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_PROJECT_NAME_NEW_SHEET:
+        await handleProjectNameInputForNewSheet(msg, userState);
+        break;
+        
       case STATE_TYPES.WAITING_PROJECT_KEYWORDS:
         await handleProjectKeywordsInput(msg, userState);
         break;
@@ -1207,6 +1219,221 @@ async function handleIncomeDescriptionEdit(msg, userState) {
   } catch (error) {
     logger.error('Error updating income description:', error);
     await bot.sendMessage(chatId, '❌ Ошибка при обновлении описания.');
+  }
+}
+
+// Handle project name edit input
+async function handleProjectNameEditInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { projectId, messageId, currentName } = userState.data;
+  
+  if (text.length < 2 || text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название проекта должно быть от 2 до 50 символов!');
+    return;
+  }
+  
+  if (text === currentName) {
+    await bot.sendMessage(chatId, '❌ Новое название не отличается от текущего!');
+    return;
+  }
+  
+  try {
+    // Check if project name already exists for this user (excluding current project)
+    const existingProjects = await projectService.findByUserId(user.id);
+    const nameExists = existingProjects.some(p => 
+      p.id !== projectId && p.name.toLowerCase() === text.toLowerCase()
+    );
+    
+    if (nameExists) {
+      await bot.sendMessage(chatId, `❌ Проект "${text}" уже существует!`);
+      return;
+    }
+
+    // Update project name
+    const updatedProject = await projectService.update(projectId, { name: text });
+    stateManager.clearState(chatId);
+
+    // Try to delete the old message
+    try {
+      await bot.deleteMessage(chatId, messageId);
+    } catch (e) {
+      // Ignore if can't delete
+    }
+
+    await bot.sendMessage(chatId, 
+      `✅ Название проекта изменено!\n\n` +
+      `📋 Было: "${currentName}"\n` +
+      `📋 Стало: "${text}"`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 К управлению проектами', callback_data: 'back_to_projects' }
+          ]]
+        }
+      }
+    );
+
+    // If this project has Google Sheets integration, the sheet tab will be updated automatically
+    // when new expenses/incomes are added
+    
+  } catch (error) {
+    logger.error('Error updating project name:', error);
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Ошибка при обновлении названия проекта.');
+  }
+}
+
+// Handle project name input for existing sheet option
+async function handleProjectNameInputForExistingSheet(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { messageId } = userState.data;
+  
+  if (text.length < 2 || text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название проекта должно быть от 2 до 50 символов!');
+    return;
+  }
+  
+  try {
+    // Check if project name already exists for this user
+    const existingProjects = await projectService.findByUserId(user.id);
+    const nameExists = existingProjects.some(p => 
+      p.name.toLowerCase() === text.toLowerCase()
+    );
+    
+    if (nameExists) {
+      await bot.sendMessage(chatId, `❌ Проект "${text}" уже существует!`);
+      return;
+    }
+
+    // Create project
+    const newProject = await projectService.create({
+      owner_id: user.id,
+      name: text,
+      description: `Проект "${text}"`,
+      is_active: false
+    });
+
+    // Find existing project with Google Sheets
+    const projectsWithSheets = existingProjects.filter(p => p.google_sheet_id);
+    const existingSheetProject = projectsWithSheets[0]; // Take the first one
+
+    if (existingSheetProject && existingSheetProject.google_sheet_id) {
+      try {
+        // Create worksheet in existing sheet
+        await googleSheetsService.createWorksheet(existingSheetProject.google_sheet_id, text);
+        
+        // Update new project with same Google Sheets ID
+        await projectService.update(newProject.id, {
+          google_sheet_id: existingSheetProject.google_sheet_id
+        });
+
+        stateManager.clearState(chatId);
+
+        // Delete the old message
+        try {
+          await bot.deleteMessage(chatId, messageId);
+        } catch (e) {
+          // Ignore if can't delete
+        }
+
+        await bot.sendMessage(chatId, 
+          `✅ Проект "${text}" создан!\n\n` +
+          `📊 Создан новый лист "${text}" в существующей Google таблице.\n\n` +
+          `📋 Теперь можете добавлять расходы в этот проект.`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '📋 К управлению проектами', callback_data: 'back_to_projects' }
+              ]]
+            }
+          }
+        );
+      } catch (sheetsError) {
+        logger.error('Error creating worksheet:', sheetsError);
+        await bot.sendMessage(chatId, 
+          `✅ Проект "${text}" создан!\n\n` +
+          `⚠️ Не удалось создать лист в Google таблице, но проект сохранен в базе данных.`
+        );
+      }
+    } else {
+      await bot.sendMessage(chatId, 
+        `❌ Не найдено подключенных Google таблиц для создания нового листа.`
+      );
+    }
+    
+  } catch (error) {
+    logger.error('Error creating project with existing sheet:', error);
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Ошибка при создании проекта.');
+  }
+}
+
+// Handle project name input for new sheet option
+async function handleProjectNameInputForNewSheet(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { messageId } = userState.data;
+  
+  if (text.length < 2 || text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название проекта должно быть от 2 до 50 символов!');
+    return;
+  }
+  
+  try {
+    // Check if project name already exists for this user
+    const existingProjects = await projectService.findByUserId(user.id);
+    const nameExists = existingProjects.some(p => 
+      p.name.toLowerCase() === text.toLowerCase()
+    );
+    
+    if (nameExists) {
+      await bot.sendMessage(chatId, `❌ Проект "${text}" уже существует!`);
+      return;
+    }
+
+    // Create project without Google Sheets ID for now
+    const newProject = await projectService.create({
+      owner_id: user.id,
+      name: text,
+      description: `Проект "${text}"`,
+      is_active: false
+    });
+
+    stateManager.clearState(chatId);
+
+    // Delete the old message
+    try {
+      await bot.deleteMessage(chatId, messageId);
+    } catch (e) {
+      // Ignore if can't delete
+    }
+
+    await bot.sendMessage(chatId, 
+      `✅ Проект "${text}" создан!\n\n` +
+      `📊 Для подключения отдельной Google таблицы используйте команду:\n` +
+      `/connect [ID_таблицы]\n\n` +
+      `💡 Или создайте новую таблицу в Google Sheets и подключите ее к проекту.`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 К управлению проектами', callback_data: 'back_to_projects' }
+          ]]
+        }
+      }
+    );
+    
+  } catch (error) {
+    logger.error('Error creating project with new sheet:', error);
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Ошибка при создании проекта.');
   }
 }
 

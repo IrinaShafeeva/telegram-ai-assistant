@@ -97,6 +97,16 @@ async function handleCallback(callbackQuery) {
       await handleDeleteProject(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project_name:')) {
       await handleEditProjectName(chatId, messageId, data, user);
+    } else if (data.startsWith('confirm_delete_project:')) {
+      await handleConfirmDeleteProject(chatId, messageId, data, user);
+    } else if (data === 'back_to_projects') {
+      await handleBackToProjects(chatId, messageId, user);
+    } else if (data === 'create_project_existing_sheet') {
+      await handleCreateProjectWithExistingSheet(chatId, messageId, user);
+    } else if (data === 'create_project_new_sheet') {
+      await handleCreateProjectWithNewSheet(chatId, messageId, user);
+    } else if (data === 'cancel_project_creation') {
+      await handleCancelProjectCreation(chatId, messageId, user);
     } else if (data.startsWith('custom_category:')) {
       await handleCustomCategory(chatId, messageId, data, user);
     } else if (data.startsWith('custom_amount:')) {
@@ -156,15 +166,20 @@ async function handleSaveExpense(chatId, messageId, data, user) {
 
   try {
     // Save expense to database
+    logger.info(`💾 Saving expense to database: ${expenseData.description} - ${expenseData.amount} ${expenseData.currency}`);
     const savedExpense = await expenseService.create(expenseData);
+    logger.info(`✅ Expense saved with ID: ${savedExpense.id}`);
 
     // Try to add to Google Sheets (don't fail if this fails)
     let sheetsSuccess = false;
+    logger.info(`🔄 Starting Google Sheets sync for project: ${expenseData.project_id}`);
     try {
       await googleSheetsService.addExpenseToSheet(savedExpense, expenseData.project_id);
       sheetsSuccess = true;
+      logger.info(`✅ Google Sheets sync successful`);
     } catch (sheetsError) {
       logger.warn('Google Sheets sync failed but expense saved:', sheetsError.message);
+      logger.error('Google Sheets sync error details:', sheetsError);
     }
 
     // Get project name for confirmation
@@ -502,13 +517,40 @@ async function handleCreateProject(chatId, user) {
         `✅ Проект "Личные расходы" создан!\n\n✨ Теперь можете добавлять расходы.`
       );
     } else {
-      // For additional projects (PRO only), ask for name
+      // For additional projects (PRO only), check if user has existing Google Sheets
       if (userData.is_premium) {
-        stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME, {});
+        const projectsWithSheets = userProjects.filter(p => p.google_sheet_id);
         
-        await bot.sendMessage(chatId, 
-          '📋 Создание нового проекта\n\nОтправьте название проекта:\n\n📝 Пример: "Отпуск в Турции" или "Рабочие расходы"'
-        );
+        if (projectsWithSheets.length > 0) {
+          // User has existing Google Sheets - offer choice
+          await bot.sendMessage(chatId, 
+            '📋 Создание нового проекта\n\n' +
+            '📊 У вас уже есть подключенные Google таблицы. Выберите опцию:\n\n' +
+            '💡 **Новый лист** - создаст лист в существующей таблице\n' +
+            '📄 **Отдельная таблица** - создаст новую Google таблицу для проекта',
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '📄 Новый лист в таблице', callback_data: 'create_project_existing_sheet' },
+                    { text: '📊 Отдельная таблица', callback_data: 'create_project_new_sheet' }
+                  ],
+                  [
+                    { text: '❌ Отмена', callback_data: 'cancel_project_creation' }
+                  ]
+                ]
+              }
+            }
+          );
+        } else {
+          // No existing sheets - just ask for name
+          stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME, {});
+          
+          await bot.sendMessage(chatId, 
+            '📋 Создание нового проекта\n\nОтправьте название проекта:\n\n📝 Пример: "Отпуск в Турции" или "Рабочие расходы"'
+          );
+        }
       } else {
         await bot.sendMessage(chatId, 
           '💎 Создание дополнительных проектов доступно только в PRO плане!',
@@ -2016,6 +2058,296 @@ async function handleBackToIncomeConfirmation(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error showing income confirmation:', error);
     await bot.editMessageText('❌ Ошибка при отображении подтверждения.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Project management handlers
+async function handleDeleteProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+  
+  try {
+    // Get project info first
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check ownership
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Вы можете удалять только свои проекты.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if it's the last project
+    const userProjects = await projectService.findByUserId(user.id);
+    if (userProjects.length <= 1) {
+      await bot.editMessageText('❌ Нельзя удалить единственный проект. Создайте другой проект сначала.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Show confirmation
+    await bot.editMessageText(
+      `⚠️ Удаление проекта "${project.name}"\n\n` +
+      `❗ ВНИМАНИЕ: Будут удалены:\n` +
+      `• Все расходы и доходы проекта\n` +
+      `• Связь с Google таблицей\n\n` +
+      `Это действие нельзя отменить!`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🗑️ Да, удалить', callback_data: `confirm_delete_project:${projectId}` },
+              { text: '❌ Отмена', callback_data: 'back_to_projects' }
+            ]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Delete project error:', error);
+    await bot.editMessageText('❌ Ошибка при удалении проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleConfirmDeleteProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+  
+  try {
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check ownership
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Недостаточно прав.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Delete the project (this will cascade delete expenses and incomes)
+    await projectService.delete(projectId);
+
+    // If deleted project was active, activate another one
+    if (project.is_active) {
+      const remainingProjects = await projectService.findByUserId(user.id);
+      if (remainingProjects.length > 0) {
+        await projectService.update(remainingProjects[0].id, { is_active: true });
+      }
+    }
+
+    await bot.editMessageText(
+      `✅ Проект "${project.name}" успешно удален!\n\n` +
+      `📊 Все связанные данные также удалены.`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 К управлению проектами', callback_data: 'back_to_projects' }
+          ]]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Confirm delete project error:', error);
+    await bot.editMessageText('❌ Ошибка при удалении проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditProjectName(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+  
+  try {
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check ownership
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Вы можете редактировать только свои проекты.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Set state for name editing
+    stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_EDIT, { 
+      projectId,
+      messageId,
+      currentName: project.name 
+    });
+
+    await bot.editMessageText(
+      `✏️ Редактирование проекта\n\n` +
+      `Текущее название: "${project.name}"\n\n` +
+      `📝 Отправьте новое название проекта:`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Отмена', callback_data: 'back_to_projects' }
+          ]]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Edit project name error:', error);
+    await bot.editMessageText('❌ Ошибка при редактировании проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleBackToProjects(chatId, messageId, user) {
+  const { handleProjects } = require('./commands');
+  const bot = getBot();
+  
+  try {
+    // Create a fake message object for handleProjects function
+    const fakeMsg = {
+      chat: { id: chatId },
+      user: user
+    };
+    
+    // Delete the callback message first
+    try {
+      await bot.deleteMessage(chatId, messageId);
+    } catch (e) {
+      // Ignore if message can't be deleted
+    }
+    
+    // Call the projects command handler
+    await handleProjects(fakeMsg);
+  } catch (error) {
+    logger.error('Error handling back to projects:', error);
+    await bot.editMessageText('❌ Ошибка загрузки проектов.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Project creation handlers for different Google Sheets options
+async function handleCreateProjectWithExistingSheet(chatId, messageId, user) {
+  const bot = getBot();
+  
+  try {
+    stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_EXISTING_SHEET, { messageId });
+    
+    await bot.editMessageText(
+      '📋 Создание проекта с новым листом\n\n' +
+      '📊 Проект будет создан как новый лист в существующей Google таблице.\n\n' +
+      '📝 Отправьте название проекта:\n\n' +
+      '💡 Пример: "Отпуск в Турции" или "Рабочие расходы"',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Отмена', callback_data: 'cancel_project_creation' }
+          ]]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Error handling create project with existing sheet:', error);
+    await bot.editMessageText('❌ Ошибка создания проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCreateProjectWithNewSheet(chatId, messageId, user) {
+  const bot = getBot();
+  
+  try {
+    stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_NEW_SHEET, { messageId });
+    
+    await bot.editMessageText(
+      '📋 Создание проекта с отдельной таблицей\n\n' +
+      '📊 Для проекта будет создана отдельная Google таблица.\n\n' +
+      '📝 Отправьте название проекта:\n\n' +
+      '💡 Пример: "Отпуск в Турции" или "Рабочие расходы"',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Отмена', callback_data: 'cancel_project_creation' }
+          ]]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Error handling create project with new sheet:', error);
+    await bot.editMessageText('❌ Ошибка создания проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCancelProjectCreation(chatId, messageId, user) {
+  const bot = getBot();
+  
+  try {
+    stateManager.clearState(chatId);
+    
+    await bot.editMessageText(
+      '❌ Создание проекта отменено.',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📋 К управлению проектами', callback_data: 'back_to_projects' }
+          ]]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Error cancelling project creation:', error);
+    await bot.editMessageText('❌ Ошибка отмены создания проекта.', {
       chat_id: chatId,
       message_id: messageId
     });
