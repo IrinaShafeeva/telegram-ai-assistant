@@ -358,6 +358,18 @@ const projectService = {
     return data;
   },
 
+  async delete(id) {
+    const { data, error } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
   async findProjectByKeywords(userId, text) {
     try {
       // Get all user's projects with keywords
