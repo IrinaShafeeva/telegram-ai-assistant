@@ -324,7 +324,7 @@ async function handleEditProject(chatId, messageId, data, user) {
 async function handleSetProject(chatId, messageId, data, user) {
   const parts = data.split(':');
   const tempId = parts[1];
-  const projectId = parts[2];
+  const projectIndex = parseInt(parts[2]);
   const expenseData = tempExpenses.get(tempId);
   const bot = getBot();
 
@@ -337,14 +337,16 @@ async function handleSetProject(chatId, messageId, data, user) {
   }
 
   try {
-    // Get project info
-    const project = await projectService.findById(projectId);
+    // Get all user's projects to find by index
+    const projects = await projectService.findByUserId(user.id);
+    const project = projects[projectIndex];
+    
     if (!project) {
       throw new Error('Project not found');
     }
 
     // Update expense data
-    expenseData.project_id = projectId;
+    expenseData.project_id = project.id;
     tempExpenses.set(tempId, expenseData);
 
     // Show updated confirmation
@@ -1861,7 +1863,8 @@ async function handleSetIncomeCategory(chatId, messageId, data, user) {
 
 async function handleSetIncomeProject(chatId, messageId, data, user) {
   const bot = getBot();
-  const [, tempId, projectId] = data.split(':');
+  const [, tempId, projectIndexStr] = data.split(':');
+  const projectIndex = parseInt(projectIndexStr);
   const incomeData = tempIncomes.get(tempId);
 
   if (!incomeData) {
@@ -1873,8 +1876,11 @@ async function handleSetIncomeProject(chatId, messageId, data, user) {
   }
 
   try {
-    const project = await projectService.findById(projectId);
-    if (!project || project.user_id !== user.id) {
+    // Get all user's projects to find by index
+    const projects = await projectService.findByUserId(user.id);
+    const project = projects[projectIndex];
+    
+    if (!project) {
       await bot.editMessageText('❌ Проект не найден.', {
         chat_id: chatId,
         message_id: messageId
@@ -1882,7 +1888,7 @@ async function handleSetIncomeProject(chatId, messageId, data, user) {
       return;
     }
 
-    incomeData.project_id = projectId;
+    incomeData.project_id = project.id;
     tempIncomes.set(tempId, incomeData);
 
     // Show updated confirmation

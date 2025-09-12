@@ -120,10 +120,10 @@ function getIncomeCategorySelectionKeyboard(incomeId) {
 function getIncomeProjectSelectionKeyboard(incomeId, projects) {
   const keyboard = [];
   
-  projects.forEach(project => {
+  projects.forEach((project, index) => {
     keyboard.push([{ 
       text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
-      callback_data: `set_income_project:${incomeId}:${project.id}` 
+      callback_data: `set_income_project:${incomeId}:${index}` 
     }]);
   });
   
@@ -139,10 +139,10 @@ function getIncomeProjectSelectionKeyboard(incomeId, projects) {
 function getProjectSelectionKeyboardForExpense(expenseId, projects) {
   const keyboard = [];
   
-  projects.forEach(project => {
+  projects.forEach((project, index) => {
     keyboard.push([{ 
       text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
-      callback_data: `set_project:${expenseId}:${project.id}` 
+      callback_data: `set_project:${expenseId}:${index}` 
     }]);
   });
   
