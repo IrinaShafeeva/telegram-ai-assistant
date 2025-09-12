@@ -5,6 +5,7 @@ const {
   getCategorySelectionKeyboard, 
   getIncomeCategorySelectionKeyboard,
   getIncomeProjectSelectionKeyboard,
+  getIncomeConfirmationKeyboard,
   getAmountSelectionKeyboard,
   getExpenseConfirmationKeyboard,
   getProjectSelectionKeyboardForExpense,
@@ -51,7 +52,7 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('save_expense:')) {
       await handleSaveExpense(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:')) {
-      await handleEditExpenseCategory(chatId, messageId, data, user);
+      await handleEditCategory(chatId, messageId, data, user);
     } else if (data.startsWith('edit_amount:')) {
       await handleEditAmount(chatId, messageId, data, user);
     } else if (data.startsWith('edit_description:')) {
@@ -105,7 +106,7 @@ async function handleCallback(callbackQuery) {
     } else if (data === 'manage_categories') {
       await handleManageCategories(chatId, messageId, user);
     } else if (data.startsWith('edit_custom_category:')) {
-      await handleEditCategory(chatId, messageId, data, user);
+      await handleEditCustomCategory(chatId, messageId, data, user);
     } else if (data.startsWith('delete_category:')) {
       await handleDeleteCategory(chatId, messageId, data, user);
     } else if (data.startsWith('confirm_delete_category:')) {
@@ -195,34 +196,6 @@ ${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхр�
   }
 }
 
-async function handleEditCategory(chatId, messageId, data, user) {
-  const tempId = data.split(':')[1];
-  const expenseData = tempExpenses.get(tempId);
-
-  if (!expenseData) {
-    await bot.editMessageText('❌ Данные расхода устарели.', {
-      chat_id: chatId,
-      message_id: messageId
-    });
-    return;
-  }
-
-  // Get user's custom categories if PRO
-  let customCategories = [];
-  if (user.is_premium) {
-    try {
-      customCategories = await customCategoryService.findByUserId(user.id);
-    } catch (error) {
-      logger.error('Error loading custom categories:', error);
-    }
-  }
-
-  await bot.editMessageText('📂 Выберите категорию:', {
-    chat_id: chatId,
-    message_id: messageId,
-    reply_markup: getCategorySelectionKeyboard(tempId, customCategories)
-  });
-}
 
 async function handleEditAmount(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
@@ -259,7 +232,7 @@ async function handleEditDescription(chatId, messageId, data, user) {
   });
 }
 
-async function handleEditExpenseCategory(chatId, messageId, data, user) {
+async function handleEditCategory(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
   const expenseData = tempExpenses.get(tempId);
   const bot = getBot();
@@ -1051,7 +1024,7 @@ async function handleManageCategories(chatId, messageId, user) {
   }
 }
 
-async function handleEditCategory(chatId, messageId, data, user) {
+async function handleEditCustomCategory(chatId, messageId, data, user) {
   const bot = getBot();
   const categoryId = data.split(':')[1];
   
@@ -1879,7 +1852,6 @@ async function handleSetIncomeCategory(chatId, messageId, data, user) {
 
 Всё верно?`;
 
-  const { getIncomeConfirmationKeyboard } = require('../keyboards/inline');
   await bot.editMessageText(confirmationText, {
     chat_id: chatId,
     message_id: messageId,
@@ -1924,7 +1896,6 @@ async function handleSetIncomeProject(chatId, messageId, data, user) {
 
 Всё верно?`;
 
-    const { getIncomeConfirmationKeyboard } = require('../keyboards/inline');
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
@@ -1966,7 +1937,6 @@ async function handleBackToIncomeConfirmation(chatId, messageId, data, user) {
 
 Всё верно?`;
 
-    const { getIncomeConfirmationKeyboard } = require('../keyboards/inline');
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,

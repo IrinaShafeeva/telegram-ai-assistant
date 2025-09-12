@@ -148,8 +148,9 @@ async function handleExpenseText(msg) {
     let activeProject;
     if (parsedTransaction.type === 'income') {
       const projects = await projectService.findByUserId(user.id);
+      logger.info(`💰 Income detected, available projects: ${projects.map(p => `${p.name}(${p.is_active ? 'active' : 'inactive'})`).join(', ')}`);
       activeProject = projects.find(p => p.is_active) || projects[0];
-      logger.info(`💰 Income detected, using active project: ${activeProject?.name}`);
+      logger.info(`💰 Selected project for income: ${activeProject?.name}`);
     } else {
       try {
         logger.info(`🤖 AI analyzing text for project: "${text}"`);
