@@ -377,7 +377,7 @@ async function handleSetProject(chatId, messageId, data, user) {
 async function handleSetCategory(chatId, messageId, data, user) {
   const parts = data.split(':');
   const tempId = parts[1];
-  const category = parts.slice(2).join(':'); // Join back all parts after tempId
+  const categoryIndex = parseInt(parts[2]);
   const expenseData = tempExpenses.get(tempId);
 
   if (!expenseData) {
@@ -388,11 +388,34 @@ async function handleSetCategory(chatId, messageId, data, user) {
     return;
   }
 
-  // Update category
-  expenseData.category = category;
-  tempExpenses.set(tempId, expenseData);
+  try {
+    // Get available categories (same logic as in keyboard)
+    let customCategories = [];
+    if (user.is_premium) {
+      customCategories = await customCategoryService.findByUserId(user.id);
+    }
+    
+    const { DEFAULT_CATEGORIES } = require('../../config/constants');
+    const categories = [...DEFAULT_CATEGORIES, ...customCategories.map(c => `${c.emoji} ${c.name}`)];
+    const selectedCategory = categories[categoryIndex];
+    
+    if (!selectedCategory) {
+      throw new Error('Invalid category index');
+    }
 
-  await handleBackToConfirmation(chatId, messageId, `back_to_confirmation:${tempId}`, user);
+    // Extract category name without emoji
+    const categoryName = selectedCategory.split(' ').slice(1).join(' ');
+    expenseData.category = categoryName;
+    tempExpenses.set(tempId, expenseData);
+
+    await handleBackToConfirmation(chatId, messageId, `back_to_confirmation:${tempId}`, user);
+  } catch (error) {
+    logger.error('Error setting category:', error);
+    await bot.editMessageText('❌ Ошибка выбора категории.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
 }
 
 
@@ -1827,24 +1850,37 @@ async function handleEditIncomeProject(chatId, messageId, data, user) {
 
 async function handleSetIncomeCategory(chatId, messageId, data, user) {
   const bot = getBot();
-  const [, tempId, category] = data.split(':');
-  const incomeData = tempIncomes.get(tempId);
-
-  if (!incomeData) {
-    await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
-      chat_id: chatId,
-      message_id: messageId
-    });
-    return;
-  }
-
-  incomeData.category = category;
-  tempIncomes.set(tempId, incomeData);
-
-  // Show updated confirmation
-  const project = await projectService.findById(incomeData.project_id);
   
-  const confirmationText = `💰 Подтвердите доход:
+  try {
+    const [, tempId, categoryIndexStr] = data.split(':');
+    const categoryIndex = parseInt(categoryIndexStr);
+    const incomeData = tempIncomes.get(tempId);
+
+    if (!incomeData) {
+      await bot.editMessageText('❌ Данные дохода устарели. Попробуйте еще раз.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Get category by index from INCOME_CATEGORIES
+    const { INCOME_CATEGORIES } = require('../../config/constants');
+    const selectedCategory = INCOME_CATEGORIES[categoryIndex];
+    
+    if (!selectedCategory) {
+      throw new Error('Invalid category index');
+    }
+
+    // Extract category name without emoji
+    const categoryName = selectedCategory.split(' ').slice(1).join(' ');
+    incomeData.category = categoryName;
+    tempIncomes.set(tempId, incomeData);
+
+    // Show updated confirmation
+    const project = await projectService.findById(incomeData.project_id);
+    
+    const confirmationText = `💰 Подтвердите доход:
 
 📝 Описание: ${incomeData.description}
 💵 Сумма: ${incomeData.amount} ${incomeData.currency}
@@ -1854,11 +1890,18 @@ async function handleSetIncomeCategory(chatId, messageId, data, user) {
 
 Всё верно?`;
 
-  await bot.editMessageText(confirmationText, {
-    chat_id: chatId,
-    message_id: messageId,
-    reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
-  });
+    await bot.editMessageText(confirmationText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+    });
+  } catch (error) {
+    logger.error('Error setting income category:', error);
+    await bot.editMessageText('❌ Ошибка выбора категории.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
 }
 
 async function handleSetIncomeProject(chatId, messageId, data, user) {

@@ -61,13 +61,13 @@ function getCategorySelectionKeyboard(expenseId, customCategories = []) {
     const row = [];
     row.push({ 
       text: categories[i], 
-      callback_data: `set_category:${expenseId}:${categories[i].split(' ').slice(1).join(' ')}` 
+      callback_data: `set_category:${expenseId}:${i}` 
     });
     
     if (categories[i + 1]) {
       row.push({ 
         text: categories[i + 1], 
-        callback_data: `set_category:${expenseId}:${categories[i + 1].split(' ').slice(1).join(' ')}` 
+        callback_data: `set_category:${expenseId}:${i + 1}` 
       });
     }
     keyboard.push(row);
@@ -96,13 +96,13 @@ function getIncomeCategorySelectionKeyboard(incomeId) {
     const row = [];
     row.push({ 
       text: INCOME_CATEGORIES[i], 
-      callback_data: `set_income_category:${incomeId}:${INCOME_CATEGORIES[i].split(' ').slice(1).join(' ')}` 
+      callback_data: `set_income_category:${incomeId}:${i}` 
     });
     
     if (INCOME_CATEGORIES[i + 1]) {
       row.push({ 
         text: INCOME_CATEGORIES[i + 1], 
-        callback_data: `set_income_category:${incomeId}:${INCOME_CATEGORIES[i + 1].split(' ').slice(1).join(' ')}` 
+        callback_data: `set_income_category:${incomeId}:${i + 1}` 
       });
     }
     keyboard.push(row);
