@@ -545,6 +545,7 @@ async function handleCreateProject(chatId, user) {
           );
         } else {
           // No existing sheets - just ask for name
+          stateManager.clearState(chatId);
           stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME, {});
           
           await bot.sendMessage(chatId, 
@@ -2207,7 +2208,8 @@ async function handleEditProjectName(chatId, messageId, data, user) {
       return;
     }
 
-    // Set state for name editing
+    // Clear any existing state and set state for name editing
+    stateManager.clearState(chatId);
     stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_EDIT, { 
       projectId,
       messageId,
@@ -2271,6 +2273,8 @@ async function handleCreateProjectWithExistingSheet(chatId, messageId, user) {
   const bot = getBot();
   
   try {
+    // Clear any existing state first
+    stateManager.clearState(chatId);
     stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_EXISTING_SHEET, { messageId });
     
     await bot.editMessageText(
@@ -2301,6 +2305,8 @@ async function handleCreateProjectWithNewSheet(chatId, messageId, user) {
   const bot = getBot();
   
   try {
+    // Clear any existing state first
+    stateManager.clearState(chatId);
     stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_NEW_SHEET, { messageId });
     
     await bot.editMessageText(
