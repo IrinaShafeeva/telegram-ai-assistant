@@ -139,17 +139,28 @@ async function handleExpenseText(msg) {
   const bot = getBot();
 
   try {
-    // Try AI-detection first, fallback to active project if it fails
+    // Parse transaction first to determine if it's income or expense
+    await bot.sendMessage(chatId, '🤖 Обрабатываю вашу транзакцию...');
+    const parsedTransaction = await openaiService.parseTransaction(text);
+
+    // For incomes, always use active project (no keyword detection)
+    // For expenses, use AI project detection
     let activeProject;
-    try {
-      logger.info(`🤖 AI analyzing text for project: "${text}"`);
-      activeProject = await projectService.findProjectByKeywords(user.id, text);
-      logger.info(`🎯 AI selected project: ${activeProject?.name || 'none'} (ID: ${activeProject?.id})`);
-    } catch (error) {
-      logger.warn('AI project detection failed, using active project:', error.message);
+    if (parsedTransaction.type === 'income') {
       const projects = await projectService.findByUserId(user.id);
       activeProject = projects.find(p => p.is_active) || projects[0];
-      logger.info(`📋 Fallback to active project: ${activeProject?.name}`);
+      logger.info(`💰 Income detected, using active project: ${activeProject?.name}`);
+    } else {
+      try {
+        logger.info(`🤖 AI analyzing text for project: "${text}"`);
+        activeProject = await projectService.findProjectByKeywords(user.id, text);
+        logger.info(`🎯 AI selected project: ${activeProject?.name || 'none'} (ID: ${activeProject?.id})`);
+      } catch (error) {
+        logger.warn('AI project detection failed, using active project:', error.message);
+        const projects = await projectService.findByUserId(user.id);
+        activeProject = projects.find(p => p.is_active) || projects[0];
+        logger.info(`📋 Fallback to active project: ${activeProject?.name}`);
+      }
     }
 
     if (!activeProject) {
@@ -165,11 +176,6 @@ async function handleExpenseText(msg) {
       );
       return;
     }
-
-    await bot.sendMessage(chatId, '🤖 Обрабатываю вашу транзакцию...');
-
-    // Parse transaction with AI (could be income or expense)
-    const parsedTransaction = await openaiService.parseTransaction(text);
 
     // Use user's primary currency if not specified
     if (!parsedTransaction.currency) {

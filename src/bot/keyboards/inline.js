@@ -1,4 +1,4 @@
-const { DEFAULT_CATEGORIES } = require('../../config/constants');
+const { DEFAULT_CATEGORIES, INCOME_CATEGORIES } = require('../../config/constants');
 
 function getExpenseConfirmationKeyboard(expenseId, isPremium = false) {
   const keyboard = [
@@ -83,6 +83,54 @@ function getCategorySelectionKeyboard(expenseId, customCategories = []) {
   keyboard.push([{ 
     text: '⬅️ Назад', 
     callback_data: `back_to_confirmation:${expenseId}` 
+  }]);
+  
+  return { inline_keyboard: keyboard };
+}
+
+function getIncomeCategorySelectionKeyboard(incomeId) {
+  const keyboard = [];
+  
+  // Split categories into rows of 2
+  for (let i = 0; i < INCOME_CATEGORIES.length; i += 2) {
+    const row = [];
+    row.push({ 
+      text: INCOME_CATEGORIES[i], 
+      callback_data: `set_income_category:${incomeId}:${INCOME_CATEGORIES[i].split(' ').slice(1).join(' ')}` 
+    });
+    
+    if (INCOME_CATEGORIES[i + 1]) {
+      row.push({ 
+        text: INCOME_CATEGORIES[i + 1], 
+        callback_data: `set_income_category:${incomeId}:${INCOME_CATEGORIES[i + 1].split(' ').slice(1).join(' ')}` 
+      });
+    }
+    keyboard.push(row);
+  }
+  
+  // Add back button
+  keyboard.push([{ 
+    text: '⬅️ Назад', 
+    callback_data: `back_to_income_confirmation:${incomeId}` 
+  }]);
+  
+  return { inline_keyboard: keyboard };
+}
+
+function getIncomeProjectSelectionKeyboard(incomeId, projects) {
+  const keyboard = [];
+  
+  projects.forEach(project => {
+    keyboard.push([{ 
+      text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
+      callback_data: `set_income_project:${incomeId}:${project.id}` 
+    }]);
+  });
+  
+  // Add back button
+  keyboard.push([{ 
+    text: '⬅️ Назад', 
+    callback_data: `back_to_income_confirmation:${incomeId}` 
   }]);
   
   return { inline_keyboard: keyboard };
@@ -300,6 +348,8 @@ module.exports = {
   getExpenseConfirmationKeyboard,
   getIncomeConfirmationKeyboard,
   getCategorySelectionKeyboard,
+  getIncomeCategorySelectionKeyboard,
+  getIncomeProjectSelectionKeyboard,
   getAmountSelectionKeyboard,
   getProjectSelectionKeyboard,
   getProjectSelectionKeyboardForExpense,

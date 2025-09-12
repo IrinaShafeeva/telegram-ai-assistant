@@ -3,6 +3,8 @@ const googleSheetsService = require('../../services/googleSheets');
 const { tempExpenses, tempIncomes } = require('./messages');
 const { 
   getCategorySelectionKeyboard, 
+  getIncomeCategorySelectionKeyboard,
+  getIncomeProjectSelectionKeyboard,
   getAmountSelectionKeyboard,
   getExpenseConfirmationKeyboard,
   getProjectSelectionKeyboardForExpense,
@@ -1738,32 +1740,10 @@ async function handleEditIncomeCategory(chatId, messageId, data, user) {
     return;
   }
 
-  const incomeCategories = ['💰 Зарплата', '💼 Фриланс', '📊 Продажи', '🎁 Подарки', '💳 Прочие доходы'];
-  const keyboard = [];
-  
-  // Split categories into rows of 2
-  for (let i = 0; i < incomeCategories.length; i += 2) {
-    const row = [];
-    row.push({ 
-      text: incomeCategories[i], 
-      callback_data: `set_income_category:${tempId}:${incomeCategories[i].split(' ').slice(1).join(' ')}` 
-    });
-    
-    if (incomeCategories[i + 1]) {
-      row.push({ 
-        text: incomeCategories[i + 1], 
-        callback_data: `set_income_category:${tempId}:${incomeCategories[i + 1].split(' ').slice(1).join(' ')}` 
-      });
-    }
-    keyboard.push(row);
-  }
-  
-  keyboard.push([{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]);
-
   await bot.editMessageText('📂 Выберите категорию дохода:', {
     chat_id: chatId,
     message_id: messageId,
-    reply_markup: { inline_keyboard: keyboard }
+    reply_markup: getIncomeCategorySelectionKeyboard(tempId)
   });
 }
 
@@ -1852,17 +1832,10 @@ async function handleEditIncomeProject(chatId, messageId, data, user) {
       return;
     }
 
-    const keyboard = projects.map(project => [{
-      text: project.name,
-      callback_data: `set_income_project:${tempId}:${project.id}`
-    }]);
-    
-    keyboard.push([{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]);
-
     await bot.editMessageText('📋 Выберите проект для дохода:', {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: { inline_keyboard: keyboard }
+      reply_markup: getIncomeProjectSelectionKeyboard(tempId, projects)
     });
 
   } catch (error) {

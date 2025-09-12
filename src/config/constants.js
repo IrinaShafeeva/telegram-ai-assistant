@@ -10,6 +10,14 @@ const DEFAULT_CATEGORIES = [
   '❓ Прочее'
 ];
 
+const INCOME_CATEGORIES = [
+  '💰 Зарплата',
+  '💼 Фриланс',
+  '🛒 Продажи', 
+  '🎁 Подарки',
+  '💸 Прочие доходы'
+];
+
 const SUPPORTED_CURRENCIES = ['RUB', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KZT', 'UAH'];
 
 const SUBSCRIPTION_LIMITS = {
@@ -77,6 +85,7 @@ const BOT_COMMANDS = [
 
 module.exports = {
   DEFAULT_CATEGORIES,
+  INCOME_CATEGORIES,
   SUPPORTED_CURRENCIES,
   SUBSCRIPTION_LIMITS,
   EXPENSE_PARSING_PROMPT,
