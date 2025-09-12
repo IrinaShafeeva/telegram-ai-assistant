@@ -359,6 +359,43 @@ const projectService = {
   },
 
   async delete(id) {
+    // First, delete all related expenses and incomes
+    // This is necessary because of foreign key constraints
+    
+    // Delete expenses for this project
+    const { error: expenseError } = await supabase
+      .from('expenses')
+      .delete()
+      .eq('project_id', id);
+    
+    if (expenseError) {
+      logger.error('Error deleting project expenses:', expenseError);
+      throw new Error('Failed to delete project expenses: ' + expenseError.message);
+    }
+    
+    // Delete incomes for this project
+    const { error: incomeError } = await supabase
+      .from('incomes')
+      .delete()
+      .eq('project_id', id);
+    
+    if (incomeError) {
+      logger.error('Error deleting project incomes:', incomeError);
+      throw new Error('Failed to delete project incomes: ' + incomeError.message);
+    }
+    
+    // Delete project members (if any)
+    const { error: memberError } = await supabase
+      .from('project_members')
+      .delete()
+      .eq('project_id', id);
+    
+    if (memberError) {
+      logger.warn('Error deleting project members (might not exist):', memberError);
+      // Don't throw error for members as table might not exist or be empty
+    }
+    
+    // Finally, delete the project itself
     const { data, error } = await supabase
       .from('projects')
       .delete()

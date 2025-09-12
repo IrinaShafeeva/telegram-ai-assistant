@@ -2103,10 +2103,12 @@ async function handleDeleteProject(chatId, messageId, data, user) {
     // Show confirmation
     await bot.editMessageText(
       `⚠️ Удаление проекта "${project.name}"\n\n` +
-      `❗ ВНИМАНИЕ: Будут удалены:\n` +
-      `• Все расходы и доходы проекта\n` +
+      `❗ ВНИМАНИЕ: Будут безвозвратно удалены:\n` +
+      `• ВСЕ расходы проекта\n` +
+      `• ВСЕ доходы проекта\n` +
+      `• Участники проекта (если есть)\n` +
       `• Связь с Google таблицей\n\n` +
-      `Это действие нельзя отменить!`,
+      `⚠️ Это действие НЕЛЬЗЯ отменить!`,
       {
         chat_id: chatId,
         message_id: messageId,
@@ -2152,7 +2154,7 @@ async function handleConfirmDeleteProject(chatId, messageId, data, user) {
       return;
     }
 
-    // Delete the project (this will cascade delete expenses and incomes)
+    // Delete the project and all related data (expenses, incomes, members)
     await projectService.delete(projectId);
 
     // If deleted project was active, activate another one
@@ -2165,7 +2167,10 @@ async function handleConfirmDeleteProject(chatId, messageId, data, user) {
 
     await bot.editMessageText(
       `✅ Проект "${project.name}" успешно удален!\n\n` +
-      `📊 Все связанные данные также удалены.`,
+      `🗑️ Удалены:\n` +
+      `• Проект\n` +
+      `• Все расходы и доходы\n` +
+      `• Все связанные данные`,
       {
         chat_id: chatId,
         message_id: messageId,
@@ -2178,9 +2183,23 @@ async function handleConfirmDeleteProject(chatId, messageId, data, user) {
     );
   } catch (error) {
     logger.error('Confirm delete project error:', error);
-    await bot.editMessageText('❌ Ошибка при удалении проекта.', {
+    
+    let errorMessage = '❌ Ошибка при удалении проекта.';
+    
+    if (error.message.includes('foreign key constraint')) {
+      errorMessage = '❌ Не удалось удалить проект из-за связанных данных. Обратитесь к администратору.';
+    } else if (error.message.includes('Failed to delete project')) {
+      errorMessage = `❌ ${error.message}`;
+    }
+    
+    await bot.editMessageText(errorMessage, {
       chat_id: chatId,
-      message_id: messageId
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📋 К управлению проектами', callback_data: 'back_to_projects' }
+        ]]
+      }
     });
   }
 }
