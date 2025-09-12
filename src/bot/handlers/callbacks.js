@@ -102,10 +102,13 @@ async function handleCallback(callbackQuery) {
     } else if (data === 'back_to_projects') {
       await handleBackToProjects(chatId, messageId, user);
     } else if (data === 'create_project_existing_sheet') {
+      logger.info(`🔘 User ${user.id} clicked: create_project_existing_sheet`);
       await handleCreateProjectWithExistingSheet(chatId, messageId, user);
     } else if (data === 'create_project_new_sheet') {
+      logger.info(`🔘 User ${user.id} clicked: create_project_new_sheet`);
       await handleCreateProjectWithNewSheet(chatId, messageId, user);
     } else if (data === 'cancel_project_creation') {
+      logger.info(`🔘 User ${user.id} clicked: cancel_project_creation`);
       await handleCancelProjectCreation(chatId, messageId, user);
     } else if (data.startsWith('custom_category:')) {
       await handleCustomCategory(chatId, messageId, data, user);
@@ -2292,6 +2295,8 @@ async function handleCreateProjectWithExistingSheet(chatId, messageId, user) {
   const bot = getBot();
   
   try {
+    logger.info(`📝 Starting handleCreateProjectWithExistingSheet for user ${user.id}`);
+    
     // Clear any existing state first
     stateManager.clearState(chatId);
     stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_EXISTING_SHEET, { messageId });
@@ -2311,6 +2316,8 @@ async function handleCreateProjectWithExistingSheet(chatId, messageId, user) {
         }
       }
     );
+    
+    logger.info(`✅ Successfully updated message for existing sheet option`);
   } catch (error) {
     logger.error('Error handling create project with existing sheet:', error);
     await bot.editMessageText('❌ Ошибка создания проекта.', {
@@ -2324,6 +2331,8 @@ async function handleCreateProjectWithNewSheet(chatId, messageId, user) {
   const bot = getBot();
   
   try {
+    logger.info(`📝 Starting handleCreateProjectWithNewSheet for user ${user.id}`);
+    
     // Clear any existing state first
     stateManager.clearState(chatId);
     stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_NEW_SHEET, { messageId });
