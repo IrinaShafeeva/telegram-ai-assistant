@@ -235,22 +235,30 @@ class GoogleSheetsService {
       // Use project name as sheet name, fallback to first sheet
       let sheetName = project.name;
       try {
+        logger.info(`🔍 [EXPENSE] Getting sheets for project "${project.name}", sheet ID: ${project.google_sheet_id}`);
         const spreadsheet = await this.sheets.spreadsheets.get({
           spreadsheetId: project.google_sheet_id,
           fields: 'sheets.properties.title'
         });
         
-        // Check if project sheet exists
+        // Check if project sheet exists  
+        const existingSheets = spreadsheet.data.sheets.map(s => s.properties.title);
+        logger.info(`📋 [EXPENSE] Existing sheets: ${JSON.stringify(existingSheets)}`);
+        logger.info(`🔍 [EXPENSE] Looking for sheet: "${project.name}"`);
+        
         const projectSheet = spreadsheet.data.sheets.find(
           sheet => sheet.properties.title === project.name
         );
         
         if (projectSheet) {
+          logger.info(`✅ [EXPENSE] Found existing project sheet: "${project.name}"`);
           sheetName = project.name;
         } else {
+          logger.info(`❌ [EXPENSE] Project sheet "${project.name}" not found, creating new one...`);
           // Create new sheet for project if it doesn't exist
           try {
-            await this.sheets.spreadsheets.batchUpdate({
+            logger.info(`🔧 [EXPENSE] Attempting to create sheet "${project.name}"...`);
+            const batchResult = await this.sheets.spreadsheets.batchUpdate({
               spreadsheetId: project.google_sheet_id,
               resource: {
                 requests: [{
@@ -262,8 +270,10 @@ class GoogleSheetsService {
                 }]
               }
             });
+            logger.info(`🔧 [EXPENSE] Sheet creation result:`, batchResult.status);
             
             // Add headers to the new sheet
+            logger.info(`🔧 [EXPENSE] Adding headers to new sheet "${project.name}"...`);
             await this.sheets.spreadsheets.values.update({
               spreadsheetId: project.google_sheet_id,
               range: `${project.name}!A1:G1`,
@@ -274,19 +284,23 @@ class GoogleSheetsService {
             });
             
             sheetName = project.name;
-            logger.info(`✅ Created new sheet "${project.name}" in Google Sheets`);
+            logger.info(`✅ [EXPENSE] Created new sheet "${project.name}" in Google Sheets`);
           } catch (createError) {
-            logger.warn('Could not create project sheet, using first sheet:', createError.message);
+            logger.error('❌ [EXPENSE] Could not create project sheet:', createError.message);
+            logger.error('❌ [EXPENSE] Create error details:', createError);
             if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
               sheetName = spreadsheet.data.sheets[0].properties.title;
+              logger.info(`🔧 [EXPENSE] Using fallback sheet: "${sheetName}"`);
             }
           }
         }
       } catch (error) {
-        logger.warn('Could not get sheet name, using project name:', error.message);
+        logger.error('❌ [EXPENSE] Could not get sheet name:', error.message);
+        logger.error('❌ [EXPENSE] Sheet error details:', error);
         sheetName = project.name;
       }
 
+      logger.info(`📝 [EXPENSE] Adding expense to sheet "${sheetName}"`);
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: project.google_sheet_id,
         range: `${sheetName}!A:G`,
