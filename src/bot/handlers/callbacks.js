@@ -389,14 +389,25 @@ async function handleSetCategory(chatId, messageId, data, user) {
   }
 
   try {
+    logger.info(`Setting category for expense ${tempId}, categoryIndex: ${categoryIndex}, user.is_premium: ${user.is_premium}`);
+    
     // Get available categories (same logic as in keyboard)
     let customCategories = [];
     if (user.is_premium) {
-      customCategories = await customCategoryService.findByUserId(user.id);
+      try {
+        customCategories = await customCategoryService.findByUserId(user.id);
+        logger.info(`Found ${customCategories.length} custom categories`);
+      } catch (customError) {
+        logger.error('Error getting custom categories:', customError);
+        customCategories = [];
+      }
     }
     
     const { DEFAULT_CATEGORIES } = require('../../config/constants');
     const categories = [...DEFAULT_CATEGORIES, ...customCategories.map(c => `${c.emoji} ${c.name}`)];
+    logger.info(`Total categories: ${categories.length}, categoryIndex: ${categoryIndex}`);
+    logger.info(`Available categories: ${JSON.stringify(categories)}`);
+    
     const selectedCategory = categories[categoryIndex];
     
     if (!selectedCategory) {
@@ -1684,6 +1695,15 @@ async function handleSaveIncome(chatId, messageId, data, user) {
     // Save income to database
     const savedIncome = await incomeService.create(incomeData);
 
+    // Try to add to Google Sheets (don't fail if this fails)
+    let sheetsSuccess = false;
+    try {
+      await googleSheetsService.addIncomeToSheet(savedIncome, incomeData.project_id);
+      sheetsSuccess = true;
+    } catch (sheetsError) {
+      logger.warn('Google Sheets sync failed but income saved:', sheetsError.message);
+    }
+
     // Get project name for confirmation
     const project = await projectService.findById(incomeData.project_id);
 
@@ -1692,6 +1712,7 @@ async function handleSaveIncome(chatId, messageId, data, user) {
 💰 ${incomeData.description}: +${incomeData.amount} ${incomeData.currency}
 📂 Категория: ${incomeData.category}
 📋 Проект: ${project.name}
+${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}
 
 📈 Посмотреть статистику: /stats`;
 

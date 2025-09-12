@@ -247,9 +247,40 @@ class GoogleSheetsService {
         
         if (projectSheet) {
           sheetName = project.name;
-        } else if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
-          // Fallback to first sheet if project sheet doesn't exist
-          sheetName = spreadsheet.data.sheets[0].properties.title;
+        } else {
+          // Create new sheet for project if it doesn't exist
+          try {
+            await this.sheets.spreadsheets.batchUpdate({
+              spreadsheetId: project.google_sheet_id,
+              resource: {
+                requests: [{
+                  addSheet: {
+                    properties: {
+                      title: project.name
+                    }
+                  }
+                }]
+              }
+            });
+            
+            // Add headers to the new sheet
+            await this.sheets.spreadsheets.values.update({
+              spreadsheetId: project.google_sheet_id,
+              range: `${project.name}!A1:G1`,
+              valueInputOption: 'RAW',
+              resource: {
+                values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Источник']]
+              }
+            });
+            
+            sheetName = project.name;
+            logger.info(`✅ Created new sheet "${project.name}" in Google Sheets`);
+          } catch (createError) {
+            logger.warn('Could not create project sheet, using first sheet:', createError.message);
+            if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
+              sheetName = spreadsheet.data.sheets[0].properties.title;
+            }
+          }
         }
       } catch (error) {
         logger.warn('Could not get sheet name, using project name:', error.message);
@@ -268,10 +299,18 @@ class GoogleSheetsService {
       await expenseService.update(expense.id, { synced_to_sheets: true });
       logger.info(`✅ Added expense to sheet "${sheetName}": ${expense.description} - ${expense.amount} ${expense.currency}`);
     } catch (error) {
+      // Get project info for error logging (project might be undefined in catch scope)
+      let projectInfo = 'unknown';
+      try {
+        const proj = await projectService.findById(projectId);
+        projectInfo = proj?.google_sheet_id || 'unknown';
+      } catch {}
+      
       logger.error('❌ Failed to add expense to sheet:', {
         error: error.message,
         expenseId: expense.id,
-        sheetId: project?.google_sheet_id || 'unknown',
+        projectId: projectId,
+        sheetId: projectInfo,
         sheetName: sheetName || 'unknown'
       });
       
@@ -281,6 +320,125 @@ class GoogleSheetsService {
       } else if (error.message.includes('403')) {
         logger.error('💡 Hint: Permission denied. Make sure exp-trck@ai-assistant-sheets.iam.gserviceaccount.com is added as Editor to the Google Sheet.');
       }
+    }
+  }
+
+  async addIncomeToSheet(income, projectId) {
+    try {
+      if (!this.sheets) {
+        logger.debug('Google Sheets not available - skipping income sync');
+        return;
+      }
+
+      const project = await projectService.findById(projectId);
+      if (!project?.google_sheet_id) {
+        logger.debug('No Google Sheet ID for project:', projectId);
+        return;
+      }
+
+      const user = await userService.findById(income.user_id);
+      const authorName = user?.username || user?.first_name || 'Unknown';
+
+      const values = [[
+        this.formatDate(income.income_date),
+        income.description,
+        income.amount,
+        income.currency,
+        income.category,
+        authorName,
+        'bot'
+      ]];
+
+      // Use project name as sheet name, fallback to first sheet
+      let sheetName = project.name;
+      try {
+        const spreadsheet = await this.sheets.spreadsheets.get({
+          spreadsheetId: project.google_sheet_id,
+          fields: 'sheets.properties.title'
+        });
+        
+        // Check if project sheet exists
+        const projectSheet = spreadsheet.data.sheets.find(
+          sheet => sheet.properties.title === project.name
+        );
+        
+        if (projectSheet) {
+          sheetName = project.name;
+        } else {
+          // Create new sheet for project if it doesn't exist
+          try {
+            await this.sheets.spreadsheets.batchUpdate({
+              spreadsheetId: project.google_sheet_id,
+              resource: {
+                requests: [{
+                  addSheet: {
+                    properties: {
+                      title: project.name
+                    }
+                  }
+                }]
+              }
+            });
+            
+            // Add headers to the new sheet
+            await this.sheets.spreadsheets.values.update({
+              spreadsheetId: project.google_sheet_id,
+              range: `${project.name}!A1:G1`,
+              valueInputOption: 'RAW',
+              resource: {
+                values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Источник']]
+              }
+            });
+            
+            sheetName = project.name;
+            logger.info(`✅ Created new sheet "${project.name}" in Google Sheets`);
+          } catch (createError) {
+            logger.warn('Could not create project sheet, using first sheet:', createError.message);
+            if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
+              sheetName = spreadsheet.data.sheets[0].properties.title;
+            }
+          }
+        }
+      } catch (error) {
+        logger.warn('Could not get sheet name, using project name:', error.message);
+        sheetName = project.name;
+      }
+
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: project.google_sheet_id,
+        range: `${sheetName}!A:G`,
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        resource: { values }
+      });
+
+      // Mark as synced
+      await incomeService.update(income.id, { synced_to_sheets: true });
+      logger.info(`✅ Added income to sheet "${sheetName}": ${income.description} - ${income.amount} ${income.currency}`);
+    } catch (error) {
+      // Get project info for error logging (project might be undefined in catch scope)
+      let projectInfo = 'unknown';
+      try {
+        const proj = await projectService.findById(projectId);
+        projectInfo = proj?.google_sheet_id || 'unknown';
+      } catch {}
+      
+      logger.error('❌ Failed to add income to sheet:', {
+        error: error.message,
+        incomeId: income.id,
+        projectId: projectId,
+        sheetId: projectInfo,
+        sheetName: sheetName || 'unknown'
+      });
+      
+      // Helpful error message for common issues
+      if (error.message.includes('404')) {
+        logger.error('💡 Hint: Google Sheet not found. Check if sheet ID is correct and service account has access.');
+      } else if (error.message.includes('403')) {
+        logger.error('💡 Hint: Permission denied. Make sure exp-trck@ai-assistant-sheets.iam.gserviceaccount.com is added as Editor to the Google Sheet.');
+      }
+      
+      throw error; // Re-throw to be caught by caller
     }
   }
 
