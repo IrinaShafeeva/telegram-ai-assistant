@@ -125,7 +125,7 @@ class AnalyticsService {
           start_date: startDate.toISOString().split('T')[0],
           end_date: endDate.toISOString().split('T')[0]
         }),
-        incomeService.findByProject(null, userId, startDate, endDate)
+        incomeService.getIncomesForExport(userId, startDate, endDate)
       ]);
 
       const expenses = expensesResult.data || [];
@@ -465,7 +465,7 @@ class AnalyticsService {
       const { startDate, endDate } = getDateRange(period);
       
       // Get incomes for the period
-      const incomes = await incomeService.findByProject(null, userId, startDate, endDate);
+      const incomes = await incomeService.getIncomesForExport(userId, startDate, endDate);
 
       if (!incomes || incomes.length === 0) {
         return {

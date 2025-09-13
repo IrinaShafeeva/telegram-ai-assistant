@@ -207,6 +207,9 @@ class GoogleSheetsService {
   }
 
   async addExpenseToSheet(expense, projectId) {
+    // Declare sheetName outside try block to access in catch
+    let sheetName = 'unknown';
+    
     try {
       if (!this.sheets) {
         logger.debug('Google Sheets not available - skipping expense sync');
@@ -233,7 +236,7 @@ class GoogleSheetsService {
       ]];
 
       // Use project name as sheet name, fallback to first sheet
-      let sheetName = project.name;
+      sheetName = project.name;
       try {
         logger.info(`🔍 [EXPENSE] Getting sheets for project "${project.name}", sheet ID: ${project.google_sheet_id}`);
         const spreadsheet = await this.sheets.spreadsheets.get({
@@ -338,6 +341,9 @@ class GoogleSheetsService {
   }
 
   async addIncomeToSheet(income, projectId) {
+    // Declare sheetName outside try block to access in catch
+    let sheetName = 'unknown';
+    
     try {
       if (!this.sheets) {
         logger.debug('Google Sheets not available - skipping income sync');
@@ -364,7 +370,7 @@ class GoogleSheetsService {
       ]];
 
       // Use project name as sheet name, fallback to first sheet
-      let sheetName = project.name;
+      sheetName = project.name;
       try {
         const spreadsheet = await this.sheets.spreadsheets.get({
           spreadsheetId: project.google_sheet_id,

@@ -549,6 +549,18 @@ const incomeService = {
     return data;
   },
 
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    return data;
+  },
+
   async delete(id, userId) {
     const { data, error } = await supabase
       .from('incomes')
