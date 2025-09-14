@@ -346,19 +346,38 @@ function getExportPeriodKeyboard(format) {
 
 function getCurrencySelectionKeyboard(expenseId, type = 'expense') {
   const currencies = [
-    { symbol: '₽', code: 'RUB', name: 'Рубли' },
-    { symbol: '$', code: 'USD', name: 'Доллары' },
-    { symbol: '€', code: 'EUR', name: 'Евро' }
+    { symbol: '₽', code: 'RUB', name: 'Рубли', flag: '🇷🇺' },
+    { symbol: '$', code: 'USD', name: 'Доллары', flag: '🇺🇸' },
+    { symbol: '€', code: 'EUR', name: 'Евро', flag: '🇪🇺' },
+    { symbol: '£', code: 'GBP', name: 'Фунты', flag: '🇬🇧' },
+    { symbol: '₸', code: 'KZT', name: 'Тенге', flag: '🇰🇿' },
+    { symbol: '₴', code: 'UAH', name: 'Гривны', flag: '🇺🇦' }
   ];
 
   const keyboard = [];
 
-  currencies.forEach(currency => {
-    keyboard.push([{
-      text: `${currency.symbol} ${currency.name} (${currency.code})`,
-      callback_data: `set_currency:${expenseId}:${currency.code}:${type}`
-    }]);
-  });
+  // Split currencies into rows of 2
+  for (let i = 0; i < currencies.length; i += 2) {
+    const row = [];
+    row.push({
+      text: `${currencies[i].flag} ${currencies[i].name} (${currencies[i].code})`,
+      callback_data: `set_currency:${expenseId}:${currencies[i].code}:${type}`
+    });
+
+    if (currencies[i + 1]) {
+      row.push({
+        text: `${currencies[i + 1].flag} ${currencies[i + 1].name} (${currencies[i + 1].code})`,
+        callback_data: `set_currency:${expenseId}:${currencies[i + 1].code}:${type}`
+      });
+    }
+    keyboard.push(row);
+  }
+
+  // Add "Set as default" button
+  keyboard.push([{
+    text: '💾 Сохранить как основную валюту',
+    callback_data: `set_default_currency:${expenseId}:${type}`
+  }]);
 
   // Add back button
   keyboard.push([{

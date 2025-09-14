@@ -70,7 +70,7 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('edit_income_currency:')) {
       await handleEditIncomeCurrency(chatId, messageId, data, user);
     } else if (data.startsWith('set_currency:')) {
-      await handleSetCurrency(chatId, messageId, data, user);
+      await handleSetTransactionCurrency(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project:')) {
       await handleEditProject(chatId, messageId, data, user);
     } else if (data.startsWith('set_project:')) {
@@ -2526,7 +2526,7 @@ async function handleEditIncomeCurrency(chatId, messageId, data, user) {
   }
 }
 
-async function handleSetCurrency(chatId, messageId, data, user) {
+async function handleSetTransactionCurrency(chatId, messageId, data, user) {
   const bot = getBot();
   const [, expenseId, currency, type] = data.split(':');
 
