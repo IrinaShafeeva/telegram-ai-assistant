@@ -1,5 +1,5 @@
 const { google } = require('googleapis');
-const { projectService, expenseService, userService } = require('./supabase');
+const { projectService, expenseService, incomeService, userService } = require('./supabase');
 const logger = require('../utils/logger');
 
 class GoogleSheetsService {
@@ -110,7 +110,7 @@ class GoogleSheetsService {
       });
 
       const headers = response.data.values?.[0] || [];
-      const expectedHeaders = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Источник'];
+      const expectedHeaders = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип'];
 
       // Если заголовки отсутствуют или неправильные, создаем их
       if (headers.length === 0 || !this.arraysEqual(headers, expectedHeaders)) {
@@ -206,13 +206,13 @@ class GoogleSheetsService {
     }
   }
 
-  async addExpenseToSheet(expense, projectId) {
+  async addTransactionToSheet(transaction, projectId, type = 'expense') {
     // Declare sheetName outside try block to access in catch
     let sheetName = 'unknown';
     
     try {
       if (!this.sheets) {
-        logger.debug('Google Sheets not available - skipping expense sync');
+        logger.debug('Google Sheets not available - skipping transaction sync');
         return;
       }
 
@@ -222,45 +222,76 @@ class GoogleSheetsService {
         return;
       }
 
-      const user = await userService.findById(expense.user_id);
+      const user = await userService.findById(transaction.user_id);
       const authorName = user?.username || user?.first_name || 'Unknown';
 
+      // For expenses, make amount negative; for incomes, keep positive
+      const amount = type === 'expense' ? -Math.abs(transaction.amount) : Math.abs(transaction.amount);
+      const date = type === 'expense' ? transaction.expense_date : transaction.income_date;
+
       const values = [[
-        this.formatDate(expense.expense_date),
-        expense.description,
-        expense.amount,
-        expense.currency,
-        expense.category,
+        this.formatDate(date),
+        transaction.description,
+        amount,
+        transaction.currency,
+        transaction.category,
         authorName,
-        'bot'
+        type
       ]];
 
       // Use project name as sheet name, fallback to first sheet
       sheetName = project.name;
       try {
-        logger.info(`🔍 [EXPENSE] Getting sheets for project "${project.name}", sheet ID: ${project.google_sheet_id}`);
+        logger.info(`🔍 [${type.toUpperCase()}] Getting sheets for project "${project.name}", sheet ID: ${project.google_sheet_id}`);
         const spreadsheet = await this.sheets.spreadsheets.get({
           spreadsheetId: project.google_sheet_id,
           fields: 'sheets.properties.title'
         });
-        
-        // Check if project sheet exists  
+
+        // Check if project sheet exists
         const existingSheets = spreadsheet.data.sheets.map(s => s.properties.title);
-        logger.info(`📋 [EXPENSE] Existing sheets: ${JSON.stringify(existingSheets)}`);
-        logger.info(`🔍 [EXPENSE] Looking for sheet: "${project.name}"`);
-        
+        logger.info(`📋 [${type.toUpperCase()}] Existing sheets: ${JSON.stringify(existingSheets)}`);
+        logger.info(`🔍 [${type.toUpperCase()}] Looking for sheet: "${project.name}"`);
+
         const projectSheet = spreadsheet.data.sheets.find(
           sheet => sheet.properties.title === project.name
         );
-        
+
         if (projectSheet) {
-          logger.info(`✅ [EXPENSE] Found existing project sheet: "${project.name}"`);
+          logger.info(`✅ [${type.toUpperCase()}] Found existing project sheet: "${project.name}"`);
           sheetName = project.name;
+
+          // Check and update headers if needed
+          try {
+            const headerResponse = await this.sheets.spreadsheets.values.get({
+              spreadsheetId: project.google_sheet_id,
+              range: `${project.name}!A1:G1`
+            });
+
+            const currentHeaders = headerResponse.data.values?.[0] || [];
+            const expectedHeaders = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип'];
+
+            // Check if headers need updating (old format had 'Источник' instead of 'Тип')
+            if (currentHeaders.length === 0 || !this.arraysEqual(currentHeaders, expectedHeaders)) {
+              logger.info(`🔧 [${type.toUpperCase()}] Updating headers for existing sheet "${project.name}"`);
+              await this.sheets.spreadsheets.values.update({
+                spreadsheetId: project.google_sheet_id,
+                range: `${project.name}!A1:G1`,
+                valueInputOption: 'RAW',
+                resource: {
+                  values: [expectedHeaders]
+                }
+              });
+              logger.info(`✅ [${type.toUpperCase()}] Headers updated for sheet "${project.name}"`);
+            }
+          } catch (headerError) {
+            logger.warn(`⚠️ [${type.toUpperCase()}] Could not check/update headers:`, headerError.message);
+          }
         } else {
-          logger.info(`❌ [EXPENSE] Project sheet "${project.name}" not found, creating new one...`);
+          logger.info(`❌ [${type.toUpperCase()}] Project sheet "${project.name}" not found, creating new one...`);
           // Create new sheet for project if it doesn't exist
           try {
-            logger.info(`🔧 [EXPENSE] Attempting to create sheet "${project.name}"...`);
+            logger.info(`🔧 [${type.toUpperCase()}] Attempting to create sheet "${project.name}"...`);
             const batchResult = await this.sheets.spreadsheets.batchUpdate({
               spreadsheetId: project.google_sheet_id,
               resource: {
@@ -273,16 +304,16 @@ class GoogleSheetsService {
                 }]
               }
             });
-            logger.info(`🔧 [EXPENSE] Sheet creation result:`, batchResult.status);
-            
+            logger.info(`🔧 [${type.toUpperCase()}] Sheet creation result:`, batchResult.status);
+
             // Add headers to the new sheet
-            logger.info(`🔧 [EXPENSE] Adding headers to new sheet "${project.name}"...`);
+            logger.info(`🔧 [${type.toUpperCase()}] Adding headers to new sheet "${project.name}"...`);
             await this.sheets.spreadsheets.values.update({
               spreadsheetId: project.google_sheet_id,
               range: `${project.name}!A1:G1`,
               valueInputOption: 'RAW',
               resource: {
-                values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Источник']]
+                values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип']]
               }
             });
             
@@ -303,7 +334,7 @@ class GoogleSheetsService {
         sheetName = project.name;
       }
 
-      logger.info(`📝 [EXPENSE] Adding expense to sheet "${sheetName}"`);
+      logger.info(`📝 [${type.toUpperCase()}] Adding ${type} to sheet "${sheetName}"`);
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: project.google_sheet_id,
         range: `${sheetName}!A:G`,
@@ -313,8 +344,13 @@ class GoogleSheetsService {
       });
 
       // Mark as synced
-      await expenseService.update(expense.id, { synced_to_sheets: true });
-      logger.info(`✅ Added expense to sheet "${sheetName}": ${expense.description} - ${expense.amount} ${expense.currency}`);
+      if (type === 'expense') {
+        await expenseService.update(transaction.id, { synced_to_sheets: true });
+      } else {
+        await incomeService.update(transaction.id, { synced_to_sheets: true });
+      }
+
+      logger.info(`✅ Added ${type} to sheet "${sheetName}": ${transaction.description} - ${amount} ${transaction.currency}`);
     } catch (error) {
       // Get project info for error logging (project might be undefined in catch scope)
       let projectInfo = 'unknown';
@@ -323,9 +359,9 @@ class GoogleSheetsService {
         projectInfo = proj?.google_sheet_id || 'unknown';
       } catch {}
       
-      logger.error('❌ Failed to add expense to sheet:', {
+      logger.error(`❌ Failed to add ${type} to sheet:`, {
         error: error.message,
-        expenseId: expense.id,
+        [`${type}Id`]: transaction.id,
         projectId: projectId,
         sheetId: projectInfo,
         sheetName: sheetName || 'unknown'
@@ -340,126 +376,12 @@ class GoogleSheetsService {
     }
   }
 
+  async addExpenseToSheet(expense, projectId) {
+    return this.addTransactionToSheet(expense, projectId, 'expense');
+  }
+
   async addIncomeToSheet(income, projectId) {
-    // Declare sheetName outside try block to access in catch
-    let sheetName = 'unknown';
-    
-    try {
-      if (!this.sheets) {
-        logger.debug('Google Sheets not available - skipping income sync');
-        return;
-      }
-
-      const project = await projectService.findById(projectId);
-      if (!project?.google_sheet_id) {
-        logger.debug('No Google Sheet ID for project:', projectId);
-        return;
-      }
-
-      const user = await userService.findById(income.user_id);
-      const authorName = user?.username || user?.first_name || 'Unknown';
-
-      const values = [[
-        this.formatDate(income.income_date),
-        income.description,
-        income.amount,
-        income.currency,
-        income.category,
-        authorName,
-        'bot'
-      ]];
-
-      // Use project name as sheet name, fallback to first sheet
-      sheetName = project.name;
-      try {
-        const spreadsheet = await this.sheets.spreadsheets.get({
-          spreadsheetId: project.google_sheet_id,
-          fields: 'sheets.properties.title'
-        });
-        
-        // Check if project sheet exists
-        const projectSheet = spreadsheet.data.sheets.find(
-          sheet => sheet.properties.title === project.name
-        );
-        
-        if (projectSheet) {
-          sheetName = project.name;
-        } else {
-          // Create new sheet for project if it doesn't exist
-          try {
-            await this.sheets.spreadsheets.batchUpdate({
-              spreadsheetId: project.google_sheet_id,
-              resource: {
-                requests: [{
-                  addSheet: {
-                    properties: {
-                      title: project.name
-                    }
-                  }
-                }]
-              }
-            });
-            
-            // Add headers to the new sheet
-            await this.sheets.spreadsheets.values.update({
-              spreadsheetId: project.google_sheet_id,
-              range: `${project.name}!A1:G1`,
-              valueInputOption: 'RAW',
-              resource: {
-                values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Источник']]
-              }
-            });
-            
-            sheetName = project.name;
-            logger.info(`✅ Created new sheet "${project.name}" in Google Sheets`);
-          } catch (createError) {
-            logger.warn('Could not create project sheet, using first sheet:', createError.message);
-            if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
-              sheetName = spreadsheet.data.sheets[0].properties.title;
-            }
-          }
-        }
-      } catch (error) {
-        logger.warn('Could not get sheet name, using project name:', error.message);
-        sheetName = project.name;
-      }
-
-      await this.sheets.spreadsheets.values.append({
-        spreadsheetId: project.google_sheet_id,
-        range: `${sheetName}!A:G`,
-        valueInputOption: 'RAW',
-        insertDataOption: 'INSERT_ROWS',
-        resource: { values }
-      });
-
-      // Mark as synced
-      await incomeService.update(income.id, { synced_to_sheets: true });
-      logger.info(`✅ Added income to sheet "${sheetName}": ${income.description} - ${income.amount} ${income.currency}`);
-    } catch (error) {
-      // Get project info for error logging (project might be undefined in catch scope)
-      let projectInfo = 'unknown';
-      try {
-        const proj = await projectService.findById(projectId);
-        projectInfo = proj?.google_sheet_id || 'unknown';
-      } catch {}
-      
-      logger.error('❌ Failed to add income to sheet:', {
-        error: error.message,
-        incomeId: income.id,
-        projectId: projectId,
-        sheetId: projectInfo,
-        sheetName: sheetName || 'unknown'
-      });
-      
-      // Helpful error message for common issues
-      if (error.message.includes('404')) {
-        logger.error('💡 Hint: Google Sheet not found. Check if sheet ID is correct and service account has access.');
-      } else if (error.message.includes('403')) {
-        logger.error('💡 Hint: Permission denied. Make sure exp-trck@ai-assistant-sheets.iam.gserviceaccount.com is added as Editor to the Google Sheet.');
-      }
-      
-      throw error; // Re-throw to be caught by caller
-    }
+    return this.addTransactionToSheet(income, projectId, 'income');
   }
 
   async syncFromGoogleSheets(userId, projectId) {
@@ -734,6 +656,51 @@ class GoogleSheetsService {
 
     } catch (error) {
       logger.error(`Failed to create worksheet "${sheetTitle}":`, error);
+      throw error;
+    }
+  }
+
+  async renameSheet(spreadsheetId, oldName, newName) {
+    try {
+      if (!this.auth) {
+        throw new Error('Google Sheets service not initialized');
+      }
+
+      // Get spreadsheet to find the sheet ID
+      const spreadsheet = await this.sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties'
+      });
+
+      // Find the sheet with the old name
+      const targetSheet = spreadsheet.data.sheets.find(
+        sheet => sheet.properties.title === oldName
+      );
+
+      if (!targetSheet) {
+        logger.warn(`Sheet "${oldName}" not found, skipping rename`);
+        return;
+      }
+
+      // Rename the sheet
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: {
+          requests: [{
+            updateSheetProperties: {
+              properties: {
+                sheetId: targetSheet.properties.sheetId,
+                title: newName
+              },
+              fields: 'title'
+            }
+          }]
+        }
+      });
+
+      logger.info(`Renamed Google Sheet from "${oldName}" to "${newName}"`);
+    } catch (error) {
+      logger.error(`Failed to rename sheet from "${oldName}" to "${newName}":`, error);
       throw error;
     }
   }

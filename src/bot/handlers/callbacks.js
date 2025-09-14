@@ -1,8 +1,11 @@
 const { userService, projectService, expenseService, customCategoryService, incomeService, supabase } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
-const { tempExpenses, tempIncomes } = require('./messages');
-const { 
-  getCategorySelectionKeyboard, 
+// Import temp storage from messages handler
+const messagesHandler = require('./messages');
+// Access temp storage
+const { tempExpenses, tempIncomes } = messagesHandler;
+const {
+  getCategorySelectionKeyboard,
   getIncomeCategorySelectionKeyboard,
   getIncomeProjectSelectionKeyboard,
   getIncomeConfirmationKeyboard,
@@ -12,7 +15,8 @@ const {
   getUpgradeKeyboard,
   getExportFormatKeyboard,
   getExportPeriodKeyboard,
-  getSettingsKeyboard
+  getSettingsKeyboard,
+  getCurrencySelectionKeyboard
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
@@ -24,6 +28,10 @@ async function handleCallback(callbackQuery) {
   const data = callbackQuery.data;
   const user = callbackQuery.user; // Should be set by withUserCallback middleware
   const bot = getBot();
+
+  // Debug logging
+  logger.info(`🔘 Callback received: ${data} from user ${user?.id}`);
+  logger.info(`🔘 DEBUG: Starting callback processing for: ${data}`);
 
   // Debug user data
   if (!user || !user.id) {
@@ -57,6 +65,12 @@ async function handleCallback(callbackQuery) {
       await handleEditAmount(chatId, messageId, data, user);
     } else if (data.startsWith('edit_description:')) {
       await handleEditDescription(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_currency:')) {
+      await handleEditCurrency(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_income_currency:')) {
+      await handleEditIncomeCurrency(chatId, messageId, data, user);
+    } else if (data.startsWith('set_currency:')) {
+      await handleSetCurrency(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project:')) {
       await handleEditProject(chatId, messageId, data, user);
     } else if (data.startsWith('set_project:')) {
@@ -85,28 +99,28 @@ async function handleCallback(callbackQuery) {
       await handleCancelExpense(chatId, messageId, data);
     } else if (data.startsWith('back_to_confirmation:')) {
       await handleBackToConfirmation(chatId, messageId, data, user);
-    } else if (data.startsWith('create_project')) {
-      await handleCreateProject(chatId, user);
-    } else if (data.startsWith('upgrade:')) {
-      await handleUpgradeAction(chatId, messageId, data);
-    } else if (data.startsWith('settings:')) {
-      await handleSettingsAction(chatId, messageId, data, user);
-    } else if (data.startsWith('switch_project:') || data.startsWith('activate_project:')) {
-      await handleSwitchProject(chatId, messageId, data, user);
-    } else if (data.startsWith('delete_project:')) {
-      await handleDeleteProject(chatId, messageId, data, user);
-    } else if (data.startsWith('edit_project_name:')) {
-      await handleEditProjectName(chatId, messageId, data, user);
-    } else if (data.startsWith('confirm_delete_project:')) {
-      await handleConfirmDeleteProject(chatId, messageId, data, user);
-    } else if (data === 'back_to_projects') {
-      await handleBackToProjects(chatId, messageId, user);
     } else if (data === 'create_project_existing_sheet') {
+      logger.info(`🔘 DEBUG: About to enter create_project_existing_sheet block`);
+      logger.info(`🔘 MATCH: create_project_existing_sheet - about to execute`);
       logger.info(`🔘 User ${user.id} clicked: create_project_existing_sheet`);
-      await handleCreateProjectWithExistingSheet(chatId, messageId, user);
+      logger.info(`🔘 About to call handleCreateProjectWithExistingSheet with chatId=${chatId}, messageId=${messageId}`);
+      try {
+        await handleCreateProjectWithExistingSheet(chatId, messageId, user);
+        logger.info(`🔘 handleCreateProjectWithExistingSheet completed successfully`);
+      } catch (error) {
+        logger.error(`🔘 Error in handleCreateProjectWithExistingSheet:`, error);
+        logger.error(`🔘 Error stack:`, error.stack);
+      }
     } else if (data === 'create_project_new_sheet') {
+      logger.info(`🔘 MATCH: create_project_new_sheet - about to execute`);
       logger.info(`🔘 User ${user.id} clicked: create_project_new_sheet`);
-      await handleCreateProjectWithNewSheet(chatId, messageId, user);
+      logger.info(`🔘 About to call handleCreateProjectWithNewSheet`);
+      try {
+        await handleCreateProjectWithNewSheet(chatId, messageId, user);
+        logger.info(`🔘 handleCreateProjectWithNewSheet completed`);
+      } catch (error) {
+        logger.error(`🔘 Error in handleCreateProjectWithNewSheet:`, error);
+      }
     } else if (data === 'cancel_project_creation') {
       logger.info(`🔘 User ${user.id} clicked: cancel_project_creation`);
       await handleCancelProjectCreation(chatId, messageId, user);
@@ -142,13 +156,43 @@ async function handleCallback(callbackQuery) {
       await handleConfirmClearData(chatId, messageId, user);
     } else if (data === 'cancel_clear_data') {
       await handleCancelClearData(chatId, messageId, user);
+    } else if (data.startsWith('sync_project:')) {
+      await handleSyncProject(chatId, messageId, data, user);
+    } else if (data === 'cancel_sync') {
+      await handleCancelSync(chatId, messageId);
+    } else if (data.startsWith('connect_sheet_to_project:')) {
+      await handleConnectSheetToProject(chatId, messageId, data, user);
+    } else if (data === 'cancel_connect_sheet') {
+      await handleCancelConnectSheet(chatId, messageId);
+    } else if (data.startsWith('select_project_for_connect:')) {
+      await handleSelectProjectForConnect(chatId, messageId, data, user);
+    } else if (data === 'cancel_connect') {
+      await handleCancelConnect(chatId, messageId);
     } else if (data === 'noop') {
       // Pagination placeholder - answer callback query to remove loading state
       await bot.answerCallbackQuery(callbackQuery.id, { text: '' });
       return;
+    } else if (data.startsWith('create_project')) {
+      await handleCreateProject(chatId, user);
+    } else if (data.startsWith('upgrade:')) {
+      await handleUpgradeAction(chatId, messageId, data);
+    } else if (data.startsWith('settings:')) {
+      await handleSettingsAction(chatId, messageId, data, user);
+    } else if (data.startsWith('switch_project:') || data.startsWith('activate_project:')) {
+      await handleSwitchProject(chatId, messageId, data, user);
+    } else if (data.startsWith('delete_project:')) {
+      await handleDeleteProject(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project_name:')) {
+      await handleEditProjectName(chatId, messageId, data, user);
+    } else if (data.startsWith('confirm_delete_project:')) {
+      await handleConfirmDeleteProject(chatId, messageId, data, user);
+    } else if (data === 'back_to_projects') {
+      await handleBackToProjects(chatId, messageId, user);
     } else {
       logger.warn('Unknown callback data:', data);
     }
+    
+    logger.info(`🔘 Callback handling completed for: ${data}`);
   } catch (error) {
     logger.error('Callback handling error:', error);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
@@ -168,9 +212,12 @@ async function handleSaveExpense(chatId, messageId, data, user) {
   }
 
   try {
+    // Create a copy without project_name (which is only for display, not database storage)
+    const { project_name, ...dbExpenseData } = expenseData;
+
     // Save expense to database
-    logger.info(`💾 Saving expense to database: ${expenseData.description} - ${expenseData.amount} ${expenseData.currency}`);
-    const savedExpense = await expenseService.create(expenseData);
+    logger.info(`💾 Saving expense to database: ${dbExpenseData.description} - ${dbExpenseData.amount} ${dbExpenseData.currency}`);
+    const savedExpense = await expenseService.create(dbExpenseData);
     logger.info(`✅ Expense saved with ID: ${savedExpense.id}`);
 
     // Try to add to Google Sheets (don't fail if this fails)
@@ -193,9 +240,7 @@ async function handleSaveExpense(chatId, messageId, data, user) {
 💰 ${expenseData.description}: -${expenseData.amount} ${expenseData.currency}
 📂 Категория: ${expenseData.category}
 📋 Проект: ${project.name}
-${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}
-
-📈 Посмотреть статистику: /stats`;
+${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}`;
 
     await bot.editMessageText(successText, {
       chat_id: chatId,
@@ -484,6 +529,9 @@ async function handleCancelExpense(chatId, messageId, data) {
   const tempId = data.split(':')[1];
   tempExpenses.delete(tempId);
 
+  // Clear any active states
+  stateManager.clearState(chatId);
+
   await bot.editMessageText('❌ Расход отменён.', {
     chat_id: chatId,
     message_id: messageId
@@ -549,7 +597,7 @@ async function handleCreateProject(chatId, user) {
         } else {
           // No existing sheets - just ask for name
           stateManager.clearState(chatId);
-          stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME, {});
+          stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_SIMPLE, {});
           
           await bot.sendMessage(chatId, 
             '📋 Создание нового проекта\n\nОтправьте название проекта:\n\n📝 Пример: "Отпуск в Турции" или "Рабочие расходы"'
@@ -732,15 +780,35 @@ async function handleSettingsAction(chatId, messageId, data, user) {
               message += `\n📊 Всего: ${categories.length}/50`;
             }
             
+            const keyboard = [];
+
+            // Add manage button if there are categories
+            if (categories.length > 0) {
+              keyboard.push([
+                { text: '📝 Управлять', callback_data: 'manage_categories' }
+              ]);
+            }
+
+            // Add back button
+            keyboard.push([
+              { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
+            ]);
+
             await bot.editMessageText(message, {
               chat_id: chatId,
-              message_id: messageId
+              message_id: messageId,
+              reply_markup: { inline_keyboard: keyboard }
             });
           } catch (error) {
             logger.error('Error loading categories:', error);
             await bot.editMessageText('❌ Ошибка загрузки категорий.', {
               chat_id: chatId,
-              message_id: messageId
+              message_id: messageId,
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
+                ]]
+              }
             });
           }
         }
@@ -931,7 +999,7 @@ async function handleSetCurrency(chatId, messageId, data, user) {
 • Голосом: "Потратил 200 рублей на кофе"
 • Текстом: "кофе 200р"
 
-📊 Для подключения Google таблицы используйте: /connect [ID_таблицы]`,
+📊 Для подключения Google таблицы используйте команду: /connect`,
       { reply_markup: getMainMenuKeyboard() }
     );
     
@@ -1541,10 +1609,13 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
   });
   
   try {
-    // Get user's expenses for the period
-    const expenses = await expenseService.getExpensesForExport(user.id, startDate, endDate);
-    
-    if (expenses.length === 0) {
+    // Get user's expenses and incomes for the period
+    const [expenses, incomes] = await Promise.all([
+      expenseService.getExpensesForExport(user.id, startDate, endDate),
+      incomeService.getIncomesForExport(user.id, startDate, endDate)
+    ]);
+
+    if (expenses.length === 0 && incomes.length === 0) {
       await bot.editMessageText('📊 Нет данных за выбранный период для экспорта.', {
         chat_id: chatId,
         message_id: messageId
@@ -1556,26 +1627,27 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
     
     if (format === 'csv') {
       // Generate CSV
-      const csvData = generateCSV(expenses);
+      const csvData = generateCSV(expenses, incomes);
       fileContent = Buffer.from(csvData, 'utf-8');
-      fileName = `expenses_${formatDate(startDate)}_${formatDate(endDate)}.csv`;
+      fileName = `transactions_${formatDate(startDate)}_${formatDate(endDate)}.csv`;
       mimeType = 'text/csv';
     } else {
       // Generate Excel - for now, use CSV format as placeholder
-      const csvData = generateCSV(expenses);
+      const csvData = generateCSV(expenses, incomes);
       fileContent = Buffer.from(csvData, 'utf-8');
-      fileName = `expenses_${formatDate(startDate)}_${formatDate(endDate)}.xlsx`;
+      fileName = `transactions_${formatDate(startDate)}_${formatDate(endDate)}.xlsx`;
       mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
     
     // Send file
-    await bot.sendDocument(chatId, fileContent, {
+    await bot.sendDocument(chatId, fileContent, {}, {
       filename: fileName,
       contentType: mimeType
     });
     
     // Update message
-    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${expenses.length} записей\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
+    const totalRecords = expenses.length + incomes.length;
+    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${totalRecords} записей (${expenses.length} расходов, ${incomes.length} доходов)\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
       chat_id: chatId,
       message_id: messageId
     });
@@ -1589,22 +1661,41 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
   }
 }
 
-function generateCSV(expenses) {
-  const headers = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Проект'];
+function generateCSV(expenses, incomes) {
+  const headers = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Проект', 'Тип'];
   const rows = [headers];
-  
+
+  // Add expenses (negative amounts)
   expenses.forEach(expense => {
     rows.push([
       expense.expense_date,
       expense.description,
-      expense.amount,
+      -Math.abs(expense.amount), // Negative for expenses
       expense.currency,
       expense.category,
-      expense.project_name || 'Без проекта'
+      expense.project_name || 'Без проекта',
+      'Расход'
     ]);
   });
-  
-  return rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+
+  // Add incomes (positive amounts)
+  incomes.forEach(income => {
+    rows.push([
+      income.income_date,
+      income.description,
+      Math.abs(income.amount), // Positive for incomes
+      income.currency,
+      income.category,
+      income.project_name || 'Без проекта',
+      'Доход'
+    ]);
+  });
+
+  // Sort by date (newest first)
+  const dataRows = rows.slice(1);
+  dataRows.sort((a, b) => new Date(b[0]) - new Date(a[0]));
+
+  return [headers, ...dataRows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
 }
 
 function formatDate(date) {
@@ -1738,8 +1829,11 @@ async function handleSaveIncome(chatId, messageId, data, user) {
   }
 
   try {
+    // Create a copy without project_name (which is only for display, not database storage)
+    const { project_name, ...dbIncomeData } = incomeData;
+
     // Save income to database
-    const savedIncome = await incomeService.create(incomeData);
+    const savedIncome = await incomeService.create(dbIncomeData);
 
     // Try to add to Google Sheets (don't fail if this fails)
     let sheetsSuccess = false;
@@ -1758,9 +1852,7 @@ async function handleSaveIncome(chatId, messageId, data, user) {
 💰 ${incomeData.description}: +${incomeData.amount} ${incomeData.currency}
 📂 Категория: ${incomeData.category}
 📋 Проект: ${project.name}
-${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}
-
-📈 Посмотреть статистику: /stats`;
+${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}`;
 
     await bot.editMessageText(successText, {
       chat_id: chatId,
@@ -1782,9 +1874,12 @@ ${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхр�
 async function handleCancelIncome(chatId, messageId, data) {
   const bot = getBot();
   const tempId = data.split(':')[1];
-  
+
   // Clean up temp data
   tempIncomes.delete(tempId);
+
+  // Clear any active states
+  stateManager.clearState(chatId);
 
   await bot.editMessageText('❌ Добавление дохода отменено.', {
     chat_id: chatId,
@@ -2292,17 +2387,23 @@ async function handleBackToProjects(chatId, messageId, user) {
 
 // Project creation handlers for different Google Sheets options
 async function handleCreateProjectWithExistingSheet(chatId, messageId, user) {
+  logger.info(`🚀 FUNCTION START: handleCreateProjectWithExistingSheet called!`);
+  logger.info(`🚀 Parameters: chatId=${chatId}, messageId=${messageId}, user=${user?.id}`);
+
   const bot = getBot();
-  
+
   try {
     logger.info(`📝 Starting handleCreateProjectWithExistingSheet for user ${user.id}`);
+    logger.info(`📝 ChatId: ${chatId}, MessageId: ${messageId}`);
     
     // Clear any existing state first
     stateManager.clearState(chatId);
+    logger.info(`🔧 Setting state for user ${user.id}: WAITING_PROJECT_NAME_EXISTING_SHEET`);
     stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_EXISTING_SHEET, { messageId });
+    logger.info(`🔧 State set successfully for user ${user.id}`);
     
     await bot.editMessageText(
-      '📋 Создание проекта с новым листом\n\n' +
+      '📋 Создание проекта с дополнительным листом\n\n' +
       '📊 Проект будет создан как новый лист в существующей Google таблице.\n\n' +
       '📝 Отправьте название проекта:\n\n' +
       '💡 Пример: "Отпуск в Турции" или "Рабочие расходы"',
@@ -2332,6 +2433,7 @@ async function handleCreateProjectWithNewSheet(chatId, messageId, user) {
   
   try {
     logger.info(`📝 Starting handleCreateProjectWithNewSheet for user ${user.id}`);
+    logger.info(`📝 ChatId: ${chatId}, MessageId: ${messageId}`);
     
     // Clear any existing state first
     stateManager.clearState(chatId);
@@ -2382,6 +2484,332 @@ async function handleCancelProjectCreation(chatId, messageId, user) {
   } catch (error) {
     logger.error('Error cancelling project creation:', error);
     await bot.editMessageText('❌ Ошибка отмены создания проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditCurrency(chatId, messageId, data, user) {
+  const bot = getBot();
+  const expenseId = data.split(':')[1];
+
+  try {
+    await bot.editMessageText(
+      '💱 Выберите валюту:',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: getCurrencySelectionKeyboard(expenseId, 'expense')
+      }
+    );
+  } catch (error) {
+    logger.error('Error handling edit currency:', error);
+  }
+}
+
+async function handleEditIncomeCurrency(chatId, messageId, data, user) {
+  const bot = getBot();
+  const incomeId = data.split(':')[1];
+
+  try {
+    await bot.editMessageText(
+      '💱 Выберите валюту:',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: getCurrencySelectionKeyboard(incomeId, 'income')
+      }
+    );
+  } catch (error) {
+    logger.error('Error handling edit income currency:', error);
+  }
+}
+
+async function handleSetCurrency(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, expenseId, currency, type] = data.split(':');
+
+  try {
+    if (type === 'income') {
+      const incomeData = tempIncomes.get(expenseId);
+      if (incomeData) {
+        incomeData.currency = currency;
+        tempIncomes.set(expenseId, incomeData);
+
+        await bot.editMessageText(
+          `💰 ${incomeData.description || 'Доход'}\n💵 Сумма: ${incomeData.amount} ${incomeData.currency}\n📁 Проект: ${incomeData.project_name || 'Не указан'}\n🗂 Категория: ${incomeData.category}\n\nЧто хотите изменить?`,
+          {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: getIncomeConfirmationKeyboard(expenseId, user.is_premium)
+          }
+        );
+      }
+    } else {
+      const expenseData = tempExpenses.get(expenseId);
+      if (expenseData) {
+        expenseData.currency = currency;
+        tempExpenses.set(expenseId, expenseData);
+
+        await bot.editMessageText(
+          `💸 ${expenseData.description || 'Расход'}\n💵 Сумма: ${expenseData.amount} ${expenseData.currency}\n📁 Проект: ${expenseData.project_name || 'Не указан'}\n🗂 Категория: ${expenseData.category}\n\nЧто хотите изменить?`,
+          {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: getExpenseConfirmationKeyboard(expenseId, user.is_premium)
+          }
+        );
+      }
+    }
+  } catch (error) {
+    logger.error('Error handling set currency:', error);
+  }
+}
+
+async function handleSyncProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    // Check sync limit for non-premium users
+    if (!user.is_premium) {
+      const syncLimit = 3;
+      if (user.daily_syncs_used >= syncLimit) {
+        await bot.editMessageText(
+          `📊 Лимит синхронизаций исчерпан (${syncLimit}/день)\n\n💎 Обновитесь до PRO для неограниченных синхронизаций`,
+          {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '❌ Закрыть', callback_data: 'cancel_sync' }
+              ]]
+            }
+          }
+        );
+        return;
+      }
+    }
+
+    // Get project info
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    if (!project.google_sheet_id) {
+      await bot.editMessageText('❌ Проект не подключен к Google Sheets', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Show loading message
+    await bot.editMessageText(
+      `🔄 Синхронизация проекта "${project.name}"...\n\nПодождите, загружаем данные из Google Sheets.`,
+      {
+        chat_id: chatId,
+        message_id: messageId
+      }
+    );
+
+    // Perform sync
+    const googleSheetsService = require('../../services/googleSheets');
+    const result = await googleSheetsService.syncFromGoogleSheets(user.id, projectId);
+
+    // Update daily sync counter for non-premium users
+    if (!user.is_premium) {
+      await userService.update(user.id, {
+        daily_syncs_used: (user.daily_syncs_used || 0) + 1
+      });
+    }
+
+    // Show result
+    let resultText = `✅ **Синхронизация завершена!**\n\n`;
+    resultText += `📋 Проект: ${project.name}\n`;
+    resultText += `📊 Загружено записей: ${result.imported}\n`;
+
+    if (result.errors && result.errors.length > 0) {
+      resultText += `⚠️ Ошибок: ${result.errors.length}\n\n`;
+      if (result.errors.length <= 3) {
+        resultText += `**Ошибки:**\n${result.errors.join('\n')}`;
+      } else {
+        resultText += `**Первые ошибки:**\n${result.errors.slice(0, 3).join('\n')}\n...и ещё ${result.errors.length - 3}`;
+      }
+    }
+
+    await bot.editMessageText(resultText, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Готово', callback_data: 'cancel_sync' }
+        ]]
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error in handleSyncProject:', error);
+    await bot.editMessageText(
+      `❌ **Ошибка синхронизации**\n\n${error.message || 'Неизвестная ошибка'}`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Закрыть', callback_data: 'cancel_sync' }
+          ]]
+        }
+      }
+    );
+  }
+}
+
+async function handleCancelSync(chatId, messageId) {
+  const bot = getBot();
+
+  try {
+    await bot.deleteMessage(chatId, messageId);
+  } catch (error) {
+    // If can't delete, just edit the message
+    await bot.editMessageText('❌ Синхронизация отменена', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleConnectSheetToProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const parts = data.split(':');
+  const projectId = parts[1];
+  const sheetId = parts[2];
+
+  try {
+    // Get project info
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Update project with Google Sheets ID
+    await projectService.update(projectId, {
+      google_sheet_id: sheetId
+    });
+
+    // Delete the selection message
+    try {
+      await bot.deleteMessage(chatId, messageId);
+    } catch (e) {
+      // Ignore if can't delete
+    }
+
+    // Clear state and handle connection
+    stateManager.clearState(chatId);
+
+    // Import the handleGoogleSheetsConnected function
+    const { handleGoogleSheetsConnected } = require('./messages');
+    await handleGoogleSheetsConnected(chatId, user.id, project, sheetId);
+
+  } catch (error) {
+    logger.error('Error connecting sheet to project:', error);
+    await bot.editMessageText(
+      '❌ Ошибка подключения таблицы к проекту',
+      {
+        chat_id: chatId,
+        message_id: messageId
+      }
+    );
+  }
+}
+
+async function handleCancelConnectSheet(chatId, messageId) {
+  const bot = getBot();
+
+  try {
+    stateManager.clearState(chatId);
+    await bot.deleteMessage(chatId, messageId);
+  } catch (error) {
+    // If can't delete, just edit the message
+    await bot.editMessageText('❌ Подключение отменено', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleSelectProjectForConnect(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    // Get project info
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Show instructions for this specific project
+    const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+    stateManager.setState(chatId, STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK, { selectedProjectId: projectId });
+
+    await bot.editMessageText(
+      `🔗 **Подключение к проекту "${project.name}"**\n\n` +
+      `**Пошаговая инструкция:**\n\n` +
+      `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
+      `2️⃣ Нажмите **"Настроить доступ"** → **"Предоставить доступ"**\n` +
+      `3️⃣ Добавьте email: **exp-trck@ai-assistant-sheets.iam.gserviceaccount.com**\n` +
+      `4️⃣ Установите права: **"Редактор"**\n` +
+      `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
+      `📝 **Пример ссылки:**\n` +
+      `https://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\n` +
+      `✨ Просто отправьте ссылку следующим сообщением!`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '❌ Отмена', callback_data: 'cancel_connect' }
+          ]]
+        }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleSelectProjectForConnect:', error);
+    await bot.editMessageText('❌ Ошибка при выборе проекта', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCancelConnect(chatId, messageId) {
+  const bot = getBot();
+
+  try {
+    stateManager.clearState(chatId);
+    await bot.deleteMessage(chatId, messageId);
+  } catch (error) {
+    // If can't delete, just edit the message
+    await bot.editMessageText('❌ Подключение отменено', {
       chat_id: chatId,
       message_id: messageId
     });

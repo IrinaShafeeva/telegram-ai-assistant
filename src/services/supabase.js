@@ -489,6 +489,18 @@ const expenseService = {
     return data;
   },
 
+  async update(id, updates) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
   async delete(id, userId) {
     const { data, error } = await supabase
       .from('expenses')
@@ -497,7 +509,7 @@ const expenseService = {
       .eq('user_id', userId)
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
   },

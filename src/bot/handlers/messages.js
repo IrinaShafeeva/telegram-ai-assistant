@@ -10,6 +10,24 @@ const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
+// Function to detect currency based on language and text content
+function detectCurrencyByLanguage(text, languageCode) {
+  const textLower = text.toLowerCase();
+
+  // Check for specific currency mentions in text
+  if (textLower.includes('руб') || textLower.includes('рубл')) return 'RUB';
+  if (textLower.includes('долл') || textLower.includes('usd') || textLower.includes('$')) return 'USD';
+  if (textLower.includes('евро') || textLower.includes('eur') || textLower.includes('€')) return 'EUR';
+
+  // Fallback to language-based detection
+  if (languageCode === 'ru' || !languageCode) return 'RUB';
+  if (languageCode === 'en') return 'USD';
+  if (languageCode === 'de' || languageCode === 'fr' || languageCode === 'es' || languageCode === 'it') return 'EUR';
+
+  // Default fallback
+  return 'USD';
+}
+
 // Store temporary expense data
 const tempExpenses = new Map();
 // Store temporary income data
@@ -27,9 +45,18 @@ async function handleText(msg) {
   try {
     // Check if user has active state
     const userState = stateManager.getState(chatId);
+    logger.info(`🔍 Checking user state for ${chatId}: ${userState ? userState.type : 'NO_STATE'}`);
     if (userState) {
-      await handleStateInput(msg, userState);
-      return;
+      // Special case: if user is editing project name but input looks like a transaction, clear state and process as transaction
+      if (userState.type === 'WAITING_PROJECT_NAME_EDIT' && /\d/.test(text)) {
+        logger.info(`🔄 User in project edit state but input "${text}" looks like transaction, clearing state`);
+        stateManager.clearState(chatId);
+        // Continue to transaction processing below
+      } else {
+        logger.info(`🎯 Found state: ${userState.type}, calling handleStateInput`);
+        await handleStateInput(msg, userState);
+        return;
+      }
     }
 
     // Handle currency selection during onboarding
@@ -39,18 +66,28 @@ async function handleText(msg) {
       return;
     }
 
-    // Handle main menu buttons
+    // Handle main menu buttons - clear any existing state first
     if (text === '📋 Проекты') {
+      stateManager.clearState(chatId);
       return require('./commands').handleProjects(msg);
     }
     if (text === '⚙️ Настройки') {
+      stateManager.clearState(chatId);
       return require('./commands').handleSettings(msg);
     }
     if (text === '💎 PRO план') {
+      stateManager.clearState(chatId);
       return require('./commands').handleUpgrade(msg);
     }
     if (text === 'ℹ️ Помощь') {
+      stateManager.clearState(chatId);
       return require('./commands').handleHelp(msg);
+    }
+
+    // Handle sync command
+    if (text.toLowerCase() === 'синк' || text.toLowerCase() === 'sync') {
+      await handleSyncCommand(msg);
+      return;
     }
 
     // Check if it's an analytics question
@@ -75,7 +112,7 @@ async function handleCurrencySelection(msg) {
 
   try {
     // Extract currency code  
-    let currency = user.primary_currency || 'RUB';
+    let currency = user.primary_currency || detectCurrencyByLanguage(text, user.language_code);
     for (const curr of SUPPORTED_CURRENCIES) {
       if (text.includes(curr)) {
         currency = curr;
@@ -116,7 +153,7 @@ async function createFirstProject(chatId, user, currency) {
 📊 Для подключения Google таблицы:
 
 1️⃣ Создайте таблицу в Google Sheets
-2️⃣ Используйте команду: /connect [ID_таблицы]
+2️⃣ Используйте команду: /connect
 
 ✨ Попробуйте добавить первую трату:
 • Голосом: "Потратил 200 рублей на кофе"
@@ -140,8 +177,21 @@ async function handleExpenseText(msg) {
 
   try {
     // Parse transaction first to determine if it's income or expense
-    await bot.sendMessage(chatId, '🤖 Обрабатываю вашу транзакцию...');
+    const processingMessage = await bot.sendMessage(chatId, '🤖 Обрабатываю вашу транзакцию...');
     const parsedTransaction = await openaiService.parseTransaction(text);
+
+    // Apply user's default currency if no currency was detected or if OpenAI defaulted to RUB but user has different preference
+    const originalCurrency = parsedTransaction.currency;
+    if (!parsedTransaction.currency || (parsedTransaction.currency === 'RUB' && user.primary_currency && user.primary_currency !== 'RUB')) {
+      if (user.primary_currency) {
+        parsedTransaction.currency = user.primary_currency;
+        logger.info(`💱 Using user default currency: ${parsedTransaction.currency} (was: ${originalCurrency || 'null'})`);
+      } else {
+        // Determine currency by language/text content
+        parsedTransaction.currency = detectCurrencyByLanguage(text, user.language_code);
+        logger.info(`💱 No currency detected, detected by language: ${parsedTransaction.currency}`);
+      }
+    }
 
     // For incomes, always use active project (no keyword detection)
     // For expenses, use AI project detection
@@ -178,10 +228,6 @@ async function handleExpenseText(msg) {
       return;
     }
 
-    // Use user's primary currency if not specified
-    if (!parsedTransaction.currency) {
-      parsedTransaction.currency = user.primary_currency;
-    }
 
     if (parsedTransaction.type === 'income') {
       // Handle income transaction
@@ -189,6 +235,7 @@ async function handleExpenseText(msg) {
       const incomeData = {
         user_id: user.id,
         project_id: activeProject.id,
+        project_name: activeProject.name,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
         category: parsedTransaction.category || 'Прочие доходы',
@@ -210,7 +257,9 @@ async function handleExpenseText(msg) {
 
 Всё верно?`;
 
-      await bot.sendMessage(chatId, confirmationText, {
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: processingMessage.message_id,
         reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
       });
 
@@ -225,6 +274,7 @@ async function handleExpenseText(msg) {
       const expenseData = {
         user_id: user.id,
         project_id: activeProject.id,
+        project_name: activeProject.name,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
         category: parsedTransaction.category || 'Прочее',
@@ -246,7 +296,9 @@ async function handleExpenseText(msg) {
 
 Всё верно?`;
 
-      await bot.sendMessage(chatId, confirmationText, {
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: processingMessage.message_id,
         reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
       });
 
@@ -327,6 +379,10 @@ async function handleStateInput(msg, userState) {
         
       case STATE_TYPES.WAITING_PROJECT_NAME:
         await handleProjectNameInput(msg, userState);
+        break;
+        
+      case STATE_TYPES.WAITING_PROJECT_NAME_SIMPLE:
+        await handleProjectNameInputSimple(msg, userState);
         break;
         
       case STATE_TYPES.WAITING_PROJECT_NAME_EDIT:
@@ -596,6 +652,51 @@ async function handleProjectNameInput(msg, userState) {
   }
 }
 
+// Handle simple project name input (without keywords)
+async function handleProjectNameInputSimple(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  
+  if (text.length < 2 || text.length > 50) {
+    await bot.sendMessage(chatId, '❌ Название проекта должно быть от 2 до 50 символов!');
+    return;
+  }
+  
+  try {
+    // Check if project name already exists for this user
+    const existingProjects = await projectService.findByUserId(user.id);
+    const nameExists = existingProjects.some(p => 
+      p.name.toLowerCase() === text.toLowerCase()
+    );
+    
+    if (nameExists) {
+      await bot.sendMessage(chatId, `❌ Проект "${text}" уже существует!`);
+      return;
+    }
+    
+    // Create project directly without keywords
+    const newProject = await projectService.create({
+      owner_id: user.id,
+      name: text,
+      description: `Проект "${text}" для отслеживания расходов`,
+      is_active: false
+    });
+
+    stateManager.clearState(chatId);
+    
+    await bot.sendMessage(chatId, 
+      `✅ Проект "${text}" создан!\n\n📋 Теперь можете добавлять расходы в этот проект.`
+    );
+    
+  } catch (error) {
+    logger.error('Error creating simple project:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка создания проекта. Попробуйте позже.');
+    stateManager.clearState(chatId);
+  }
+}
+
 // Handle project keywords input
 async function handleProjectKeywordsInput(msg, userState) {
   const chatId = msg.chat.id;
@@ -636,30 +737,8 @@ async function handleProjectKeywordsInput(msg, userState) {
       `\n🔍 Ключевые слова: ${keywords}\n\n✨ Теперь при упоминании этих слов расходы будут автоматически попадать в этот проект!` : 
       `\n📝 Без ключевых слов - расходы попадут в проект только при ручном переключении.`;
     
-    // Check if user has any Google Sheets connected and create worksheet automatically
-    let sheetText = '';
-    try {
-      const userProjects = await projectService.findByUserId(user.id);
-      const connectedProject = userProjects.find(p => p.google_sheet_id);
-      
-      if (connectedProject && connectedProject.google_sheet_id) {
-        const googleSheetsService = require('../../services/googleSheets');
-        await googleSheetsService.createWorksheet(connectedProject.google_sheet_id, projectName);
-        
-        // Update new project with same Google Sheets ID to share the spreadsheet
-        await projectService.update(newProject.id, {
-          google_sheet_id: connectedProject.google_sheet_id
-        });
-        
-        sheetText = `\n\n📊 Автоматически создан лист "${projectName}" в вашей Google таблице!`;
-      }
-    } catch (error) {
-      logger.error('Error creating worksheet for project:', error);
-      // Don't fail project creation if worksheet creation fails
-    }
-    
     await bot.sendMessage(chatId, 
-      `✅ Проект "${projectName}" создан!${keywordsText}${sheetText}\n\n📋 Переключитесь на него через /projects если хотите использовать.`
+      `✅ Проект "${projectName}" создан!${keywordsText}\n\n📋 Переключитесь на него через /projects если хотите использовать.`
     );
     
   } catch (error) {
@@ -691,48 +770,32 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
     }
     
     const sheetId = match[1];
-    
-    // Get user's active project
-    const projects = await projectService.findByUserId(user.id);
-    const activeProject = projects.find(p => p.is_active) || projects[0];
-    
-    if (!activeProject) {
-      await bot.sendMessage(chatId, '❌ Сначала создайте проект для подключения таблицы.');
+
+    // Get the selected project from state
+    const selectedProjectId = userState.data?.selectedProjectId;
+
+    if (!selectedProjectId) {
+      await bot.sendMessage(chatId, '❌ Проект не выбран. Попробуйте команду /connect еще раз.');
       stateManager.clearState(chatId);
       return;
     }
-    
+
+    // Get project info
+    const project = await projectService.findById(selectedProjectId);
+    if (!project) {
+      await bot.sendMessage(chatId, '❌ Выбранный проект не найден.');
+      stateManager.clearState(chatId);
+      return;
+    }
+
     // Update project with Google Sheets ID
-    await projectService.update(activeProject.id, {
+    await projectService.update(selectedProjectId, {
       google_sheet_id: sheetId
     });
-    
-    // Send processing message
-    const processingMsg = await bot.sendMessage(chatId, 
-      `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n⏳ Загружаю существующие расходы в таблицу...`
-    );
-    
-    // Sync all existing expenses to Google Sheets
-    try {
-      await syncExistingExpensesToSheets(user.id, activeProject.id, sheetId);
-      
-      await bot.editMessageText(
-        `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n📊 Все существующие расходы синхронизированы с таблицей.\n\n💡 Новые расходы будут автоматически добавляться в таблицу.`,
-        {
-          chat_id: chatId,
-          message_id: processingMsg.message_id
-        }
-      );
-    } catch (syncError) {
-      logger.error('Error syncing existing expenses:', syncError);
-      await bot.editMessageText(
-        `✅ Google таблица подключена к проекту "${activeProject.name}"!\n\n⚠️ Таблица подключена, но не удалось синхронизировать существующие данные.\n\n💡 Используйте "📊 Экспорт данных" в настройках для ручной синхронизации.`,
-        {
-          chat_id: chatId,
-          message_id: processingMsg.message_id
-        }
-      );
-    }
+
+    // Connect to the selected project
+    await handleGoogleSheetsConnected(chatId, user.id, project, sheetId);
+    stateManager.clearState(chatId);
     
   } catch (error) {
     logger.error('Error connecting Google Sheets:', error);
@@ -1089,37 +1152,32 @@ async function syncExistingExpensesToSheets(userId, projectId, sheetId) {
     logger.info(`Found ${expenses.length} expenses to sync`);
     
     // Setup the sheet with headers first
-    await googleSheetsService.setupSheet(sheetId);
-    
+    await googleSheetsService.ensureSheetStructure(sheetId);
+
     // Sync expenses in batches to avoid API limits
-    const BATCH_SIZE = 100;
+    const BATCH_SIZE = 20; // Reduced batch size for more reliable sync
     for (let i = 0; i < expenses.length; i += BATCH_SIZE) {
       const batch = expenses.slice(i, i + BATCH_SIZE);
-      
+
       logger.info(`Syncing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(expenses.length / BATCH_SIZE)}: ${batch.length} expenses`);
-      
+
       for (const expense of batch) {
         try {
-          await googleSheetsService.addExpense(sheetId, {
-            date: expense.expense_date,
-            description: expense.description,
-            amount: expense.amount,
-            currency: expense.currency,
-            category: expense.category
-          });
-          
+          // Use the existing addExpenseToSheet method with projectId
+          await googleSheetsService.addExpenseToSheet(expense, projectId);
+
           // Small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
+          await new Promise(resolve => setTimeout(resolve, 100));
+
         } catch (expenseError) {
           logger.error(`Failed to sync expense ${expense.id}:`, expenseError);
           // Continue with other expenses even if one fails
         }
       }
-      
+
       // Longer delay between batches
       if (i + BATCH_SIZE < expenses.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
     
@@ -1127,6 +1185,59 @@ async function syncExistingExpensesToSheets(userId, projectId, sheetId) {
     
   } catch (error) {
     logger.error('Error in syncExistingExpensesToSheets:', error);
+    throw error;
+  }
+}
+
+async function syncExistingIncomesToSheets(userId, projectId, sheetId) {
+  const { incomeService } = require('../../services/supabase');
+  const googleSheetsService = require('../../services/googleSheets');
+  const logger = require('../../utils/logger');
+
+  try {
+    logger.info(`Starting sync of existing incomes for user ${userId}, project ${projectId} to sheet ${sheetId}`);
+
+    // Get all incomes for this project
+    const incomes = await incomeService.findByProject(projectId, 1000, 0); // Get up to 1000 incomes
+
+    if (!incomes || incomes.length === 0) {
+      logger.info('No incomes to sync');
+      return;
+    }
+
+    logger.info(`Found ${incomes.length} incomes to sync`);
+
+    // Sync incomes in batches to avoid API limits
+    const BATCH_SIZE = 20; // Reduced batch size for more reliable sync
+    for (let i = 0; i < incomes.length; i += BATCH_SIZE) {
+      const batch = incomes.slice(i, i + BATCH_SIZE);
+
+      logger.info(`Syncing income batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(incomes.length / BATCH_SIZE)}: ${batch.length} incomes`);
+
+      for (const income of batch) {
+        try {
+          // Use the existing addIncomeToSheet method with projectId
+          await googleSheetsService.addIncomeToSheet(income, projectId);
+
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+        } catch (incomeError) {
+          logger.error(`Failed to sync income ${income.id}:`, incomeError);
+          // Continue with other incomes even if one fails
+        }
+      }
+
+      // Longer delay between batches
+      if (i + BATCH_SIZE < incomes.length) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    logger.info(`Successfully synced ${incomes.length} incomes to Google Sheets`);
+
+  } catch (error) {
+    logger.error('Error in syncExistingIncomesToSheets:', error);
     throw error;
   }
 }
@@ -1254,6 +1365,19 @@ async function handleProjectNameEditInput(msg, userState) {
 
     // Update project name
     const updatedProject = await projectService.update(projectId, { name: text });
+
+    // Update Google Sheets if connected
+    if (updatedProject.google_sheet_id) {
+      try {
+        const googleSheetsService = require('../../services/googleSheets');
+        await googleSheetsService.renameSheet(updatedProject.google_sheet_id, currentName, text);
+        logger.info(`Google Sheets renamed from "${currentName}" to "${text}"`);
+      } catch (error) {
+        logger.error('Failed to rename Google Sheet:', error);
+        // Continue anyway - project name is updated in database
+      }
+    }
+
     stateManager.clearState(chatId);
 
     // Try to delete the old message
@@ -1416,11 +1540,9 @@ async function handleProjectNameInputForNewSheet(msg, userState) {
       // Ignore if can't delete
     }
 
-    await bot.sendMessage(chatId, 
+    await bot.sendMessage(chatId,
       `✅ Проект "${text}" создан!\n\n` +
-      `📊 Для подключения отдельной Google таблицы используйте команду:\n` +
-      `/connect [ID_таблицы]\n\n` +
-      `💡 Или создайте новую таблицу в Google Sheets и подключите ее к проекту.`,
+      `📊 Для подключения Google таблицы используйте команду: /connect`,
       {
         reply_markup: {
           inline_keyboard: [[
@@ -1437,6 +1559,112 @@ async function handleProjectNameInputForNewSheet(msg, userState) {
   }
 }
 
+async function handleSyncCommand(msg) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (!user) {
+    await bot.sendMessage(chatId, '❌ Ошибка авторизации');
+    return;
+  }
+
+  try {
+    // Get user's projects
+    const projects = await projectService.findByUserId(user.id);
+
+    if (projects.length === 0) {
+      await bot.sendMessage(chatId, '📂 У вас нет проектов для синхронизации.\n\nИспользуйте команду 📋 Проекты для создания.');
+      return;
+    }
+
+    // Filter projects that have Google Sheets connected
+    const projectsWithSheets = projects.filter(p => p.google_sheet_id);
+
+    if (projectsWithSheets.length === 0) {
+      await bot.sendMessage(chatId,
+        '📊 Ни один проект не подключен к Google Sheets.\n\n' +
+        'Используйте команду /connect для подключения Google таблицы к проекту.'
+      );
+      return;
+    }
+
+    // Check daily sync limit for non-premium users
+    if (!user.is_premium) {
+      const syncLimit = 3; // Free users get 3 syncs per day
+      if (user.daily_syncs_used >= syncLimit) {
+        await bot.sendMessage(chatId,
+          `📊 Лимит синхронизаций исчерпан (${syncLimit}/день)\n\n💎 PRO план: неограниченные синхронизации`
+        );
+        return;
+      }
+    }
+
+    // Create keyboard with projects
+    const keyboard = projectsWithSheets.map(project => ([{
+      text: `📊 ${project.name}${project.is_active ? ' ✅' : ''}`,
+      callback_data: `sync_project:${project.id}`
+    }]));
+
+    keyboard.push([{
+      text: '❌ Отмена',
+      callback_data: 'cancel_sync'
+    }]);
+
+    await bot.sendMessage(chatId,
+      `📊 **Синхронизация с Google Sheets**\n\n` +
+      `Выберите проект для синхронизации:\n` +
+      `(данные будут загружены из Google таблицы в бот)\n\n` +
+      `💎 Лимит: ${user.is_premium ? '∞' : `${user.daily_syncs_used || 0}/3`}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleSyncCommand:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при загрузке проектов');
+  }
+}
+
+async function handleGoogleSheetsConnected(chatId, userId, project, sheetId) {
+  const bot = getBot();
+
+  try {
+    // Send processing message
+    const processingMsg = await bot.sendMessage(chatId,
+      `✅ Google таблица подключена к проекту "${project.name}"!\n\n⏳ Загружаю существующие транзакции в таблицу...`
+    );
+
+    // Sync all existing expenses and incomes to Google Sheets
+    try {
+      await syncExistingExpensesToSheets(userId, project.id, sheetId);
+      await syncExistingIncomesToSheets(userId, project.id, sheetId);
+
+      await bot.editMessageText(
+        `✅ Google таблица подключена к проекту "${project.name}"!\n\n📊 Все существующие расходы и доходы синхронизированы с таблицей.\n\n💡 Новые транзакции будут автоматически добавляться в таблицу.`,
+        {
+          chat_id: chatId,
+          message_id: processingMsg.message_id
+        }
+      );
+    } catch (syncError) {
+      logger.error('Error syncing existing transactions:', syncError);
+      await bot.editMessageText(
+        `✅ Google таблица подключена к проекту "${project.name}"!\n\n⚠️ Таблица подключена, но не удалось синхронизировать существующие данные.\n\n💡 Используйте "📊 Экспорт данных" в настройках для ручной синхронизации.`,
+        {
+          chat_id: chatId,
+          message_id: processingMsg.message_id
+        }
+      );
+    }
+  } catch (error) {
+    logger.error('Error in handleGoogleSheetsConnected:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при подключении таблицы.');
+  }
+}
+
 // Export temp expenses store for callback handlers
 module.exports = {
   handleText,
@@ -1444,5 +1672,6 @@ module.exports = {
   tempIncomes,
   handleCurrencySelection,
   createFirstProject,
-  handleExpenseText
+  handleExpenseText,
+  handleGoogleSheetsConnected
 };

@@ -5,7 +5,15 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "local": "NODE_ENV=development USE_WEBHOOK=false nodemon src/index.js",
+    "local:prod": "NODE_ENV=production USE_WEBHOOK=false node src/index.js",
+    "test:local": "node test-local.js",
+    "check:local": "node test-local.js && npm run local",
+    "setup:local": "cp local-test.env .env && echo 'Local environment file created. Please edit .env with your actual credentials.'",
+    "safe:test": "node test-bot-setup.js",
+    "mode:webhook": "node switch-mode.js webhook",
+    "mode:polling": "node switch-mode.js polling"
   },
   "keywords": [
     "telegram",

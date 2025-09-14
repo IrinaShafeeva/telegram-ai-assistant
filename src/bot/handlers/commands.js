@@ -4,6 +4,7 @@ const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply
 const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
 const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
+const { stateManager } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 
 // Command: /start
@@ -13,6 +14,9 @@ async function handleStart(msg, match) {
   const bot = getBot();
 
   try {
+    // Clear any active states when command is called
+    stateManager.clearState(chatId);
+
     if (!user) {
       return bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
     }
@@ -20,7 +24,7 @@ async function handleStart(msg, match) {
     // Check if user needs currency setup
     if (!user.primary_currency || user.primary_currency === 'USD') {
       await bot.sendMessage(chatId, 
-        `🏦 Добро пожаловать в Expense Tracker!
+        `🏦 Добро пожаловать в Loomiq!
 
 Я помогу вам легко отслеживать расходы:
 • 🎤 Отправляйте голосовые сообщения  
@@ -75,7 +79,7 @@ async function handleStart(msg, match) {
 • Голосом: "Потратил 200 рублей на кофе"
 • Текстом: "кофе 200р"
 
-📊 Для подключения Google таблицы используйте: /connect [ID_таблицы]`,
+📊 Для подключения Google таблицы используйте команду: /connect`,
         { reply_markup: getMainMenuKeyboard() }
       );
     } else {
@@ -83,7 +87,7 @@ async function handleStart(msg, match) {
       await bot.sendMessage(chatId, 
         `👋 С возвращением, ${user.first_name || 'друг'}!
 
-🏦 Expense Tracker готов к работе.
+🏦 Loomiq готов к работе.
 
 Отправьте голосовое сообщение или напишите трату текстом, например:
 • "кофе 200 рублей"
@@ -105,29 +109,34 @@ async function handleHelp(msg, match) {
   
   const helpText = `🏦 Expense Tracker - Справка
 
-📝 Как добавить расход:
+📝 Как добавить транзакцию:
 • Голосовое: "Потратил 500 рублей на продукты"
-• Текстом: "кофе 200р" или "15$ такси"
+• Текстом: "кофе 200р" или "зарплата 50000₽"
+• Поддержка расходов и доходов
 
-🎯 Команды:
-/start - Запуск бота
-/projects - Управление проектами (создание для PRO)  
+📱 Основные функции:
+• 📋 Проекты - создание и управление проектами для группировки транзакций
+• ⚙️ Настройки - изменение валюты, экспорт данных, управление категориями
+• 📊 Экспорт данных - выгрузка всех транзакций в CSV/Excel файлы
+• 🔄 Синхронизация с Google Sheets - автоматическая запись в таблицы
+
+🎯 Команды (через меню):
 /connect - Подключить Google таблицу
 /sync - Синхронизация с Google Sheets
-/settings - Настройки
 /categories - Свои категории (PRO)
 /upgrade - Информация о PRO плане
 
 🤖 AI аналитика (просто пишите вопросы):
 • "Сколько потратил на еду в августе?"
 • "На что больше всего трачу?"
-• "Сравни этот месяц с прошлым"
+• "Покажи баланс за месяц"
+• "Сравни расходы по месяцам"
 
-💡 Что изменилось:
-• 📊 Статистика заменена на умный AI анализ
-• 📋 Проекты только для PRO пользователей
-• 📂 Кастомные категории с эмодзи (PRO)
-• 🎯 Упрощенный интерфейс
+💎 PRO возможности:
+• 📂 Кастомные категории с эмодзи
+• 📋 Неограниченное количество проектов
+• 🎯 Ключевые слова для автоопределения проектов
+• 📊 Расширенная аналитика
 
 ❓ Проблемы? Напишите @support_bot`;
 
@@ -141,6 +150,8 @@ async function handleProjects(msg, match) {
   const bot = getBot();
 
   try {
+    // Clear any active states when command is called
+    stateManager.clearState(chatId);
     const projects = await projectService.findByUserId(user.id);
     
     if (projects.length === 0) {
@@ -173,9 +184,8 @@ async function handleProjects(msg, match) {
         expenseCount = '?';
       }
       
-      message += `📁 **${project.name}** ${status}\n`;
-      message += `   💰 Расходов: ${expenseCount}\n`;
-      message += `   ${isOwner ? '👑 Владелец' : '👤 Участник'}\n`;
+      message += `📁 ${project.name} ${status}\n`;
+      message += `   💰 Транзакций: ${expenseCount}\n`;
       if (project.keywords) {
         message += `   🔍 Ключевые слова: ${project.keywords}\n`;
       }
@@ -202,6 +212,8 @@ async function handleSync(msg, match) {
   const bot = getBot();
 
   try {
+    // Clear any active states when command is called
+    stateManager.clearState(chatId);
     // Check sync limits
     const canSync = await userService.checkDailyLimits(user.id, 'sync');
     if (!canSync) {
@@ -256,6 +268,9 @@ async function handleSettings(msg, match) {
   const chatId = msg.chat.id;
   const user = msg.user;
   const bot = getBot();
+
+  // Clear any active states when command is called
+  stateManager.clearState(chatId);
 
   const settingsText = `⚙️ Настройки
 
@@ -454,23 +469,39 @@ async function handleConnect(msg, match) {
   const bot = getBot();
 
   try {
-    // If no spreadsheet ID provided, ask for link with instructions
+    // Clear any active states when command is called
+    stateManager.clearState(chatId);
+
+    // If no spreadsheet ID provided, show project selection first
     if (!spreadsheetId) {
-      const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
-      stateManager.setState(chatId, STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK);
-      
+      const { projectService } = require('../../services/supabase');
+
+      // Get user's projects
+      const projects = await projectService.findByUserId(user.id);
+
+      if (projects.length === 0) {
+        await bot.sendMessage(chatId, '❌ Сначала создайте проект для подключения таблицы.\n\nИспользуйте команду 📋 Проекты для создания.');
+        return;
+      }
+
+      // Show project selection menu
+      const keyboard = projects.map(project => ([{
+        text: `📁 ${project.name}${project.is_active ? ' ✅' : ''}`,
+        callback_data: `select_project_for_connect:${project.id}`
+      }]));
+
+      keyboard.push([{
+        text: '❌ Отмена',
+        callback_data: 'cancel_connect'
+      }]);
+
       await bot.sendMessage(chatId,
         `🔗 **Подключение Google Sheets**\n\n` +
-        `**Пошаговая инструкция:**\n\n` +
-        `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
-        `2️⃣ Нажмите **"Настроить доступ"** → **"Предоставить доступ"**\n` +
-        `3️⃣ Добавьте email: **exp-trck@ai-assistant-sheets.iam.gserviceaccount.com**\n` +
-        `4️⃣ Установите права: **"Редактор"**\n` +
-        `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
-        `📝 **Пример ссылки:**\n` +
-        `https://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\n` +
-        `✨ Просто отправьте такую ссылку следующим сообщением!`,
-        { parse_mode: 'Markdown' }
+        `📋 Выберите проект для подключения таблицы:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        }
       );
       return;
     }

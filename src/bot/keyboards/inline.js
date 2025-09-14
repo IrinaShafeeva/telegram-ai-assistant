@@ -3,23 +3,25 @@ const { DEFAULT_CATEGORIES, INCOME_CATEGORIES } = require('../../config/constant
 function getExpenseConfirmationKeyboard(expenseId, isPremium = false) {
   const keyboard = [
     [
-      { text: '✅ Сохранить', callback_data: `save_expense:${expenseId}` },
       { text: '✏️ Категория', callback_data: `edit_category:${expenseId}` }
-    ],
-    [
-      { text: '💰 Сумма', callback_data: `edit_amount:${expenseId}` },
-      { text: '📝 Описание', callback_data: `edit_description:${expenseId}` }
     ]
   ];
 
-  // Add project editing only for PRO users
+  // Add project editing for PRO users on the same row as category
   if (isPremium) {
-    keyboard.push([
-      { text: '📋 Проект', callback_data: `edit_project:${expenseId}` }
-    ]);
+    keyboard[0].push({ text: '📋 Проект', callback_data: `edit_project:${expenseId}` });
   }
 
+  // Add amount, currency, description row
   keyboard.push([
+    { text: '💰 Сумма', callback_data: `edit_amount:${expenseId}` },
+    { text: '💱 Валюта', callback_data: `edit_currency:${expenseId}` },
+    { text: '📝 Описание', callback_data: `edit_description:${expenseId}` }
+  ]);
+
+  // Save and Cancel buttons at the bottom
+  keyboard.push([
+    { text: '✅ Сохранить', callback_data: `save_expense:${expenseId}` },
     { text: '❌ Отменить', callback_data: `cancel_expense:${expenseId}` }
   ]);
 
@@ -29,23 +31,25 @@ function getExpenseConfirmationKeyboard(expenseId, isPremium = false) {
 function getIncomeConfirmationKeyboard(incomeId, isPremium = false) {
   const keyboard = [
     [
-      { text: '✅ Сохранить', callback_data: `save_income:${incomeId}` },
       { text: '✏️ Категория', callback_data: `edit_income_category:${incomeId}` }
-    ],
-    [
-      { text: '💰 Сумма', callback_data: `edit_income_amount:${incomeId}` },
-      { text: '📝 Описание', callback_data: `edit_income_description:${incomeId}` }
     ]
   ];
 
-  // Add project editing only for PRO users
+  // Add project editing for PRO users on the same row as category
   if (isPremium) {
-    keyboard.push([
-      { text: '📋 Проект', callback_data: `edit_income_project:${incomeId}` }
-    ]);
+    keyboard[0].push({ text: '📋 Проект', callback_data: `edit_income_project:${incomeId}` });
   }
 
+  // Add amount, currency, description row
   keyboard.push([
+    { text: '💰 Сумма', callback_data: `edit_income_amount:${incomeId}` },
+    { text: '💱 Валюта', callback_data: `edit_income_currency:${incomeId}` },
+    { text: '📝 Описание', callback_data: `edit_income_description:${incomeId}` }
+  ]);
+
+  // Save and Cancel buttons at the bottom
+  keyboard.push([
+    { text: '✅ Сохранить', callback_data: `save_income:${incomeId}` },
     { text: '❌ Отменить', callback_data: `cancel_income:${incomeId}` }
   ]);
 
@@ -176,7 +180,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
     projects.forEach(project => {
       // Project name row
       keyboard.push([{ 
-        text: `📁 ${project.name}${project.is_active ? ' ▶️' : ''}`, 
+        text: `📁 ${project.name}${project.is_active ? ' ✅' : ''}`, 
         callback_data: `project_info:${project.id}` 
       }]);
       
@@ -204,11 +208,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
       }
       
       keyboard.push(actionRow);
-      keyboard.push([{ text: '──────────', callback_data: 'noop' }]); // Separator
     });
-    
-    // Remove last separator
-    if (keyboard.length > 0) keyboard.pop();
     
   } else {
     // Simple switch interface
@@ -344,6 +344,31 @@ function getExportPeriodKeyboard(format) {
   };
 }
 
+function getCurrencySelectionKeyboard(expenseId, type = 'expense') {
+  const currencies = [
+    { symbol: '₽', code: 'RUB', name: 'Рубли' },
+    { symbol: '$', code: 'USD', name: 'Доллары' },
+    { symbol: '€', code: 'EUR', name: 'Евро' }
+  ];
+
+  const keyboard = [];
+
+  currencies.forEach(currency => {
+    keyboard.push([{
+      text: `${currency.symbol} ${currency.name} (${currency.code})`,
+      callback_data: `set_currency:${expenseId}:${currency.code}:${type}`
+    }]);
+  });
+
+  // Add back button
+  keyboard.push([{
+    text: '⬅️ Назад',
+    callback_data: type === 'income' ? `back_to_income_confirmation:${expenseId}` : `back_to_confirmation:${expenseId}`
+  }]);
+
+  return { inline_keyboard: keyboard };
+}
+
 module.exports = {
   getExpenseConfirmationKeyboard,
   getIncomeConfirmationKeyboard,
@@ -358,5 +383,6 @@ module.exports = {
   getConfirmationKeyboard,
   getPaginationKeyboard,
   getExportFormatKeyboard,
-  getExportPeriodKeyboard
+  getExportPeriodKeyboard,
+  getCurrencySelectionKeyboard
 };

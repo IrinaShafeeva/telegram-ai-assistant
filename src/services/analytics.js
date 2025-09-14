@@ -384,7 +384,7 @@ class AnalyticsService {
       const analytics = await this.getExpenseAnalytics(userId, period);
       
       if (analytics.totalExpenses === 0) {
-        return `📊 Отчёт за ${analytics.periodName.toLowerCase()}\n\n❌ Расходов не найдено`;
+        return `📊 Отчёт за ${analytics.periodName.toLowerCase()}\n\n❌ Транзакций не найдено`;
       }
 
       let report = `📊 Отчёт за ${analytics.periodName.toLowerCase()}\n\n`;
