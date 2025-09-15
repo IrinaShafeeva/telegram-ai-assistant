@@ -436,6 +436,10 @@ async function handleStateInput(msg, userState) {
       case STATE_TYPES.WAITING_PROJECT_NAME_EDIT:
         await handleProjectNameEditInput(msg, userState);
         break;
+
+      case STATE_TYPES.WAITING_PROJECT_KEYWORDS_EDIT:
+        await handleProjectKeywordsEditInput(msg, userState);
+        break;
         
       case STATE_TYPES.WAITING_PROJECT_NAME_EXISTING_SHEET:
         await handleProjectNameInputForExistingSheet(msg, userState);
@@ -1462,6 +1466,58 @@ async function handleProjectNameEditInput(msg, userState) {
     stateManager.clearState(chatId);
     await bot.sendMessage(chatId, '❌ Ошибка при обновлении названия проекта.');
   }
+}
+
+// Handle project keywords edit input
+async function handleProjectKeywordsEditInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { projectId } = userState.data;
+
+  logger.info(`🔧 Processing project keywords edit: "${text}" for projectId: ${projectId}`);
+
+  try {
+    let keywords = null;
+
+    if (text !== '-' && text.length > 0) {
+      // Validate keywords (allow letters, spaces, commas, and common punctuation)
+      if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        return;
+      }
+
+      keywords = text;
+    }
+
+    // Update project with new keywords
+    const updatedProject = await projectService.update(projectId, { keywords });
+
+    const keywordsText = keywords ? `🔍 Новые ключевые слова: \`${keywords}\`` : '🔍 Ключевые слова удалены';
+
+    await bot.sendMessage(chatId, `✅ Ключевые слова проекта обновлены!
+
+📁 **${updatedProject.name}**
+${keywordsText}
+
+Теперь AI будет использовать эти ключевые слова для автоматического определения транзакций в этот проект.`, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Назад к проекту', callback_data: `edit_project:${projectId}` }],
+          [{ text: '📋 К управлению проектами', callback_data: 'back_to_projects' }]
+        ]
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error updating project keywords:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка обновления ключевых слов. Попробуйте позже.');
+  }
+
+  // Clear state
+  stateManager.clearState(chatId);
 }
 
 // Handle project name input for existing sheet option

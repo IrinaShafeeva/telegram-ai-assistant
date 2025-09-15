@@ -189,8 +189,12 @@ async function handleCallback(callbackQuery) {
       await handleSwitchProject(chatId, messageId, data, user);
     } else if (data.startsWith('delete_project:')) {
       await handleDeleteProject(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project:')) {
+      await handleEditProject(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project_name:')) {
       await handleEditProjectName(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project_keywords:')) {
+      await handleEditProjectKeywords(chatId, messageId, data, user);
     } else if (data.startsWith('confirm_delete_project:')) {
       await handleConfirmDeleteProject(chatId, messageId, data, user);
     } else if (data === 'back_to_projects') {
@@ -2394,6 +2398,119 @@ async function handleConfirmDeleteProject(chatId, messageId, data, user) {
         ]]
       }
     });
+  }
+}
+
+async function handleEditProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check ownership
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Вы можете редактировать только свои проекты.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Show keywords if they exist
+    const keywordsText = project.keywords
+      ? `🔍 Ключевые слова: \`${project.keywords}\``
+      : '🔍 Ключевые слова: _не заданы_';
+
+    const message = `✏️ Редактирование проекта
+
+📁 **${project.name}**
+${keywordsText}
+
+Выберите что редактировать:`;
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✏️ Изменить название', callback_data: `edit_project_name:${projectId}` }],
+          [{ text: '🔍 Изменить ключевые слова', callback_data: `edit_project_keywords:${projectId}` }],
+          [{ text: '🔙 Назад к проектам', callback_data: 'back_to_projects' }]
+        ]
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error in handleEditProject:', error);
+    await bot.editMessageText('❌ Ошибка при загрузке проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditProjectKeywords(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check ownership
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Вы можете редактировать только свои проекты.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_KEYWORDS_EDIT, {
+      projectId,
+      currentKeywords: project.keywords
+    });
+
+    const currentKeywords = project.keywords ? `\`${project.keywords}\`` : '_не заданы_';
+
+    await bot.sendMessage(chatId, `🔍 Изменение ключевых слов проекта
+
+📁 **${project.name}**
+Текущие ключевые слова: ${currentKeywords}
+
+📝 Отправьте новые ключевые слова через запятую:
+
+💡 Примеры:
+• отпуск, отдых, путешествие, гостиница
+• магазин, продукты, еда, супермаркет
+• кафе, ресторан, обед, ужин
+
+Отправьте **-** чтобы удалить ключевые слова`, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❌ Отмена', callback_data: `edit_project:${projectId}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    logger.error('Error in handleEditProjectKeywords:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при загрузке проекта.');
   }
 }
 
