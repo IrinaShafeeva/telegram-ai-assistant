@@ -127,8 +127,7 @@ async function handleProjects(msg, match) {
     
     for (const project of projects) {
       const isOwner = project.owner_id === user.id;
-      const status = project.is_active ? '▶️ Активный' : '⏸️ Неактивный';
-      
+
       // Get expense count for this project
       let expenseCount = 0;
       try {
@@ -138,8 +137,8 @@ async function handleProjects(msg, match) {
         logger.warn('Could not get expense count for project:', project.id);
         expenseCount = '?';
       }
-      
-      message += `📁 ${project.name} ${status}\n`;
+
+      message += `📁 ${project.name}\n`;
       message += `   💰 Транзакций: ${expenseCount}\n`;
       if (project.keywords) {
         message += `   🔍 Ключевые слова: ${project.keywords}\n`;
