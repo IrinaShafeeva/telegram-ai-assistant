@@ -13,28 +13,27 @@ async function handleVoice(msg) {
   const voice = msg.voice;
   const bot = getBot();
 
-  try {
-    // Get user's active project
-    const projects = await projectService.findByUserId(user.id);
-    const activeProject = projects.find(p => p.is_active) || projects[0];
+  // Get user's active project
+  const projects = await projectService.findByUserId(user.id);
+  const activeProject = projects.find(p => p.is_active) || projects[0];
 
-    if (!activeProject) {
-      await bot.sendMessage(chatId, 
-        '📋 Сначала создайте проект для отслеживания расходов.',
-        {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '➕ Создать проект', callback_data: 'create_project' }
-            ]]
-          }
+  if (!activeProject) {
+    await bot.sendMessage(chatId,
+      '📋 Сначала создайте проект для отслеживания расходов.',
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '➕ Создать проект', callback_data: 'create_project' }
+          ]]
         }
-      );
-      return;
-    }
+      }
+    );
+    return;
+  }
 
-    let processingMessage = null;
+  let processingMessage = null;
 
-    try {
+  try {
       processingMessage = await bot.sendMessage(chatId, '🎤 Обрабатываю голосовое сообщение...');
 
     // Download voice file
