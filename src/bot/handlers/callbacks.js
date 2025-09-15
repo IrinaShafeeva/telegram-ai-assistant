@@ -781,10 +781,15 @@ async function handleSettingsAction(chatId, messageId, data, user) {
             
             const keyboard = [];
 
-            // Add manage button if there are categories
+            // Add manage/create button
             if (categories.length > 0) {
               keyboard.push([
                 { text: '📝 Управлять', callback_data: 'manage_categories' }
+              ]);
+            } else {
+              // If no categories, show create button
+              keyboard.push([
+                { text: '➕ Создать категорию', callback_data: 'add_custom_category' }
               ]);
             }
 

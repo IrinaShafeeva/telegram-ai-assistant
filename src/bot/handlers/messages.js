@@ -2,6 +2,7 @@ const { userService, projectService, expenseService, customCategoryService, inco
 const openaiService = require('../../services/openai');
 const googleSheetsService = require('../../services/googleSheets');
 const analyticsService = require('../../services/analytics');
+const userContextService = require('../../services/userContext');
 const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
@@ -176,9 +177,12 @@ async function handleExpenseText(msg) {
   const bot = getBot();
 
   try {
+    // Get user context for AI (custom categories and projects with keywords)
+    const userContext = await userContextService.getUserContext(user.id);
+
     // Parse transaction first to determine if it's income or expense
     const processingMessage = await bot.sendMessage(chatId, '🤖 Обрабатываю вашу транзакцию...');
-    const parsedTransaction = await openaiService.parseTransaction(text);
+    const parsedTransaction = await openaiService.parseTransaction(text, userContext);
 
     // Apply user's default currency if no currency was detected or if OpenAI defaulted to RUB but user has different preference
     const originalCurrency = parsedTransaction.currency;
@@ -193,25 +197,27 @@ async function handleExpenseText(msg) {
       }
     }
 
-    // For incomes, always use active project (no keyword detection)
-    // For expenses, use AI project detection
-    let activeProject;
-    if (parsedTransaction.type === 'income') {
+    // Determine target project: use AI suggested project or fallback logic
+    let activeProject = null;
+
+    // First try to use AI-suggested project
+    if (parsedTransaction.project) {
+      logger.info(`🤖 AI suggested project: "${parsedTransaction.project}"`);
       const projects = await projectService.findByUserId(user.id);
-      logger.info(`💰 Income detected, available projects: ${projects.map(p => `${p.name}(${p.is_active ? 'active' : 'inactive'})`).join(', ')}`);
-      activeProject = projects.find(p => p.is_active) || projects[0];
-      logger.info(`💰 Selected project for income: ${activeProject?.name}`);
-    } else {
-      try {
-        logger.info(`🤖 AI analyzing text for project: "${text}"`);
-        activeProject = await projectService.findProjectByKeywords(user.id, text);
-        logger.info(`🎯 AI selected project: ${activeProject?.name || 'none'} (ID: ${activeProject?.id})`);
-      } catch (error) {
-        logger.warn('AI project detection failed, using active project:', error.message);
-        const projects = await projectService.findByUserId(user.id);
-        activeProject = projects.find(p => p.is_active) || projects[0];
-        logger.info(`📋 Fallback to active project: ${activeProject?.name}`);
+      activeProject = projects.find(p => p.name === parsedTransaction.project);
+
+      if (activeProject) {
+        logger.info(`✅ Found AI-suggested project: ${activeProject.name} (ID: ${activeProject.id})`);
+      } else {
+        logger.warn(`⚠️ AI-suggested project "${parsedTransaction.project}" not found`);
       }
+    }
+
+    // Fallback: use active project or first available
+    if (!activeProject) {
+      const projects = await projectService.findByUserId(user.id);
+      activeProject = projects.find(p => p.is_active) || projects[0];
+      logger.info(`📋 Using fallback project: ${activeProject?.name} (active: ${activeProject?.is_active})`);
     }
 
     if (!activeProject) {
@@ -412,7 +418,11 @@ async function handleStateInput(msg, userState) {
       case STATE_TYPES.WAITING_CATEGORY_EMOJI:
         await handleCategoryEmojiInput(msg, userState);
         break;
-        
+
+      case STATE_TYPES.WAITING_CATEGORY_KEYWORDS:
+        await handleCategoryKeywordsInput(msg, userState);
+        break;
+
       case STATE_TYPES.WAITING_CATEGORY_NAME_EDIT:
         await handleCategoryNameEditInput(msg, userState);
         break;
@@ -891,24 +901,25 @@ async function handleCategoryEmojiInput(msg, userState) {
   }
 
   try {
-    // Create category with emoji
-    const category = await customCategoryService.create({
-      user_id: user.id,
-      name: categoryName,
-      emoji: text
+    // Ask for keywords instead of creating immediately
+    stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_KEYWORDS, {
+      categoryName,
+      emoji: text,
+      messageId
     });
 
-    await bot.editMessageText(`✅ Категория создана!
+    await bot.editMessageText(`🔍 Ключевые слова для категории
 
 ${text} **${categoryName}**
 
-Теперь эта категория доступна при записи расходов.`, {
+Укажите ключевые слова через запятую, чтобы я автоматически определял траты в эту категорию:
+
+💡 Например: "кафе, ресторан, пицца, еда" или "автобус, такси, метро"
+
+✅ Если не нужны ключевые слова, отправьте "-"`, {
       chat_id: chatId,
       message_id: messageId,
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]]
-      }
+      parse_mode: 'Markdown'
     });
   } catch (error) {
     logger.error('Error creating category with emoji:', error);
@@ -1663,6 +1674,69 @@ async function handleGoogleSheetsConnected(chatId, userId, project, sheetId) {
     logger.error('Error in handleGoogleSheetsConnected:', error);
     await bot.sendMessage(chatId, '❌ Ошибка при подключении таблицы.');
   }
+}
+
+// Handle category keywords input
+async function handleCategoryKeywordsInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { categoryName, emoji, messageId } = userState.data;
+
+  try {
+    let keywords = null;
+
+    if (text !== '-' && text.length > 0) {
+      // Validate keywords (allow letters, spaces, commas, and common punctuation)
+      if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        return;
+      }
+
+      keywords = text;
+    }
+
+    // Create category with keywords
+    const categoryData = {
+      user_id: user.id,
+      name: categoryName,
+      emoji: emoji
+    };
+
+    // Add keywords only if provided and DB supports it
+    if (keywords) {
+      categoryData.keywords = keywords;
+    }
+
+    const newCategory = await customCategoryService.create(categoryData);
+
+    const keywordsText = keywords ?
+      `\n🔍 Ключевые слова: ${keywords}\n\n✨ Теперь при упоминании этих слов расходы будут автоматически попадать в эту категорию!` :
+      `\n📝 Без ключевых слов - будет работать по названию "${categoryName}".`;
+
+    await bot.editMessageText(
+      `✅ Категория создана!
+
+${emoji} **${categoryName}**${keywordsText}
+
+Теперь эта категория доступна при записи расходов.`, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]]
+        }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error creating category with keywords:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка создания категории. Попробуйте позже.');
+  }
+
+  // Clear state
+  stateManager.clearState(chatId);
 }
 
 // Export temp expenses store for callback handlers

@@ -83,32 +83,65 @@ class OpenAIService {
     }
   }
 
-  async parseTransaction(userInput) {
+  async parseTransaction(userInput, userContext = {}) {
     try {
+      const { categories = [], projects = [] } = userContext;
+
+      // Форматируем пользовательский контекст для промпта
+      let contextPrompt = '';
+      if (projects.length > 0 || categories.length > 0) {
+        contextPrompt = `
+ПОЛЬЗОВАТЕЛЬСКИЙ КОНТЕКСТ (высший приоритет при выборе):
+
+`;
+        if (projects.length > 0) {
+          contextPrompt += `ПОЛЬЗОВАТЕЛЬСКИЕ ПРОЕКТЫ:
+${projects.map(p => `- ${p.name}: ${p.keywords}`).join('\n')}
+
+`;
+        }
+
+        if (categories.length > 0) {
+          contextPrompt += `ПОЛЬЗОВАТЕЛЬСКИЕ КАТЕГОРИИ:
+${categories.map(c => `- ${c.name}: ${c.keywords}`).join('\n')}
+
+`;
+        }
+      }
+
       const prompt = `
 Определи тип транзакции из текста пользователя и извлеки информацию.
 
 Текст: "${userInput}"
 
-Верни JSON в точном формате:
+${contextPrompt}Верни JSON в точном формате:
 {
   "type": "income" | "expense",
   "amount": число,
   "currency": "RUB" | "USD" | "EUR" | null,
-  "description": "описание транзакции", 
-  "category": "категория" | null
+  "description": "описание транзакции",
+  "category": "категория" | null,
+  "project": "проект" | null
 }
 
-Правила:
-1. type: "income" для доходов (зарплата, премия, продажа, получил деньги), "expense" для расходов (потратил, купил, заплатил)
-2. amount: только число без валюты
-3. currency: определи из контекста или null
-4. description: краткое описание на русском
-5. category: для доходов (Зарплата, Фриланс, Продажи, Прочие доходы), для расходов (обычные категории)
+Правила категоризации:
+1. СНАЧАЛА ищи совпадения в пользовательских категориях и проектах по ключевым словам
+2. Учитывай падежи, синонимы, контекст при поиске ключевых слов
+3. Если не найдешь совпадения - используй стандартные категории
+4. type: "income" для доходов, "expense" для расходов
+5. amount: только число без валюты
+6. currency: определи из контекста или null
+7. description: краткое описание на русском
+8. category: ТОЧНОЕ название из пользовательских или стандартных категорий
+9. project: ТОЧНОЕ название проекта из пользовательских или null
+
+Стандартные категории для fallback:
+Доходы: Зарплата, Фриланс, Продажи, Прочие доходы
+Расходы: Еда, Транспорт, Развлечения, Здоровье, Покупки, Прочее
 
 Примеры:
-"Получил зарплату 50000" → {"type": "income", "amount": 50000, "currency": "RUB", "description": "Зарплата", "category": "Зарплата"}
-"Потратил 200 на кофе" → {"type": "expense", "amount": 200, "currency": "RUB", "description": "Кофе", "category": "Еда"}
+"Получил зарплату 50000" → {"type": "income", "amount": 50000, "currency": "RUB", "description": "Зарплата", "category": "Зарплата", "project": null}
+"Потратил 200 на кофе" → {"type": "expense", "amount": 200, "currency": "RUB", "description": "Кофе", "category": "Еда", "project": null}
 `;
 
       const completion = await openai.chat.completions.create({
@@ -150,7 +183,8 @@ class OpenAIService {
           amount: parseFloat(parsed.amount),
           currency: parsed.currency || null,
           description: parsed.description || (parsed.type === 'income' ? 'Доход' : 'Расход'),
-          category: parsed.category || null
+          category: parsed.category || null,
+          project: parsed.project || null
         };
         
       } catch (parseError) {
