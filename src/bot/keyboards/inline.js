@@ -126,7 +126,7 @@ function getIncomeProjectSelectionKeyboard(incomeId, projects) {
   
   projects.forEach((project, index) => {
     keyboard.push([{ 
-      text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
+      text: `${project.name}`, 
       callback_data: `set_income_project:${incomeId}:${index}` 
     }]);
   });
@@ -145,7 +145,7 @@ function getProjectSelectionKeyboardForExpense(expenseId, projects) {
   
   projects.forEach((project, index) => {
     keyboard.push([{ 
-      text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
+      text: `${project.name}`, 
       callback_data: `set_project:${expenseId}:${index}` 
     }]);
   });
@@ -180,19 +180,13 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
     projects.forEach(project => {
       // Project name row
       keyboard.push([{ 
-        text: `📁 ${project.name}${project.is_active ? ' ✅' : ''}`, 
+        text: `📁 ${project.name}`, 
         callback_data: `project_info:${project.id}` 
       }]);
       
       // Action buttons row
       const actionRow = [];
       
-      if (!project.is_active) {
-        actionRow.push({ 
-          text: '▶️ Активировать', 
-          callback_data: `activate_project:${project.id}` 
-        });
-      }
       
       actionRow.push({ 
         text: '✏️ Изменить', 
@@ -214,7 +208,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
     // Simple switch interface
     projects.forEach(project => {
       keyboard.push([{ 
-        text: `${project.name}${project.is_active ? ' ✅' : ''}`, 
+        text: `${project.name}`, 
         callback_data: `${action}_project:${project.id}` 
       }]);
     });
@@ -401,6 +395,25 @@ function getCurrencySelectionKeyboard(expenseId, type = 'expense') {
   return { inline_keyboard: keyboard };
 }
 
+function getProjectSelectionForTransactionKeyboard(projects, transactionId, transactionType = 'expense') {
+  const keyboard = [];
+
+  projects.forEach(project => {
+    keyboard.push([{
+      text: `📋 ${project.name}`,
+      callback_data: `select_project_for_transaction:${project.id}:${transactionId}:${transactionType}`
+    }]);
+  });
+
+  // Add cancel button
+  keyboard.push([{
+    text: '❌ Отмена',
+    callback_data: `cancel_transaction:${transactionId}`
+  }]);
+
+  return { inline_keyboard: keyboard };
+}
+
 module.exports = {
   getExpenseConfirmationKeyboard,
   getIncomeConfirmationKeyboard,
@@ -410,6 +423,7 @@ module.exports = {
   getAmountSelectionKeyboard,
   getProjectSelectionKeyboard,
   getProjectSelectionKeyboardForExpense,
+  getProjectSelectionForTransactionKeyboard,
   getSettingsKeyboard,
   getUpgradeKeyboard,
   getConfirmationKeyboard,

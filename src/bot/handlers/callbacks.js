@@ -12,6 +12,7 @@ const {
   getAmountSelectionKeyboard,
   getExpenseConfirmationKeyboard,
   getProjectSelectionKeyboardForExpense,
+  getProjectSelectionForTransactionKeyboard,
   getUpgradeKeyboard,
   getExportFormatKeyboard,
   getExportPeriodKeyboard,
@@ -142,12 +143,18 @@ async function handleCallback(callbackQuery) {
       await handleEditCategoryName(chatId, messageId, data, user);
     } else if (data.startsWith('edit_cat_emoji:')) {
       await handleEditCategoryEmoji(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_cat_keywords:')) {
+      await handleEditCategoryKeywords(chatId, messageId, data, user);
     } else if (data.startsWith('remove_emoji:')) {
       await handleRemoveEmoji(chatId, messageId, data, user);
     } else if (data === 'skip_emoji') {
       await handleSkipEmoji(chatId, messageId, user);
     } else if (data === 'categories') {
       await handleCategoriesCallback(chatId, messageId, user);
+    } else if (data.startsWith('select_project_for_transaction:')) {
+      await handleSelectProjectForTransaction(chatId, messageId, data, user);
+    } else if (data.startsWith('cancel_transaction:')) {
+      await handleCancelTransaction(chatId, messageId, data);
     } else if (data.startsWith('export_format:')) {
       await handleExportFormat(chatId, messageId, data, user);
     } else if (data.startsWith('export_period:')) {
@@ -178,7 +185,7 @@ async function handleCallback(callbackQuery) {
       await handleUpgradeAction(chatId, messageId, data);
     } else if (data.startsWith('settings:')) {
       await handleSettingsAction(chatId, messageId, data, user);
-    } else if (data.startsWith('switch_project:') || data.startsWith('activate_project:')) {
+    } else if (data.startsWith('switch_project:')) {
       await handleSwitchProject(chatId, messageId, data, user);
     } else if (data.startsWith('delete_project:')) {
       await handleDeleteProject(chatId, messageId, data, user);
@@ -781,15 +788,15 @@ async function handleSettingsAction(chatId, messageId, data, user) {
             
             const keyboard = [];
 
-            // Add manage/create button
+            // Always show create button first
+            keyboard.push([
+              { text: '➕ Создать категорию', callback_data: 'add_custom_category' }
+            ]);
+
+            // Add manage button if categories exist
             if (categories.length > 0) {
               keyboard.push([
                 { text: '📝 Управлять', callback_data: 'manage_categories' }
-              ]);
-            } else {
-              // If no categories, show create button
-              keyboard.push([
-                { text: '➕ Создать категорию', callback_data: 'add_custom_category' }
               ]);
             }
 
@@ -1220,9 +1227,15 @@ async function handleEditCustomCategory(chatId, messageId, data, user) {
       return;
     }
 
+    // Show keywords if they exist
+    const keywordsText = category.keywords
+      ? `🔍 Ключевые слова: \`${category.keywords}\``
+      : '🔍 Ключевые слова: _не заданы_';
+
     const message = `✏️ Редактирование категории
 
 ${category.emoji || '📁'} **${category.name}**
+${keywordsText}
 
 Выберите действие:`;
 
@@ -1234,6 +1247,7 @@ ${category.emoji || '📁'} **${category.name}**
         inline_keyboard: [
           [{ text: '✏️ Изменить название', callback_data: `edit_cat_name:${categoryId}` }],
           [{ text: '🎨 Изменить эмодзи', callback_data: `edit_cat_emoji:${categoryId}` }],
+          [{ text: '🔍 Изменить ключевые слова', callback_data: `edit_cat_keywords:${categoryId}` }],
           [{ text: '🗑️ Удалить', callback_data: `delete_category:${categoryId}` }],
           [{ text: '🔙 Назад', callback_data: 'manage_categories' }]
         ]
@@ -1515,6 +1529,65 @@ async function handleSkipEmoji(chatId, messageId, user) {
       chat_id: chatId,
       message_id: messageId
     });
+  }
+}
+
+async function handleEditCategoryKeywords(chatId, messageId, data, user) {
+  const bot = getBot();
+  const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+  const categoryId = data.split(':')[1];
+
+  if (!user.is_premium) {
+    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
+    });
+    return;
+  }
+
+  try {
+    const categories = await customCategoryService.findByUserId(user.id);
+    const category = categories.find(cat => cat.id === categoryId);
+
+    if (!category) {
+      await bot.editMessageText('❌ Категория не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_KEYWORDS_EDIT, {
+      categoryId,
+      currentKeywords: category.keywords
+    });
+
+    const currentKeywords = category.keywords ? `\`${category.keywords}\`` : '_не заданы_';
+
+    await bot.sendMessage(chatId, `🔍 Изменение ключевых слов категории
+
+${category.emoji || '📁'} **${category.name}**
+Текущие ключевые слова: ${currentKeywords}
+
+📝 Отправьте новые ключевые слова через запятую:
+
+💡 Примеры:
+• собака, пес, корм, ветеринар
+• кафе, ресторан, еда, пицца
+• бензин, заправка, топливо
+
+Отправьте **-** чтобы удалить ключевые слова`, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❌ Отмена', callback_data: `edit_custom_category:${categoryId}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    logger.error('Error in handleEditCategoryKeywords:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при загрузке категории.');
   }
 }
 
@@ -2836,6 +2909,101 @@ async function handleCancelConnect(chatId, messageId) {
       message_id: messageId
     });
   }
+}
+
+async function handleSelectProjectForTransaction(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, projectId, transactionId, transactionType] = data.split(':');
+
+  try {
+    // Get stored transaction data
+    let transactionData;
+    if (transactionType === 'income') {
+      transactionData = tempIncomes.get(transactionId);
+    } else {
+      transactionData = tempExpenses.get(transactionId);
+    }
+
+    if (!transactionData) {
+      await bot.editMessageText('❌ Данные транзакции истекли. Попробуйте еще раз.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Get selected project
+    const project = await projectService.findById(projectId);
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Update transaction data with project
+    transactionData.project_id = project.id;
+    transactionData.project_name = project.name;
+
+    // Show confirmation with all data
+    const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
+
+    if (transactionType === 'income') {
+      const confirmationText = `💰 Подтвердите доход:
+
+📝 Описание: ${transactionData.description}
+💵 Сумма: ${transactionData.amount} ${transactionData.currency}
+📂 Категория: ${transactionData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: getIncomeConfirmationKeyboard(transactionId, user.is_premium)
+      });
+    } else {
+      const confirmationText = `💰 Подтвердите расход:
+
+📝 Описание: ${transactionData.description}
+💵 Сумма: ${transactionData.amount} ${transactionData.currency}
+📂 Категория: ${transactionData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${project.name}
+
+Всё верно?`;
+
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: getExpenseConfirmationKeyboard(transactionId, user.is_premium)
+      });
+    }
+
+  } catch (error) {
+    logger.error('Error selecting project for transaction:', error);
+    await bot.editMessageText('❌ Ошибка выбора проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCancelTransaction(chatId, messageId, data) {
+  const bot = getBot();
+  const transactionId = data.split(':')[1];
+
+  // Clean up temporary data
+  tempExpenses.delete(transactionId);
+  tempIncomes.delete(transactionId);
+
+  await bot.editMessageText('❌ Транзакция отменена.', {
+    chat_id: chatId,
+    message_id: messageId
+  });
 }
 
 module.exports = {

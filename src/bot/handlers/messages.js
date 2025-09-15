@@ -213,24 +213,66 @@ async function handleExpenseText(msg) {
       }
     }
 
-    // Fallback: use active project or first available
+    // If AI couldn't determine project, ask user to choose
     if (!activeProject) {
       const projects = await projectService.findByUserId(user.id);
-      activeProject = projects.find(p => p.is_active) || projects[0];
-      logger.info(`📋 Using fallback project: ${activeProject?.name} (active: ${activeProject?.is_active})`);
-    }
 
-    if (!activeProject) {
-      await bot.sendMessage(chatId, 
-        '📋 Сначала создайте проект для отслеживания расходов.',
-        {
+      if (projects.length === 0) {
+        await bot.editMessageText('📋 Сначала создайте проект для отслеживания транзакций.', {
+          chat_id: chatId,
+          message_id: processingMessage.message_id,
           reply_markup: {
             inline_keyboard: [[
               { text: '➕ Создать проект', callback_data: 'create_project' }
             ]]
           }
+        });
+        return;
+      }
+
+      // Store transaction temporarily and ask user to select project
+      const tempId = uuidv4();
+      const transactionData = {
+        user_id: user.id,
+        amount: parsedTransaction.amount,
+        currency: parsedTransaction.currency,
+        category: parsedTransaction.category || (
+          parsedTransaction.type === 'income' ? 'Прочие доходы' : 'Прочее'
+        ),
+        description: parsedTransaction.description,
+        expense_date: new Date().toISOString().split('T')[0],
+        income_date: new Date().toISOString().split('T')[0],
+        type: parsedTransaction.type
+      };
+
+      if (parsedTransaction.type === 'income') {
+        tempIncomes.set(tempId, transactionData);
+      } else {
+        tempExpenses.set(tempId, transactionData);
+      }
+
+      // Auto-expire after 5 minutes
+      setTimeout(() => {
+        if (parsedTransaction.type === 'income') {
+          tempIncomes.delete(tempId);
+        } else {
+          tempExpenses.delete(tempId);
         }
-      );
+      }, 5 * 60 * 1000);
+
+      const { getProjectSelectionForTransactionKeyboard } = require('../keyboards/inline');
+
+      await bot.editMessageText(`🤖 Не могу определить проект для этой транзакции.
+
+📝 **Описание:** ${parsedTransaction.description}
+💵 **Сумма:** ${parsedTransaction.amount} ${parsedTransaction.currency}
+📂 **Категория:** ${transactionData.category}
+
+Выберите проект:`, {
+        chat_id: chatId,
+        message_id: processingMessage.message_id,
+        reply_markup: getProjectSelectionForTransactionKeyboard(projects, tempId, parsedTransaction.type)
+      });
       return;
     }
 
@@ -430,7 +472,11 @@ async function handleStateInput(msg, userState) {
       case STATE_TYPES.WAITING_CATEGORY_EMOJI_EDIT:
         await handleCategoryEmojiEditInput(msg, userState);
         break;
-        
+
+      case STATE_TYPES.WAITING_CATEGORY_KEYWORDS_EDIT:
+        await handleCategoryKeywordsEditInput(msg, userState);
+        break;
+
       case STATE_TYPES.WAITING_CUSTOM_EXPORT_DATES:
         await handleCustomExportDatesInput(msg, userState);
         break;
@@ -894,39 +940,36 @@ async function handleCategoryEmojiInput(msg, userState) {
     return;
   }
 
-  // Validate emoji (should be 1-2 characters for emoji)
-  if (text.length > 2) {
-    await bot.sendMessage(chatId, '❌ Пожалуйста, отправьте только один эмодзи.');
-    return;
+  // Validate emoji (allow skipping with "-" or default emoji for long text)
+  let emoji = text;
+  if (text === '-' || text.length > 2) {
+    emoji = '📝'; // Default emoji if skipped or invalid
   }
 
   try {
     // Ask for keywords instead of creating immediately
+    logger.info(`🔧 Setting WAITING_CATEGORY_KEYWORDS state for chatId: ${chatId}, categoryName: ${categoryName}`);
     stateManager.setState(chatId, STATE_TYPES.WAITING_CATEGORY_KEYWORDS, {
       categoryName,
-      emoji: text,
-      messageId
+      emoji: emoji
     });
 
-    await bot.editMessageText(`🔍 Ключевые слова для категории
+    await bot.sendMessage(chatId, `🔍 Ключевые слова для категории
 
-${text} **${categoryName}**
+${emoji} **${categoryName}**
 
 Укажите ключевые слова через запятую, чтобы я автоматически определял траты в эту категорию:
 
 💡 Например: "кафе, ресторан, пицца, еда" или "автобус, такси, метро"
 
 ✅ Если не нужны ключевые слова, отправьте "-"`, {
-      chat_id: chatId,
-      message_id: messageId,
       parse_mode: 'Markdown'
     });
   } catch (error) {
     logger.error('Error creating category with emoji:', error);
     await bot.sendMessage(chatId, '❌ Ошибка создания категории.');
+    stateManager.clearState(chatId);
   }
-
-  stateManager.clearState(chatId);
 }
 
 // Handle category name edit input
@@ -1628,7 +1671,6 @@ async function handleSyncCommand(msg) {
       `(данные будут загружены из Google таблицы в бот)\n\n` +
       `💎 Лимит: ${user.is_premium ? '∞' : `${user.daily_syncs_used || 0}/3`}`,
       {
-        parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: keyboard }
       }
     );
@@ -1684,6 +1726,8 @@ async function handleCategoryKeywordsInput(msg, userState) {
   const user = msg.user;
   const { categoryName, emoji, messageId } = userState.data;
 
+  logger.info(`🔧 Processing category keywords: "${text}" for category: ${categoryName}`);
+
   try {
     let keywords = null;
 
@@ -1723,7 +1767,6 @@ ${emoji} **${categoryName}**${keywordsText}
 Теперь эта категория доступна при записи расходов.`, {
         chat_id: chatId,
         message_id: messageId,
-        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]]
         }
@@ -1733,6 +1776,58 @@ ${emoji} **${categoryName}**${keywordsText}
   } catch (error) {
     logger.error('Error creating category with keywords:', error);
     await bot.sendMessage(chatId, '❌ Ошибка создания категории. Попробуйте позже.');
+  }
+
+  // Clear state
+  stateManager.clearState(chatId);
+}
+
+// Handle category keywords edit input
+async function handleCategoryKeywordsEditInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const user = msg.user;
+  const { categoryId } = userState.data;
+
+  logger.info(`🔧 Processing category keywords edit: "${text}" for categoryId: ${categoryId}`);
+
+  try {
+    let keywords = null;
+
+    if (text !== '-' && text.length > 0) {
+      // Validate keywords (allow letters, spaces, commas, and common punctuation)
+      if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        return;
+      }
+
+      keywords = text;
+    }
+
+    // Update category with new keywords
+    const updatedCategory = await customCategoryService.update(categoryId, { keywords });
+
+    const keywordsText = keywords ? `🔍 Новые ключевые слова: \`${keywords}\`` : '🔍 Ключевые слова удалены';
+
+    await bot.sendMessage(chatId, `✅ Ключевые слова обновлены!
+
+${updatedCategory.emoji || '📁'} **${updatedCategory.name}**
+${keywordsText}
+
+Теперь AI будет использовать эти ключевые слова для автоматического определения транзакций в эту категорию.`, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Назад к категории', callback_data: `edit_custom_category:${categoryId}` }],
+          [{ text: '🔙 К управлению категориями', callback_data: 'manage_categories' }]
+        ]
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error updating category keywords:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка обновления ключевых слов. Попробуйте позже.');
   }
 
   // Clear state

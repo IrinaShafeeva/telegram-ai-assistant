@@ -144,13 +144,16 @@ async function handleProjects(msg, match) {
       if (project.keywords) {
         message += `   🔍 Ключевые слова: ${project.keywords}\n`;
       }
-      if (project.google_sheet_id) {
+      if (project.google_sheet_id && project.google_sheet_url) {
+        message += `   📊 [Google Sheets](${project.google_sheet_url}) подключены\n`;
+      } else if (project.google_sheet_id) {
         message += `   📊 Google Sheets подключены\n`;
       }
       message += '\n';
     }
 
     await bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
       reply_markup: getProjectSelectionKeyboard(projects, 'manage', user.is_premium)
     });
   } catch (error) {

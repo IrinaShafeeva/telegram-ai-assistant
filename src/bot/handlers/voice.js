@@ -32,26 +32,35 @@ async function handleVoice(msg) {
       return;
     }
 
-    await bot.sendMessage(chatId, '🎤 Обрабатываю голосовое сообщение...');
+    let processingMessage = null;
+
+    try {
+      processingMessage = await bot.sendMessage(chatId, '🎤 Обрабатываю голосовое сообщение...');
 
     // Download voice file
     const fileLink = await bot.getFileLink(voice.file_id);
-    const response = await axios.get(fileLink, { 
+    const response = await axios.get(fileLink, {
       responseType: 'arraybuffer',
-      timeout: 30000 
+      timeout: 30000
     });
-    
+
     const audioBuffer = Buffer.from(response.data);
 
     // Transcribe with Whisper
     const transcription = await openaiService.transcribeVoice(audioBuffer, voice.mime_type);
-    
+
     if (!transcription || transcription.trim().length === 0) {
-      await bot.sendMessage(chatId, '❌ Не удалось распознать речь. Попробуйте еще раз.');
+      await bot.editMessageText('❌ Не удалось распознать речь. Попробуйте еще раз.', {
+        chat_id: chatId,
+        message_id: processingMessage.message_id
+      });
       return;
     }
 
-    await bot.sendMessage(chatId, `🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю транзакцию...`);
+    await bot.editMessageText(`🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю транзакцию...`, {
+      chat_id: chatId,
+      message_id: processingMessage.message_id
+    });
 
     // Parse transaction with AI (could be income or expense)
     const parsedTransaction = await openaiService.parseTransaction(transcription);
@@ -91,7 +100,9 @@ async function handleVoice(msg) {
 
 Всё верно?`;
 
-      await bot.sendMessage(chatId, confirmationText, {
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: processingMessage.message_id,
         reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
       });
 
@@ -128,7 +139,9 @@ async function handleVoice(msg) {
 
 Всё верно?`;
 
-      await bot.sendMessage(chatId, confirmationText, {
+      await bot.editMessageText(confirmationText, {
+        chat_id: chatId,
+        message_id: processingMessage.message_id,
         reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
       });
 
@@ -140,9 +153,9 @@ async function handleVoice(msg) {
 
   } catch (error) {
     logger.error('Voice processing error:', error);
-    
+
     let errorMessage = '❌ Не удалось обработать голосовое сообщение.';
-    
+
     if (error.message.includes('transcription')) {
       errorMessage = '❌ Не удалось распознать речь. Говорите четче и попробуйте еще раз.';
     } else if (error.message.includes('parsing')) {
@@ -150,10 +163,21 @@ async function handleVoice(msg) {
     } else if (error.message.includes('timeout')) {
       errorMessage = '❌ Превышено время обработки. Попробуйте записать более короткое сообщение.';
     }
-    
-    await bot.sendMessage(chatId, 
-      `${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`
-    );
+
+    // Try to edit the processing message if it exists, otherwise send new message
+    try {
+      if (processingMessage) {
+        await bot.editMessageText(`${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`, {
+          chat_id: chatId,
+          message_id: processingMessage.message_id
+        });
+      } else {
+        await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`);
+      }
+    } catch (editError) {
+      // Fallback to sending new message if editing fails
+      await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`);
+    }
   }
 }
 
