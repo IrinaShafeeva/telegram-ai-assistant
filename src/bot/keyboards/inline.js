@@ -359,31 +359,44 @@ function getCurrencySelectionKeyboard(expenseId, type = 'expense') {
   // Split currencies into rows of 2
   for (let i = 0; i < currencies.length; i += 2) {
     const row = [];
+
+    // For onboarding, use different callback format
+    const callbackFormat = type === 'onboarding' ? 'set_currency_' : 'set_currency:';
+    const callbackData1 = type === 'onboarding'
+      ? `${callbackFormat}${currencies[i].code}`
+      : `${callbackFormat}${expenseId}:${currencies[i].code}:${type}`;
+
     row.push({
       text: `${currencies[i].flag} ${currencies[i].name} (${currencies[i].code})`,
-      callback_data: `set_currency:${expenseId}:${currencies[i].code}:${type}`
+      callback_data: callbackData1
     });
 
     if (currencies[i + 1]) {
+      const callbackData2 = type === 'onboarding'
+        ? `${callbackFormat}${currencies[i + 1].code}`
+        : `${callbackFormat}${expenseId}:${currencies[i + 1].code}:${type}`;
+
       row.push({
         text: `${currencies[i + 1].flag} ${currencies[i + 1].name} (${currencies[i + 1].code})`,
-        callback_data: `set_currency:${expenseId}:${currencies[i + 1].code}:${type}`
+        callback_data: callbackData2
       });
     }
     keyboard.push(row);
   }
 
-  // Add "Set as default" button
-  keyboard.push([{
-    text: '💾 Сохранить как основную валюту',
-    callback_data: `set_default_currency:${expenseId}:${type}`
-  }]);
+  // Add "Set as default" button (only for transaction editing, not onboarding)
+  if (type !== 'onboarding') {
+    keyboard.push([{
+      text: '💾 Сохранить как основную валюту',
+      callback_data: `set_default_currency:${expenseId}:${type}`
+    }]);
 
-  // Add back button
-  keyboard.push([{
-    text: '⬅️ Назад',
-    callback_data: type === 'income' ? `back_to_income_confirmation:${expenseId}` : `back_to_confirmation:${expenseId}`
-  }]);
+    // Add back button
+    keyboard.push([{
+      text: '⬅️ Назад',
+      callback_data: type === 'income' ? `back_to_income_confirmation:${expenseId}` : `back_to_confirmation:${expenseId}`
+    }]);
+  }
 
   return { inline_keyboard: keyboard };
 }

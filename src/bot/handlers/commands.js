@@ -21,66 +21,21 @@ async function handleStart(msg, match) {
       return bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
     }
 
-    // Check if user needs currency setup
-    if (!user.primary_currency || user.primary_currency === 'USD') {
-      await bot.sendMessage(chatId, 
-        `🏦 Добро пожаловать в Loomiq!
-
-Я помогу вам легко отслеживать расходы:
-• 🎤 Отправляйте голосовые сообщения  
-• 💬 Пишите текстом "кофе 200р"
-• 📊 Получайте аналитику с AI
-• 📋 Синхронизация с Google Sheets
-
-💰 Сначала выберите валюту по умолчанию:`
-      );
-
-      const currencyKeyboard = {
-        inline_keyboard: [
-          [
-            { text: '🇷🇺 Рубль (RUB)', callback_data: 'set_currency_RUB' },
-            { text: '🇺🇸 Доллар (USD)', callback_data: 'set_currency_USD' }
-          ],
-          [
-            { text: '🇪🇺 Евро (EUR)', callback_data: 'set_currency_EUR' },
-            { text: '🇬🇧 Фунт (GBP)', callback_data: 'set_currency_GBP' }
-          ],
-          [
-            { text: '🇰🇿 Тенге (KZT)', callback_data: 'set_currency_KZT' },
-            { text: '🇺🇦 Гривна (UAH)', callback_data: 'set_currency_UAH' }
-          ]
-        ]
-      };
-
-      return bot.sendMessage(chatId, 'Выберите валюту:', { reply_markup: currencyKeyboard });
-    }
 
     // Check if user already has projects
     const userProjects = await projectService.findByUserId(user.id);
     
     if (userProjects.length === 0) {
-      // First time user - create project immediately
-      await bot.sendMessage(chatId, 
-        `✨ Создаю ваш первый проект...`
-      );
+      // First time user - show currency selection first
+      const { getCurrencySelectionKeyboard } = require('../keyboards/inline');
 
-      // Create first project automatically
-      const project = await projectService.create({
-        owner_id: user.id,
-        name: 'Личные расходы',
-        description: 'Проект для отслеживания расходов',
-        is_active: true
-      });
+      await bot.sendMessage(chatId,
+        `🌟 Добро пожаловать в AI трекер расходов!
 
-      await bot.sendMessage(chatId, 
-        `✅ Проект "Личные расходы" создан!
+🎯 Давайте настроим ваш первый проект:
 
-✨ Теперь попробуйте добавить трату:
-• Голосом: "Потратил 200 рублей на кофе"
-• Текстом: "кофе 200р"
-
-📊 Для подключения Google таблицы используйте команду: /connect`,
-        { reply_markup: getMainMenuKeyboard() }
+💱 Сначала выберите основную валюту:`,
+        { reply_markup: getCurrencySelectionKeyboard('initial', 'onboarding') }
       );
     } else {
       // Existing user - show main menu

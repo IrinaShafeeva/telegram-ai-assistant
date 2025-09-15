@@ -220,27 +220,29 @@ async function handleSaveExpense(chatId, messageId, data, user) {
     const savedExpense = await expenseService.create(dbExpenseData);
     logger.info(`✅ Expense saved with ID: ${savedExpense.id}`);
 
-    // Try to add to Google Sheets (don't fail if this fails)
-    let sheetsSuccess = false;
-    logger.info(`🔄 Starting Google Sheets sync for project: ${expenseData.project_id}`);
-    try {
-      await googleSheetsService.addExpenseToSheet(savedExpense, expenseData.project_id);
-      sheetsSuccess = true;
-      logger.info(`✅ Google Sheets sync successful`);
-    } catch (sheetsError) {
-      logger.warn('Google Sheets sync failed but expense saved:', sheetsError.message);
-      logger.error('Google Sheets sync error details:', sheetsError);
-    }
-
     // Get project name for confirmation
     const project = await projectService.findById(expenseData.project_id);
+
+    // Try to add to Google Sheets only if project has google_sheet_id
+    let sheetsSuccess = false;
+    if (project.google_sheet_id) {
+      logger.info(`🔄 Starting Google Sheets sync for project: ${expenseData.project_id}`);
+      try {
+        await googleSheetsService.addExpenseToSheet(savedExpense, expenseData.project_id);
+        sheetsSuccess = true;
+        logger.info(`✅ Google Sheets sync successful`);
+      } catch (sheetsError) {
+        logger.warn('Google Sheets sync failed but expense saved:', sheetsError.message);
+        logger.error('Google Sheets sync error details:', sheetsError);
+      }
+    }
 
     const successText = `✅ Расход сохранён!
 
 💰 ${expenseData.description}: -${expenseData.amount} ${expenseData.currency}
 📂 Категория: ${expenseData.category}
 📋 Проект: ${project.name}
-${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}`;
+${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}`;
 
     await bot.editMessageText(successText, {
       chat_id: chatId,
@@ -555,18 +557,15 @@ async function handleCreateProject(chatId, user) {
       return;
     }
 
-    // For first project, create automatically
+    // For first project, redirect to currency selection
     if (userProjects.length === 0) {
-      const newProject = await projectService.create({
-        owner_id: user.id,
-        name: 'Личные расходы',
-        description: 'Проект для отслеживания расходов',
-        is_active: true
-      });
+      const { getCurrencySelectionKeyboard } = require('../keyboards/inline');
 
-      await bot.sendMessage(chatId, 
-        `✅ Проект "Личные расходы" создан!\n\n✨ Теперь можете добавлять расходы.`
+      await bot.sendMessage(chatId,
+        `💱 Для создания первого проекта сначала выберите валюту:`,
+        { reply_markup: getCurrencySelectionKeyboard('initial', 'onboarding') }
       );
+      return;
     } else {
       // For additional projects (PRO only), check if user has existing Google Sheets
       if (userData.is_premium) {
@@ -978,30 +977,46 @@ async function handleSetCurrency(chatId, messageId, data, user) {
       'UAH': 'Гривна'
     };
     
-    await bot.editMessageText(
-      `✅ Валюта установлена: ${currencyNames[currency]} (${currency})\n\n✨ Создаю ваш первый проект...`,
-      { chat_id: chatId, message_id: messageId }
-    );
-    
-    // Create first project automatically
-    const project = await projectService.create({
-      owner_id: user.id,
-      name: 'Личные расходы',
-      description: 'Проект для отслеживания расходов',
-      is_active: true
-    });
+    // Check if user already has projects
+    const userProjects = await projectService.findByUserId(user.id);
 
-    const { getMainMenuKeyboard } = require('../keyboards/reply');
-    await bot.sendMessage(chatId, 
-      `✅ Проект "Личные расходы" создан!
+    if (userProjects.length === 0) {
+      await bot.editMessageText(
+        `✅ Валюта установлена: ${currencyNames[currency]} (${currency})\n\n✨ Создаю ваш первый проект...`,
+        { chat_id: chatId, message_id: messageId }
+      );
+
+      // Create first project automatically
+      const project = await projectService.create({
+        owner_id: user.id,
+        name: 'Личные расходы',
+        description: 'Проект для отслеживания расходов',
+        is_active: true
+      });
+
+      const { getMainMenuKeyboard } = require('../keyboards/reply');
+      await bot.sendMessage(chatId,
+        `✅ Проект "Личные расходы" создан!
 
 ✨ Теперь попробуйте добавить трату:
 • Голосом: "Потратил 200 рублей на кофе"
 • Текстом: "кофе 200р"
 
 📊 Для подключения Google таблицы используйте команду: /connect`,
-      { reply_markup: getMainMenuKeyboard() }
-    );
+        { reply_markup: getMainMenuKeyboard() }
+      );
+    } else {
+      await bot.editMessageText(
+        `✅ Валюта установлена: ${currencyNames[currency]} (${currency})`,
+        { chat_id: chatId, message_id: messageId }
+      );
+
+      const { getMainMenuKeyboard } = require('../keyboards/reply');
+      await bot.sendMessage(chatId,
+        `💎 Валюта обновлена!`,
+        { reply_markup: getMainMenuKeyboard() }
+      );
+    }
     
   } catch (error) {
     logger.error('Set currency error:', error);
@@ -1835,24 +1850,26 @@ async function handleSaveIncome(chatId, messageId, data, user) {
     // Save income to database
     const savedIncome = await incomeService.create(dbIncomeData);
 
-    // Try to add to Google Sheets (don't fail if this fails)
-    let sheetsSuccess = false;
-    try {
-      await googleSheetsService.addIncomeToSheet(savedIncome, incomeData.project_id);
-      sheetsSuccess = true;
-    } catch (sheetsError) {
-      logger.warn('Google Sheets sync failed but income saved:', sheetsError.message);
-    }
-
     // Get project name for confirmation
     const project = await projectService.findById(incomeData.project_id);
+
+    // Try to add to Google Sheets only if project has google_sheet_id
+    let sheetsSuccess = false;
+    if (project.google_sheet_id) {
+      try {
+        await googleSheetsService.addIncomeToSheet(savedIncome, incomeData.project_id);
+        sheetsSuccess = true;
+      } catch (sheetsError) {
+        logger.warn('Google Sheets sync failed but income saved:', sheetsError.message);
+      }
+    }
 
     const successText = `✅ Доход сохранён!
 
 💰 ${incomeData.description}: +${incomeData.amount} ${incomeData.currency}
 📂 Категория: ${incomeData.category}
 📋 Проект: ${project.name}
-${sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)'}`;
+${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}`;
 
     await bot.editMessageText(successText, {
       chat_id: chatId,
