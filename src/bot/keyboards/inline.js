@@ -400,14 +400,14 @@ function getProjectSelectionForTransactionKeyboard(projects, transactionId, tran
   projects.forEach((project, index) => {
     keyboard.push([{
       text: `📋 ${project.name}`,
-      callback_data: `proj_sel:${index}:${transactionId.substring(0, 8)}:${transactionType}`
+      callback_data: `proj_sel:${index}:${transactionId}:${transactionType}`
     }]);
   });
 
   // Add cancel button
   keyboard.push([{
     text: '❌ Отмена',
-    callback_data: `cancel_trans:${transactionId.substring(0, 8)}`
+    callback_data: `cancel_trans:${transactionId}`
   }]);
 
   return { inline_keyboard: keyboard };

@@ -279,7 +279,7 @@ async function handleExpenseText(msg) {
 Выберите проект:`, {
         chat_id: chatId,
         message_id: processingMessage.message_id,
-        reply_markup: getProjectSelectionForTransactionKeyboard(projects, tempId, parsedTransaction.type)
+        reply_markup: getProjectSelectionForTransactionKeyboard(projects, shortId, parsedTransaction.type)
       });
       return;
     }
@@ -373,46 +373,43 @@ async function handleExpenseText(msg) {
 }
 
 async function isAnalyticsQuestion(text) {
-  const lowerText = text.toLowerCase().trim();
+  try {
+    // Quick check for obvious transactions with amounts
+    const hasAmount = /\d+\s*(рубл|руб|долл|евро|доллар|\$|€|₽)/i.test(text);
+    if (hasAmount) {
+      return false; // Definitely a transaction
+    }
 
-  // Strong analytics indicators (questions, not expenses)
-  const strongIndicators = [
-    'сколько потрат', 'сколько трат', 'сколько на', 'сколько за',
-    'проанализируй', 'анализ', 'статистика', 'аналитика',
-    'где потратил', 'на что потратил', 'больше всего трачу',
-    'отчет', 'итого', 'общая сумма', 'средний чек',
-    'покажи расходы', 'мои траты', 'траты за'
-  ];
+    // Use AI to determine if this is an analytics question
+    const prompt = `Определи тип запроса пользователя:
 
-  // Check for strong indicators first
-  if (strongIndicators.some(indicator => lowerText.includes(indicator))) {
-    return true;
+ЗАПРОС: "${text}"
+
+Ответь только "ANALYTICS" если это:
+- Вопрос о тратах/доходах (сколько, на что, где потратил)
+- Запрос статистики/аналитики финансов
+- Просьба показать расходы/доходы
+
+Ответь только "TRANSACTION" если это:
+- Запись траты/дохода с суммой
+- Описание покупки/оплаты
+- Любое действие с деньгами
+
+Ответь только одним словом: ANALYTICS или TRANSACTION`;
+
+    const response = await openaiService.generateResponse(prompt);
+    const result = response.trim().toUpperCase();
+
+    return result === 'ANALYTICS';
+
+  } catch (error) {
+    logger.error('Error in AI analytics detection:', error);
+
+    // Fallback to simple rules if AI fails
+    const lowerText = text.toLowerCase().trim();
+    const questionWords = ['сколько', 'на что', 'где', 'покажи', 'анализ', 'статистика', 'больше всего'];
+    return questionWords.some(word => lowerText.includes(word));
   }
-
-  // Exclude obvious transaction patterns (amount + currency/description)
-  const transactionPatterns = [
-    /\d+\s*(рубл|руб|долл|евро|доллар|\$|€|₽)/,  // number + currency
-    /\d+\s+(за|на)\s+\w+/,  // "100 за кофе", "500 на еду"
-    /(купил|потратил|заплатил|оплатил|купила|потратила|заплатила|оплатила)\s+\d+/, // "купил 100", "потратил 500"
-    /(кофе|еда|такси|бензин|продукты|обед|завтрак|ужин|магазин)\s+\d+/, // "кофе 100"
-    /\d+\s+(кофе|еда|такси|бензин|продукты|обед|завтрак|ужин|магазин)/ // "100 кофе"
-  ];
-
-  // If text matches transaction patterns, it's not analytics
-  if (transactionPatterns.some(pattern => pattern.test(lowerText))) {
-    return false;
-  }
-
-  // Additional analytics patterns (commands and questions)
-  const analyticsStarters = [
-    'сколько', 'где', 'когда', 'как много', 'что', 'какие', 'какая', 'какой',
-    'покажи', 'расскажи', 'выведи', 'дай', 'скажи', 'найди'
-  ];
-
-  const hasAnalyticsStarter = analyticsStarters.some(starter => lowerText.startsWith(starter));
-  const hasMoneyContext = ['потрат', 'трат', 'расход', 'деньг', 'рубл', 'евро', 'доллар', 'покупк', 'трансакц'].some(m => lowerText.includes(m));
-
-  return hasAnalyticsStarter && hasMoneyContext;
 }
 
 async function handleAnalyticsQuestion(msg) {
