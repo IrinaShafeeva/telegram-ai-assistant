@@ -151,9 +151,9 @@ async function handleCallback(callbackQuery) {
       await handleSkipEmoji(chatId, messageId, user);
     } else if (data === 'categories') {
       await handleCategoriesCallback(chatId, messageId, user);
-    } else if (data.startsWith('select_project_for_transaction:')) {
-      await handleSelectProjectForTransaction(chatId, messageId, data, user);
-    } else if (data.startsWith('cancel_transaction:')) {
+    } else if (data.startsWith('proj_sel:')) {
+      await handleProjectSelectionForTransaction(callbackQuery, data);
+    } else if (data.startsWith('cancel_trans:')) {
       await handleCancelTransaction(chatId, messageId, data);
     } else if (data.startsWith('export_format:')) {
       await handleExportFormat(chatId, messageId, data, user);
@@ -630,36 +630,53 @@ async function handleUpgradeAction(chatId, messageId, data) {
   const action = data.split(':')[1];
 
   switch (action) {
-    case 'pro_month':
-      await createInvoice(chatId, messageId, {
-        title: '💎 Expense Tracker PRO (1 месяц)',
-        description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории на 1 месяц!',
-        payload: 'expense_tracker_pro_1month',
-        amount: 250,
-        period: '1 месяц',
-        price: '$5'
+    case 'boosty':
+      await bot.editMessageText(
+        `💎 **Подписка через Boosty.to**
+
+🇷🇺 Для пользователей из России
+
+**Доступные планы:**
+• 1 месяц: 499 ₽
+• 6 месяцев: 2499 ₽ 🔥
+• 1 год: 4499 ₽ 🔥🔥
+
+**Как подписаться:**
+1. Перейдите по ссылке: https://boosty.to/your_project
+2. Выберите подходящий план
+3. Оплатите удобным способом
+4. Пришлите скриншот об оплате в поддержку @loomiq_support
+5. PRO статус активируется в течение часа!
+
+✨ Принимаем карты РФ и другие способы оплаты`, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
       });
       break;
-      
-    case 'pro_6months':
-      await createInvoice(chatId, messageId, {
-        title: '💎 Expense Tracker PRO (6 месяцев)',
-        description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории на 6 месяцев! Экономия $6!',
-        payload: 'expense_tracker_pro_6months',
-        amount: 1200,
-        period: '6 месяцев',
-        price: '$24 (экономия $6)'
-      });
-      break;
-      
-    case 'pro_year':
-      await createInvoice(chatId, messageId, {
-        title: '💎 Expense Tracker PRO (1 год)',
-        description: '🚀 Получите неограниченные проекты, 20 AI вопросов/день, командную работу и кастомные категории на целый год! Экономия $20!',
-        payload: 'expense_tracker_pro_1year',
-        amount: 2000,
-        period: '1 год',
-        price: '$40 (экономия $20)'
+
+    case 'patreon':
+      await bot.editMessageText(
+        `💎 **Подписка через Patreon**
+
+🌍 Для международных пользователей
+
+**Доступные планы:**
+• 1 месяц: $5
+• 6 месяцев: $25 🔥
+• 1 год: $45 🔥🔥
+
+**Как подписаться:**
+1. Перейдите по ссылке: https://patreon.com/your_project
+2. Выберите подходящий план
+3. Оплатите через PayPal или карту
+4. Пришлите скриншот об оплате в поддержку @loomiq_support
+5. PRO статус активируется в течение часа!
+
+✨ Принимаем PayPal, Visa, Mastercard`, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
       });
       break;
       
@@ -699,7 +716,7 @@ async function handleUpgradeAction(chatId, messageId, data) {
       const faqText = `❓ Частые вопросы PRO:
 
 Q: Как отменить подписку?
-A: Напишите @support_bot
+A: Напишите @loomiq_support
 
 Q: Есть ли бесплатный пробный период?
 A: Да, 7 дней бесплатно при первом платеже
@@ -710,7 +727,7 @@ A: Да, все данные останутся, но с ограничения�
 Q: Можно ли оплатить картой РФ?
 A: Да, поддерживаются все основные платежные системы
 
-Другие вопросы: @support_bot`;
+Другие вопросы: @loomiq_support`;
 
       await bot.editMessageText(faqText, {
         chat_id: chatId,
@@ -935,45 +952,6 @@ async function handleCustomAmount(chatId, messageId, data, user) {
   });
 }
 
-// Helper function to create Telegram Stars invoice
-async function createInvoice(chatId, messageId, options) {
-  const bot = getBot();
-  
-  try {
-    const invoice = {
-      title: options.title,
-      description: options.description,
-      payload: options.payload,
-      provider_token: '', // Empty for Telegram Stars
-      currency: 'XTR', // Telegram Stars currency
-      prices: [{ label: `PRO план (${options.period})`, amount: options.amount }],
-      photo_url: undefined,
-      photo_size: undefined,
-      photo_width: undefined,
-      photo_height: undefined,
-      need_name: false,
-      need_phone_number: false,
-      need_email: false,
-      need_shipping_address: false,
-      send_phone_number_to_provider: false,
-      send_email_to_provider: false,
-      is_flexible: false
-    };
-
-    await bot.sendInvoice(chatId, invoice);
-    
-    await bot.editMessageText(
-      `💎 Счет на оплату отправлен!\n\n⭐ Стоимость: ${options.amount} Telegram Stars\n💰 ${options.price}\n📅 Период: ${options.period}\n\n✨ После оплаты PRO активируется автоматически!`,
-      { chat_id: chatId, message_id: messageId }
-    );
-  } catch (error) {
-    logger.error('Invoice creation error:', error);
-    await bot.editMessageText(
-      `💎 Оплата PRO плана\n\n⭐ Стоимость: ${options.amount} Telegram Stars (${options.price})\n📅 Период: ${options.period}\n\n🚧 Временно недоступно. Используйте команду /devpro для тестирования PRO функций.\n\nОбратитесь в поддержку: @support_bot`,
-      { chat_id: chatId, message_id: messageId }
-    );
-  }
-}
 
 async function handleSetCurrency(chatId, messageId, data, user) {
   const bot = getBot();
@@ -3028,17 +3006,34 @@ async function handleCancelConnect(chatId, messageId) {
   }
 }
 
-async function handleSelectProjectForTransaction(chatId, messageId, data, user) {
+// Global mapping for short transaction IDs to full data
+const shortTransactionMap = new Map();
+
+async function handleProjectSelectionForTransaction(callbackQuery, data) {
+  const chatId = callbackQuery.message.chat.id;
+  const messageId = callbackQuery.message.message_id;
+  const user = callbackQuery.user;
   const bot = getBot();
-  const [, projectId, transactionId, transactionType] = data.split(':');
+  const [, projectIndex, shortTransactionId, transactionType] = data.split(':');
 
   try {
-    // Get stored transaction data
+    // Get stored transaction data using full ID from mapping
+    const mappedData = shortTransactionMap.get(shortTransactionId);
+    if (!mappedData) {
+      await bot.editMessageText('❌ Данные транзакции истекли. Попробуйте еще раз.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const { fullTransactionId, projects } = mappedData;
+
     let transactionData;
     if (transactionType === 'income') {
-      transactionData = tempIncomes.get(transactionId);
+      transactionData = tempIncomes.get(fullTransactionId);
     } else {
-      transactionData = tempExpenses.get(transactionId);
+      transactionData = tempExpenses.get(fullTransactionId);
     }
 
     if (!transactionData) {
@@ -3049,8 +3044,8 @@ async function handleSelectProjectForTransaction(chatId, messageId, data, user) 
       return;
     }
 
-    // Get selected project
-    const project = await projectService.findById(projectId);
+    // Get selected project by index
+    const project = projects[parseInt(projectIndex)];
     if (!project) {
       await bot.editMessageText('❌ Проект не найден.', {
         chat_id: chatId,
@@ -3062,6 +3057,9 @@ async function handleSelectProjectForTransaction(chatId, messageId, data, user) 
     // Update transaction data with project
     transactionData.project_id = project.id;
     transactionData.project_name = project.name;
+
+    // Clean up mapping
+    shortTransactionMap.delete(shortTransactionId);
 
     // Show confirmation with all data
     const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
@@ -3080,7 +3078,7 @@ async function handleSelectProjectForTransaction(chatId, messageId, data, user) 
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: getIncomeConfirmationKeyboard(transactionId, user.is_premium)
+        reply_markup: getIncomeConfirmationKeyboard(fullTransactionId, user.is_premium)
       });
     } else {
       const confirmationText = `💰 Подтвердите расход:
@@ -3096,7 +3094,7 @@ async function handleSelectProjectForTransaction(chatId, messageId, data, user) 
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: getExpenseConfirmationKeyboard(transactionId, user.is_premium)
+        reply_markup: getExpenseConfirmationKeyboard(fullTransactionId, user.is_premium)
       });
     }
 
@@ -3111,11 +3109,17 @@ async function handleSelectProjectForTransaction(chatId, messageId, data, user) 
 
 async function handleCancelTransaction(chatId, messageId, data) {
   const bot = getBot();
-  const transactionId = data.split(':')[1];
+  const shortTransactionId = data.split(':')[1];
 
-  // Clean up temporary data
-  tempExpenses.delete(transactionId);
-  tempIncomes.delete(transactionId);
+  // Get full ID from mapping and clean up
+  const mappedData = shortTransactionMap.get(shortTransactionId);
+  if (mappedData) {
+    const { fullTransactionId } = mappedData;
+    // Clean up temporary data
+    tempExpenses.delete(fullTransactionId);
+    tempIncomes.delete(fullTransactionId);
+    shortTransactionMap.delete(shortTransactionId);
+  }
 
   await bot.editMessageText('❌ Транзакция отменена.', {
     chat_id: chatId,
@@ -3124,5 +3128,6 @@ async function handleCancelTransaction(chatId, messageId, data) {
 }
 
 module.exports = {
-  handleCallback
+  handleCallback,
+  shortTransactionMap
 };

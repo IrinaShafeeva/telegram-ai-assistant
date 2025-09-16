@@ -248,11 +248,10 @@ function getUpgradeKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: '💎 1 месяц (250 ⭐)', callback_data: 'upgrade:pro_month' }
+        { text: '💎 Подписаться через Boosty', callback_data: 'upgrade:boosty' }
       ],
       [
-        { text: '💎 6 месяцев (1200 ⭐) 🔥', callback_data: 'upgrade:pro_6months' },
-        { text: '💎 1 год (2000 ⭐) 🔥🔥', callback_data: 'upgrade:pro_year' }
+        { text: '💎 Подписаться через Patreon', callback_data: 'upgrade:patreon' }
       ],
       [
         { text: '📋 Сравнить планы', callback_data: 'upgrade:compare' }
@@ -398,17 +397,17 @@ function getCurrencySelectionKeyboard(expenseId, type = 'expense') {
 function getProjectSelectionForTransactionKeyboard(projects, transactionId, transactionType = 'expense') {
   const keyboard = [];
 
-  projects.forEach(project => {
+  projects.forEach((project, index) => {
     keyboard.push([{
       text: `📋 ${project.name}`,
-      callback_data: `select_project_for_transaction:${project.id}:${transactionId}:${transactionType}`
+      callback_data: `proj_sel:${index}:${transactionId.substring(0, 8)}:${transactionType}`
     }]);
   });
 
   // Add cancel button
   keyboard.push([{
     text: '❌ Отмена',
-    callback_data: `cancel_transaction:${transactionId}`
+    callback_data: `cancel_trans:${transactionId.substring(0, 8)}`
   }]);
 
   return { inline_keyboard: keyboard };

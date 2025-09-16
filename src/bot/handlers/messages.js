@@ -8,6 +8,7 @@ const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+const { shortTransactionMap } = require('./callbacks');
 const logger = require('../../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
@@ -262,6 +263,13 @@ async function handleExpenseText(msg) {
 
       const { getProjectSelectionForTransactionKeyboard } = require('../keyboards/inline');
 
+      // Store mapping for short transaction ID
+      const shortId = tempId.substring(0, 8);
+      shortTransactionMap.set(shortId, {
+        fullTransactionId: tempId,
+        projects: projects
+      });
+
       await bot.editMessageText(`🤖 Не могу определить проект для этой транзакции.
 
 📝 **Описание:** ${parsedTransaction.description}
@@ -365,26 +373,46 @@ async function handleExpenseText(msg) {
 }
 
 async function isAnalyticsQuestion(text) {
-  const lowerText = text.toLowerCase();
-  
+  const lowerText = text.toLowerCase().trim();
+
   // Strong analytics indicators (questions, not expenses)
   const strongIndicators = [
     'сколько потрат', 'сколько трат', 'сколько на', 'сколько за',
     'проанализируй', 'анализ', 'статистика', 'аналитика',
     'где потратил', 'на что потратил', 'больше всего трачу',
-    'отчет', 'итого', 'общая сумма', 'средний чек'
+    'отчет', 'итого', 'общая сумма', 'средний чек',
+    'покажи расходы', 'мои траты', 'траты за'
   ];
-  
+
   // Check for strong indicators first
   if (strongIndicators.some(indicator => lowerText.includes(indicator))) {
     return true;
   }
-  
-  // Question patterns with money keywords
-  const hasQuestionWord = ['сколько', 'где', 'когда', 'как много', 'что'].some(q => lowerText.includes(q));
-  const hasMoneyContext = ['потрат', 'трат', 'расход', 'деньг', 'рубл', 'евро', 'доллар'].some(m => lowerText.includes(m));
-  
-  return hasQuestionWord && hasMoneyContext;
+
+  // Exclude obvious transaction patterns (amount + currency/description)
+  const transactionPatterns = [
+    /\d+\s*(рубл|руб|долл|евро|доллар|\$|€|₽)/,  // number + currency
+    /\d+\s+(за|на)\s+\w+/,  // "100 за кофе", "500 на еду"
+    /(купил|потратил|заплатил|оплатил|купила|потратила|заплатила|оплатила)\s+\d+/, // "купил 100", "потратил 500"
+    /(кофе|еда|такси|бензин|продукты|обед|завтрак|ужин|магазин)\s+\d+/, // "кофе 100"
+    /\d+\s+(кофе|еда|такси|бензин|продукты|обед|завтрак|ужин|магазин)/ // "100 кофе"
+  ];
+
+  // If text matches transaction patterns, it's not analytics
+  if (transactionPatterns.some(pattern => pattern.test(lowerText))) {
+    return false;
+  }
+
+  // Additional analytics patterns (commands and questions)
+  const analyticsStarters = [
+    'сколько', 'где', 'когда', 'как много', 'что', 'какие', 'какая', 'какой',
+    'покажи', 'расскажи', 'выведи', 'дай', 'скажи', 'найди'
+  ];
+
+  const hasAnalyticsStarter = analyticsStarters.some(starter => lowerText.startsWith(starter));
+  const hasMoneyContext = ['потрат', 'трат', 'расход', 'деньг', 'рубл', 'евро', 'доллар', 'покупк', 'трансакц'].some(m => lowerText.includes(m));
+
+  return hasAnalyticsStarter && hasMoneyContext;
 }
 
 async function handleAnalyticsQuestion(msg) {
@@ -736,18 +764,13 @@ async function handleProjectNameInputSimple(msg, userState) {
       return;
     }
     
-    // Create project directly without keywords
-    const newProject = await projectService.create({
-      owner_id: user.id,
-      name: text,
-      description: `Проект "${text}" для отслеживания расходов`,
-      is_active: false
+    // Ask for keywords instead of creating directly
+    stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_KEYWORDS, {
+      projectName: text
     });
 
-    stateManager.clearState(chatId);
-    
-    await bot.sendMessage(chatId, 
-      `✅ Проект "${text}" создан!\n\n📋 Теперь можете добавлять расходы в этот проект.`
+    await bot.sendMessage(chatId,
+      `📝 Теперь добавьте ключевые слова для проекта "${text}"\n\n🔍 Ключевые слова помогут AI автоматически определять транзакции для этого проекта.\n\n💡 Примеры:\n• отпуск, отдых, путешествие, гостиница\n• магазин, продукты, еда, супермаркет\n• кафе, ресторан, обед, ужин\n\nОтправьте **-** если не хотите добавлять ключевые слова`
     );
     
   } catch (error) {

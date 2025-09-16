@@ -7,6 +7,16 @@ const { getBot } = require('../../utils/bot');
 const { stateManager } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 
+// Admin user IDs
+const ADMIN_IDS = [
+  7967825498  // @loomiq_support
+];
+
+// Helper function to check if user is admin
+function isAdmin(userId) {
+  return ADMIN_IDS.includes(userId);
+}
+
 // Command: /start
 async function handleStart(msg, match) {
   const chatId = msg.chat.id;
@@ -62,22 +72,16 @@ async function handleHelp(msg, match) {
   const chatId = msg.chat.id;
   const bot = getBot();
   
-  const helpText = `🏦 Expense Tracker - Справка
+  const helpText = `🏦 Loomiq - Справка
 
 📝 Как добавить транзакцию:
 • Голосовое: "Потратил 500 рублей на продукты"
 • Текстом: "кофе 200р" или "зарплата 50000₽"
 • Поддержка расходов и доходов
 
-📱 Основные функции:
-• 📋 Проекты - создание и управление проектами для группировки транзакций
-• ⚙️ Настройки - изменение валюты, экспорт данных, управление категориями
-• 📊 Экспорт данных - выгрузка всех транзакций в CSV/Excel файлы
-• 🔄 Синхронизация с Google Sheets - автоматическая запись в таблицы
-
 🎯 Команды (через меню):
 /connect - Подключить Google таблицу
-/sync - Синхронизация с Google Sheets
+/sync - Синхронизация с Google Sheets (записи, сделанные пользователем в таблицах, запишутся в память бота)
 /categories - Свои категории (PRO)
 /upgrade - Информация о PRO плане
 
@@ -93,7 +97,7 @@ async function handleHelp(msg, match) {
 • 🎯 Ключевые слова для автоопределения проектов
 • 📊 Расширенная аналитика
 
-❓ Проблемы? Напишите @support_bot`;
+❓ Проблемы? Напишите @loomiq_support`;
 
   await bot.sendMessage(chatId, helpText);
 }
@@ -332,18 +336,24 @@ async function handleUpgrade(msg, match) {
 • 📂 Кастомные категории
 • ⚡ Приоритетная поддержка
 
-💰 Цены (Telegram Stars):
-• 1 месяц: 250 ⭐ (~$5.00)
-• 6 месяцев: 1200 ⭐ (~$24.00) 🔥 Экономия $6
-• 1 год: 2000 ⭐ (~$40.00) 🔥🔥 Экономия $20
+💰 **Цены:**
+• 1 месяц: 499 ₽
+• 6 месяцев: 2499 ₽ 🔥 Экономия 500 ₽
+• 1 год: 4499 ₽ 🔥🔥 Экономия 1500 ₽
 
-⭐ **Как оплатить:**
-1. Нажмите кнопку с нужным планом
-2. Telegram откроет счёт на оплату Stars
-3. Оплатите любым способом (карта, Apple Pay, Google Pay)
-4. PRO активируется мгновенно!
+💳 **Как подписаться:**
 
-💡 Stars можно купить в разделе "Настройки" → "Telegram Premium"`;
+**Boosty.to** (для России):
+• Принимаем карты РФ
+• Мгновенная активация
+• Поддержка рублей
+
+**Patreon** (международный):
+• PayPal, карты Visa/MC
+• Долларовые тарифы
+• Глобальная доступность
+
+После подписки пришлите скриншот об оплате в поддержку @loomiq_support для активации PRO статуса.`;
 
   await bot.sendMessage(chatId, upgradeText, {
     reply_markup: getUpgradeKeyboard()
@@ -646,6 +656,228 @@ async function handleAsk(msg, match) {
   }
 }
 
+// Helper function to calculate expiry date
+function calculateExpiryDate(period) {
+  const now = new Date();
+  switch (period) {
+    case '1month':
+      return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    case '6months':
+      return new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000);
+    case '1year':
+      return new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+    default:
+      return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  }
+}
+
+// Admin command: /activate_pro <user_id> <period>
+async function handleActivatePro(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (!isAdmin(user.id)) {
+    return; // Silently ignore non-admin users
+  }
+
+  const targetUserId = parseInt(match[1]);
+  const period = match[2];
+
+  try {
+    // Calculate expiry date
+    const expiresAt = calculateExpiryDate(period);
+
+    // Update user PRO status
+    await userService.update(targetUserId, {
+      is_premium: true,
+      pro_expires_at: expiresAt.toISOString(),
+      pro_plan_type: period
+    });
+
+    const periodNames = {
+      '1month': '1 месяц',
+      '6months': '6 месяцев',
+      '1year': '1 год'
+    };
+
+    const expiryDateStr = expiresAt.toLocaleDateString('ru-RU');
+
+    // Notify admin
+    await bot.sendMessage(chatId,
+      `✅ **PRO активирован**\n\n👤 Пользователь: ${targetUserId}\n📅 Период: ${periodNames[period]}\n⏰ Действует до: ${expiryDateStr}`,
+      { parse_mode: 'Markdown' }
+    );
+
+    // Notify user about PRO activation
+    try {
+      await bot.sendMessage(targetUserId,
+        `🎉 **PRO статус активирован!**\n\n💎 Период: ${periodNames[period]}\n📅 Действует до: ${expiryDateStr}\n\n✨ Теперь вам доступны все PRO функции:\n• ∞ Неограниченные проекты\n• ∞ Неограниченные записи\n• 20 AI вопросов/день\n• 10 синхронизаций/день\n• 👥 Командная работа\n• 📂 Кастомные категории\n\nСпасибо за поддержку! 🚀`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (notifyError) {
+      logger.warn('Could not notify user about PRO activation:', notifyError);
+      await bot.sendMessage(chatId, `⚠️ PRO активирован, но не удалось уведомить пользователя (возможно, заблокировал бота)`);
+    }
+
+    logger.info(`Admin ${user.id} activated PRO for user ${targetUserId} (${period})`);
+
+  } catch (error) {
+    logger.error('Error activating PRO:', error);
+    await bot.sendMessage(chatId, `❌ Ошибка активации PRO: ${error.message}`);
+  }
+}
+
+// Admin command: /deactivate_pro <user_id>
+async function handleDeactivatePro(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (!isAdmin(user.id)) {
+    return;
+  }
+
+  const targetUserId = parseInt(match[1]);
+
+  try {
+    // Deactivate PRO status
+    await userService.update(targetUserId, {
+      is_premium: false,
+      pro_expires_at: null,
+      pro_plan_type: null
+    });
+
+    await bot.sendMessage(chatId,
+      `✅ **PRO деактивирован**\n\n👤 Пользователь: ${targetUserId}`,
+      { parse_mode: 'Markdown' }
+    );
+
+    // Notify user about PRO deactivation
+    try {
+      await bot.sendMessage(targetUserId,
+        `💎 Ваш PRO статус был деактивирован.\n\nСпасибо за использование наших услуг! Вы можете продлить подписку командой /upgrade`
+      );
+    } catch (notifyError) {
+      logger.warn('Could not notify user about PRO deactivation:', notifyError);
+    }
+
+    logger.info(`Admin ${user.id} deactivated PRO for user ${targetUserId}`);
+
+  } catch (error) {
+    logger.error('Error deactivating PRO:', error);
+    await bot.sendMessage(chatId, `❌ Ошибка деактивации PRO: ${error.message}`);
+  }
+}
+
+// Admin command: /check_pro <user_id>
+async function handleCheckPro(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (!isAdmin(user.id)) {
+    return;
+  }
+
+  const targetUserId = parseInt(match[1]);
+
+  try {
+    const targetUser = await userService.findById(targetUserId);
+
+    if (!targetUser) {
+      await bot.sendMessage(chatId, `❌ Пользователь ${targetUserId} не найден`);
+      return;
+    }
+
+    const statusText = targetUser.is_premium
+      ? `✅ **PRO активен**\n📅 До: ${new Date(targetUser.pro_expires_at).toLocaleDateString('ru-RU')}\n📋 План: ${targetUser.pro_plan_type}`
+      : `❌ **PRO неактивен**`;
+
+    await bot.sendMessage(chatId,
+      `👤 **Пользователь:** ${targetUserId}\n🏷️ **Имя:** ${targetUser.first_name || 'Не указано'}\n📱 **Username:** @${targetUser.username || 'Не указан'}\n\n${statusText}`,
+      { parse_mode: 'Markdown' }
+    );
+
+  } catch (error) {
+    logger.error('Error checking PRO status:', error);
+    await bot.sendMessage(chatId, `❌ Ошибка проверки статуса: ${error.message}`);
+  }
+}
+
+// Admin command: /list_pro
+async function handleListPro(msg) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  if (!isAdmin(user.id)) {
+    return;
+  }
+
+  try {
+    // Get all PRO users
+    const { data: proUsers, error } = await userService.supabase
+      .from('users')
+      .select('id, first_name, username, is_premium, pro_expires_at, pro_plan_type')
+      .eq('is_premium', true)
+      .order('pro_expires_at', { ascending: true });
+
+    if (error) {
+      throw error;
+    }
+
+    if (!proUsers || proUsers.length === 0) {
+      await bot.sendMessage(chatId, '📋 **PRO пользователи не найдены**', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    let message = `📋 **Список PRO пользователей** (${proUsers.length}):\n\n`;
+
+    proUsers.forEach((proUser, index) => {
+      const expiry = new Date(proUser.pro_expires_at).toLocaleDateString('ru-RU');
+      const name = proUser.first_name || 'Не указано';
+      const username = proUser.username ? `@${proUser.username}` : 'Не указан';
+
+      message += `${index + 1}. **${name}** (${username})\n`;
+      message += `   👤 ID: ${proUser.id}\n`;
+      message += `   📅 До: ${expiry}\n`;
+      message += `   📋 План: ${proUser.pro_plan_type}\n\n`;
+    });
+
+    // Split message if too long
+    if (message.length > 4000) {
+      const chunks = [];
+      let currentChunk = `📋 **Список PRO пользователей** (${proUsers.length}):\n\n`;
+
+      proUsers.forEach((proUser, index) => {
+        const userInfo = `${index + 1}. **${proUser.first_name || 'Не указано'}** (@${proUser.username || 'Не указан'})\n   👤 ID: ${proUser.id}\n   📅 До: ${new Date(proUser.pro_expires_at).toLocaleDateString('ru-RU')}\n   📋 План: ${proUser.pro_plan_type}\n\n`;
+
+        if (currentChunk.length + userInfo.length > 4000) {
+          chunks.push(currentChunk);
+          currentChunk = userInfo;
+        } else {
+          currentChunk += userInfo;
+        }
+      });
+
+      if (currentChunk) {
+        chunks.push(currentChunk);
+      }
+
+      for (const chunk of chunks) {
+        await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+      }
+    } else {
+      await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    }
+
+  } catch (error) {
+    logger.error('Error listing PRO users:', error);
+    await bot.sendMessage(chatId, `❌ Ошибка получения списка: ${error.message}`);
+  }
+}
+
 module.exports = {
   handleStart,
   handleHelp,
@@ -658,5 +890,9 @@ module.exports = {
   handleEmail,
   handleConnect,
   handleDevPro,
-  handleAsk
+  handleAsk,
+  handleActivatePro,
+  handleDeactivatePro,
+  handleCheckPro,
+  handleListPro
 };
