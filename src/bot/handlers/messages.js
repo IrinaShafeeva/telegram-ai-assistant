@@ -8,7 +8,7 @@ const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
-const { shortTransactionMap } = require('./callbacks');
+const { shortTransactionMap } = require('../../utils/transactionMap');
 const logger = require('../../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
@@ -265,6 +265,7 @@ async function handleExpenseText(msg) {
 
       // Store mapping for short transaction ID
       const shortId = tempId.substring(0, 8);
+      logger.info(`Creating mapping: shortId=${shortId}, fullTransactionId=${tempId}, projectsCount=${projects.length}`);
       shortTransactionMap.set(shortId, {
         fullTransactionId: tempId,
         projects: projects

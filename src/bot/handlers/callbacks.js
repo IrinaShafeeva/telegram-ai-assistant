@@ -3006,8 +3006,8 @@ async function handleCancelConnect(chatId, messageId) {
   }
 }
 
-// Global mapping for short transaction IDs to full data
-const shortTransactionMap = new Map();
+// Import shared transaction mapping
+const { shortTransactionMap } = require('../../utils/transactionMap');
 
 async function handleProjectSelectionForTransaction(callbackQuery, data) {
   const chatId = callbackQuery.message.chat.id;
@@ -3017,9 +3017,13 @@ async function handleProjectSelectionForTransaction(callbackQuery, data) {
   const [, projectIndex, shortTransactionId, transactionType] = data.split(':');
 
   try {
+    logger.info(`Project selection: projectIndex=${projectIndex}, shortTransactionId=${shortTransactionId}, transactionType=${transactionType}`);
+    logger.info(`Available mappings: ${Array.from(shortTransactionMap.keys()).join(', ')}`);
+
     // Get stored transaction data using full ID from mapping
     const mappedData = shortTransactionMap.get(shortTransactionId);
     if (!mappedData) {
+      logger.error(`No mapping found for shortTransactionId: ${shortTransactionId}`);
       await bot.editMessageText('❌ Данные транзакции истекли. Попробуйте еще раз.', {
         chat_id: chatId,
         message_id: messageId
@@ -3128,6 +3132,5 @@ async function handleCancelTransaction(chatId, messageId, data) {
 }
 
 module.exports = {
-  handleCallback,
-  shortTransactionMap
+  handleCallback
 };
