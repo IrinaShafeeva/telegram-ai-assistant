@@ -229,7 +229,7 @@ async function handleExpenseText(msg) {
 
       // Store transaction temporarily and ask user to select project
       const tempId = uuidv4();
-      const transactionData = {
+      const baseTransactionData = {
         user_id: user.id,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
@@ -237,15 +237,21 @@ async function handleExpenseText(msg) {
           parsedTransaction.type === 'income' ? 'Прочие доходы' : 'Прочее'
         ),
         description: parsedTransaction.description,
-        expense_date: new Date().toISOString().split('T')[0],
-        income_date: new Date().toISOString().split('T')[0],
         type: parsedTransaction.type
       };
 
       if (parsedTransaction.type === 'income') {
-        tempIncomes.set(tempId, transactionData);
+        const incomeData = {
+          ...baseTransactionData,
+          income_date: new Date().toISOString().split('T')[0]
+        };
+        tempIncomes.set(tempId, incomeData);
       } else {
-        tempExpenses.set(tempId, transactionData);
+        const expenseData = {
+          ...baseTransactionData,
+          expense_date: new Date().toISOString().split('T')[0]
+        };
+        tempExpenses.set(tempId, expenseData);
       }
 
       // Auto-expire after 5 minutes
