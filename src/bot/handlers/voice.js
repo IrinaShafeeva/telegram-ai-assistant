@@ -14,11 +14,11 @@ async function handleVoice(msg) {
   const voice = msg.voice;
   const bot = getBot();
 
-  // Get user's active project
+  // Get user's projects (all of them, AI will choose the right one)
   const projects = await projectService.findByUserId(user.id);
-  const activeProject = projects.find(p => p.is_active) || projects[0];
+  const defaultProject = projects[0]; // fallback project
 
-  if (!activeProject) {
+  if (!defaultProject) {
     await bot.sendMessage(chatId,
       '📋 Сначала создайте проект для отслеживания расходов.',
       {
@@ -75,16 +75,14 @@ async function handleVoice(msg) {
     }
 
     // Find the correct project based on AI analysis
-    let selectedProject = activeProject; // default fallback
+    let selectedProject = defaultProject; // default fallback
     if (parsedTransaction.project) {
-      const foundProject = projects.find(p =>
-        p.is_active && p.name === parsedTransaction.project
-      );
+      const foundProject = projects.find(p => p.name === parsedTransaction.project);
       if (foundProject) {
         selectedProject = foundProject;
         logger.info(`🎯 AI selected project: ${foundProject.name} for transaction: ${transcription}`);
       } else {
-        logger.warn(`⚠️ AI suggested project "${parsedTransaction.project}" not found, using default: ${activeProject.name}`);
+        logger.warn(`⚠️ AI suggested project "${parsedTransaction.project}" not found, using default: ${defaultProject.name}`);
       }
     }
 

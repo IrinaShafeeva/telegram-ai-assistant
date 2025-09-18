@@ -69,13 +69,11 @@ class UserContextService {
    */
   async getUserProjects(userId) {
     try {
-      // Берем все проекты, где пользователь владелец или участник
+      // Берем все проекты пользователя
       const projects = await projectService.findByUserId(userId);
 
-      // Фильтруем только активные, исключаем дефолтный и подготавливаем keywords
+      // Возвращаем все проекты с подготовленными keywords (ИИ сам выберет нужный)
       return (projects || [])
-        .filter(proj => proj?.is_active)
-        .filter(proj => proj?.name !== 'Личные расходы')
         .map(proj => ({
           id: proj.id,
           name: proj.name,
