@@ -187,15 +187,11 @@ async function handleExpenseText(msg) {
 
     // Apply user's default currency if no currency was detected or if OpenAI defaulted to RUB but user has different preference
     const originalCurrency = parsedTransaction.currency;
-    if (!parsedTransaction.currency || (parsedTransaction.currency === 'RUB' && user.primary_currency && user.primary_currency !== 'RUB')) {
-      if (user.primary_currency) {
-        parsedTransaction.currency = user.primary_currency;
-        logger.info(`💱 Using user default currency: ${parsedTransaction.currency} (was: ${originalCurrency || 'null'})`);
-      } else {
-        // Determine currency by language/text content
-        parsedTransaction.currency = detectCurrencyByLanguage(text, user.language_code);
-        logger.info(`💱 No currency detected, detected by language: ${parsedTransaction.currency}`);
-      }
+    const userPrimaryCurrency = userContext.primaryCurrency || user.primary_currency || 'RUB';
+
+    if (!parsedTransaction.currency || (parsedTransaction.currency === 'RUB' && userPrimaryCurrency !== 'RUB')) {
+      parsedTransaction.currency = userPrimaryCurrency;
+      logger.info(`💱 Using user default currency: ${parsedTransaction.currency} (was: ${originalCurrency || 'null'})`);
     }
 
     // Determine target project: use AI suggested project or fallback logic

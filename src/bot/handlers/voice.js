@@ -1,6 +1,7 @@
 const axios = require('axios');
 const { userService, projectService, incomeService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
+const userContextService = require('../../services/userContext');
 const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
 const { tempExpenses, tempIncomes } = require('./messages');
 const { getBot } = require('../../utils/bot');
@@ -61,12 +62,16 @@ async function handleVoice(msg) {
       message_id: processingMessage.message_id
     });
 
+    // Get user context for AI transaction parsing
+    const userContext = await userContextService.getUserContext(user.id);
+    logger.info(`👤 User context for voice transaction: ${JSON.stringify(userContext)}`);
+
     // Parse transaction with AI (could be income or expense)
-    const parsedTransaction = await openaiService.parseTransaction(transcription);
+    const parsedTransaction = await openaiService.parseTransaction(transcription, userContext);
 
     // Use user's primary currency if not specified
     if (!parsedTransaction.currency) {
-      parsedTransaction.currency = user.primary_currency;
+      parsedTransaction.currency = userContext.primaryCurrency || 'RUB';
     }
 
     const tempId = uuidv4();

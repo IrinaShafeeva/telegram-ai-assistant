@@ -85,7 +85,7 @@ class OpenAIService {
 
   async parseTransaction(userInput, userContext = {}) {
     try {
-      const { categories = [], projects = [] } = userContext;
+      const { categories = [], projects = [], primaryCurrency = 'RUB' } = userContext;
 
       // Форматируем пользовательский контекст для промпта
       let contextPrompt = '';
@@ -130,7 +130,7 @@ ${contextPrompt}Верни JSON в точном формате:
 3. Если не найдешь совпадения - используй стандартные категории
 4. type: "income" для доходов, "expense" для расходов
 5. amount: только число без валюты
-6. currency: определи из контекста или null
+6. currency: определи из контекста или используй "${primaryCurrency}" по умолчанию
 7. description: краткое описание на русском
 8. category: ТОЧНОЕ название из пользовательских или стандартных категорий
 9. project: ТОЧНОЕ название проекта из пользовательских или null

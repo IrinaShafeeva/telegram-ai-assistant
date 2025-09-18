@@ -14,18 +14,20 @@ class UserContextService {
    */
   async getUserContext(userId) {
     try {
-      const [categoriesResult, projectsResult] = await Promise.all([
+      const [categoriesResult, projectsResult, userResult] = await Promise.all([
         this.getUserCategories(userId),
-        this.getUserProjects(userId)
+        this.getUserProjects(userId),
+        this.getUserCurrency(userId)
       ]);
 
       return {
         categories: categoriesResult,
-        projects: projectsResult
+        projects: projectsResult,
+        primaryCurrency: userResult
       };
     } catch (error) {
       logger.error('Failed to get user context:', error);
-      return { categories: [], projects: [] };
+      return { categories: [], projects: [], primaryCurrency: 'RUB' };
     }
   }
 
@@ -118,6 +120,30 @@ class UserContextService {
     } catch (error) {
       logger.error('Error getting default project:', error);
       return null;
+    }
+  }
+
+  /**
+   * Получить валюту пользователя по умолчанию
+   * @param {string} userId - ID пользователя
+   * @returns {string} Валюта пользователя или 'RUB' по умолчанию
+   */
+  async getUserCurrency(userId) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('primary_currency')
+        .eq('id', userId)
+        .single();
+
+      if (error || !data || !data.primary_currency) {
+        return 'RUB'; // Дефолтная валюта
+      }
+
+      return data.primary_currency;
+    } catch (error) {
+      logger.error('Error getting user currency:', error);
+      return 'RUB';
     }
   }
 
