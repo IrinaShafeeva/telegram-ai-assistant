@@ -87,6 +87,11 @@ class OpenAIService {
     try {
       const { categories = [], projects = [], primaryCurrency = 'RUB' } = userContext;
 
+      // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ КОНТЕКСТА
+      logger.info(`🧠 AI parsing transaction: "${userInput}"`);
+      logger.info(`📊 User context - Projects: ${JSON.stringify(projects)}`);
+      logger.info(`📂 User context - Categories: ${JSON.stringify(categories)}`);
+
       // Форматируем пользовательский контекст для промпта
       let contextPrompt = '';
       if (projects.length > 0 || categories.length > 0) {
@@ -108,6 +113,8 @@ ${categories.map(c => `- ${c.name}: ${c.keywords}`).join('\n')}
 `;
         }
       }
+
+      logger.info(`📝 Context prompt for AI:\n${contextPrompt}`);
 
       const prompt = `
 Определи тип транзакции из текста пользователя и извлеки информацию.
@@ -161,24 +168,26 @@ ${contextPrompt}Верни JSON в точном формате:
       });
 
       const result = completion.choices[0].message.content.trim();
-      
+      logger.info(`🤖 AI raw response: ${result}`);
+
       // Remove markdown code blocks if present
       const cleanResult = result.replace(/```json\n?|\n?```/g, '');
-      
+
       try {
         const parsed = JSON.parse(cleanResult);
-        
+        logger.info(`✅ AI parsed result: ${JSON.stringify(parsed)}`);
+
         // Validate required fields
         if (!parsed.amount || isNaN(parsed.amount)) {
           throw new Error('Invalid amount');
         }
-        
+
         if (!['income', 'expense'].includes(parsed.type)) {
           throw new Error('Invalid transaction type');
         }
-        
+
         // Clean and validate data
-        return {
+        const finalResult = {
           type: parsed.type,
           amount: parseFloat(parsed.amount),
           currency: parsed.currency || null,
@@ -186,6 +195,9 @@ ${contextPrompt}Верни JSON в точном формате:
           category: parsed.category || null,
           project: parsed.project || null
         };
+
+        logger.info(`🎯 Final AI result: ${JSON.stringify(finalResult)}`);
+        return finalResult;
         
       } catch (parseError) {
         logger.error('JSON parsing failed:', parseError, 'Raw result:', cleanResult);

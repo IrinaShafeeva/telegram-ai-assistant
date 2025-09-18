@@ -74,13 +74,27 @@ async function handleVoice(msg) {
       parsedTransaction.currency = userContext.primaryCurrency || 'RUB';
     }
 
+    // Find the correct project based on AI analysis
+    let selectedProject = activeProject; // default fallback
+    if (parsedTransaction.project) {
+      const foundProject = projects.find(p =>
+        p.is_active && p.name === parsedTransaction.project
+      );
+      if (foundProject) {
+        selectedProject = foundProject;
+        logger.info(`🎯 AI selected project: ${foundProject.name} for transaction: ${transcription}`);
+      } else {
+        logger.warn(`⚠️ AI suggested project "${parsedTransaction.project}" not found, using default: ${activeProject.name}`);
+      }
+    }
+
     const tempId = uuidv4();
-    
+
     if (parsedTransaction.type === 'income') {
       // Handle income transaction
       const incomeData = {
         user_id: user.id,
-        project_id: activeProject.id,
+        project_id: selectedProject.id,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
         category: parsedTransaction.category || 'Прочие доходы',

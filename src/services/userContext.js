@@ -41,8 +41,7 @@ class UserContextService {
       const { data, error } = await supabase
         .from('custom_categories')
         .select('id, name, keywords')
-        .eq('user_id', userId)
-        .eq('is_active', true);
+        .eq('user_id', userId);
 
       if (error) {
         logger.error('Error fetching user categories:', error);
