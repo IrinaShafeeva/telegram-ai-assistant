@@ -1,4 +1,4 @@
-const supabase = require('./supabase');
+const { supabase, projectService } = require('./supabase');
 const logger = require('../utils/logger');
 
 /**
@@ -70,25 +70,20 @@ class UserContextService {
    */
   async getUserProjects(userId) {
     try {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('id, name, keywords')
-        .eq('user_id', userId)
-        .eq('status', 'active');
+      // Берем все проекты, где пользователь владелец или участник
+      const projects = await projectService.findByUserId(userId);
 
-      if (error) {
-        logger.error('Error fetching user projects:', error);
-        return [];
-      }
-
-      // Исключаем дефолтный проект "Личные расходы" и добавляем fallback ключевые слова
-      return (data || [])
-        .filter(proj => proj.name !== 'Личные расходы')
+      // Фильтруем только активные, исключаем дефолтный и подготавливаем keywords
+      return (projects || [])
+        .filter(proj => proj?.is_active)
+        .filter(proj => proj?.name !== 'Личные расходы')
         .map(proj => ({
           id: proj.id,
           name: proj.name,
-          // Если нет ключевых слов - используем название проекта как ключевое слово
-          keywords: proj.keywords && proj.keywords.trim() ? proj.keywords : proj.name.toLowerCase()
+          keywords:
+            proj.keywords && typeof proj.keywords === 'string' && proj.keywords.trim().length > 0
+              ? proj.keywords
+              : (proj.name || '').toLowerCase()
         }));
     } catch (error) {
       logger.error('Error in getUserProjects:', error);
@@ -106,9 +101,9 @@ class UserContextService {
       const { data, error } = await supabase
         .from('projects')
         .select('id, name')
-        .eq('user_id', userId)
+        .eq('owner_id', userId)
         .eq('name', 'Личные расходы')
-        .eq('status', 'active')
+        .eq('is_active', true)
         .single();
 
       if (error || !data) {
