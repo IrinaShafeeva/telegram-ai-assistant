@@ -9,7 +9,7 @@ const logger = require('../../utils/logger');
 
 // Admin user IDs
 const ADMIN_IDS = [
-  7967825498  // @loomiq_support
+  7967825498  // @loomiq_support_support
 ];
 
 // Helper function to check if user is admin
@@ -97,7 +97,7 @@ async function handleHelp(msg, match) {
 • 🎯 Ключевые слова для автоопределения проектов
 • 📊 Расширенная аналитика
 
-❓ Проблемы? Напишите @loomiq`;
+❓ Проблемы? Напишите @loomiq_support`;
 
   await bot.sendMessage(chatId, helpText);
 }
@@ -348,7 +348,7 @@ async function handleUpgrade(msg, match) {
 • PayPal, карты Visa/Mastercard
 • Глобальная доступность
 
-После подписки пришлите скриншот об оплате в поддержку @loomiq для активации PRO статуса.`;
+После подписки пришлите скриншот об оплате в поддержку @loomiq_support для активации PRO статуса.`;
 
   await bot.sendMessage(chatId, upgradeText, {
     reply_markup: getUpgradeKeyboard()
