@@ -117,19 +117,24 @@ ${categories.map(c => `- ${c.name}: ${c.keywords}`).join('\n')}
       logger.info(`📝 Context prompt for AI:\n${contextPrompt}`);
 
       const prompt = `
-Определи тип транзакции из текста пользователя и извлеки информацию.
+Определи транзакции из текста пользователя и извлеки информацию.
 
 Текст: "${userInput}"
 
-${contextPrompt}Верни JSON в точном формате:
-{
-  "type": "income" | "expense",
-  "amount": число,
-  "currency": "RUB" | "USD" | "EUR" | null,
-  "description": "описание транзакции",
-  "category": "категория" | null,
-  "project": "проект" | null
-}
+${contextPrompt}ВАЖНО: Если в тексте несколько транзакций (разделены переносами строк, точками с запятой, или перечислены через запятую) - верни массив транзакций.
+Если одна транзакция - верни массив с одним элементом.
+
+Верни JSON в точном формате:
+[
+  {
+    "type": "income" | "expense",
+    "amount": число,
+    "currency": "RUB" | "USD" | "EUR" | null,
+    "description": "описание транзакции",
+    "category": "категория" | null,
+    "project": "проект" | null
+  }
+]
 
 Правила категоризации:
 1. СНАЧАЛА ищи совпадения в пользовательских категориях и проектах по ключевым словам
@@ -177,27 +182,33 @@ ${contextPrompt}Верни JSON в точном формате:
         const parsed = JSON.parse(cleanResult);
         logger.info(`✅ AI parsed result: ${JSON.stringify(parsed)}`);
 
-        // Validate required fields
-        if (!parsed.amount || isNaN(parsed.amount)) {
-          throw new Error('Invalid amount');
-        }
+        // Ensure we have an array
+        const transactions = Array.isArray(parsed) ? parsed : [parsed];
 
-        if (!['income', 'expense'].includes(parsed.type)) {
-          throw new Error('Invalid transaction type');
-        }
+        // Validate and process each transaction
+        const processedTransactions = transactions.map((transaction, index) => {
+          if (!transaction.amount || isNaN(transaction.amount)) {
+            throw new Error(`Invalid amount in transaction ${index + 1}`);
+          }
 
-        // Clean and validate data
-        const finalResult = {
-          type: parsed.type,
-          amount: parseFloat(parsed.amount),
-          currency: parsed.currency || null,
-          description: parsed.description || (parsed.type === 'income' ? 'Доход' : 'Расход'),
-          category: parsed.category || null,
-          project: parsed.project || null
-        };
+          if (!['income', 'expense'].includes(transaction.type)) {
+            throw new Error(`Invalid transaction type in transaction ${index + 1}`);
+          }
 
-        logger.info(`🎯 Final AI result: ${JSON.stringify(finalResult)}`);
-        return finalResult;
+          return {
+            type: transaction.type,
+            amount: parseFloat(transaction.amount),
+            currency: transaction.currency || null,
+            description: transaction.description || (transaction.type === 'income' ? 'Доход' : 'Расход'),
+            category: transaction.category || null,
+            project: transaction.project || null
+          };
+        });
+
+        logger.info(`🎯 Final AI result (${processedTransactions.length} transactions): ${JSON.stringify(processedTransactions)}`);
+
+        // For backward compatibility, return single transaction if only one
+        return processedTransactions.length === 1 ? processedTransactions[0] : processedTransactions;
         
       } catch (parseError) {
         logger.error('JSON parsing failed:', parseError, 'Raw result:', cleanResult);
