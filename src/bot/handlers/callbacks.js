@@ -212,9 +212,14 @@ async function handleCallback(callbackQuery) {
 
 async function handleSaveExpense(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
+  logger.info(`💾 handleSaveExpense called with data: ${data}, extracted tempId: ${tempId}`);
+  logger.info(`💾 Available tempExpenses keys: ${Array.from(tempExpenses.keys()).join(', ')}`);
+
   const expenseData = tempExpenses.get(tempId);
+  logger.info(`💾 Found expenseData: ${expenseData ? 'YES' : 'NO'}`);
 
   if (!expenseData) {
+    logger.error(`💾 No expenseData found for tempId: ${tempId}`);
     await bot.editMessageText('❌ Данные расхода устарели. Попробуйте еще раз.', {
       chat_id: chatId,
       message_id: messageId
@@ -636,15 +641,12 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
 🇷🇺 Для пользователей из России
 
-**Доступные планы:**
-• 1 месяц: 499 ₽
-• 6 месяцев: 2499 ₽ 🔥
-• 1 год: 4499 ₽ 🔥🔥
+**Цена:** 399 ₽ в месяц
 
 **Как подписаться:**
-1. Перейдите по ссылке: https://boosty.to/your_project
-2. Выберите подходящий план
-3. Оплатите удобным способом
+1. Перейдите по ссылке: https://boosty.to/loomiq/purchase/3568312?ssource=DIRECT&share=subscription_link
+2. Оформите месячную подписку
+3. Оплатите удобным способом (карты РФ)
 4. Пришлите скриншот об оплате в поддержку @loomiq_support
 5. PRO статус активируется в течение часа!
 
@@ -661,14 +663,11 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
 🌍 Для международных пользователей
 
-**Доступные планы:**
-• 1 месяц: $5
-• 6 месяцев: $25 🔥
-• 1 год: $45 🔥🔥
+**Цена:** $4 в месяц
 
 **Как подписаться:**
-1. Перейдите по ссылке: https://patreon.com/your_project
-2. Выберите подходящий план
+1. Перейдите по ссылке: https://www.patreon.com/14834277/join
+2. Оформите месячную подписку
 3. Оплатите через PayPal или карту
 4. Пришлите скриншот об оплате в поддержку @loomiq_support
 5. PRO статус активируется в течение часа!
@@ -3061,6 +3060,8 @@ async function handleProjectSelectionForTransaction(callbackQuery, data) {
     // Update transaction data with project
     transactionData.project_id = project.id;
     transactionData.project_name = project.name;
+    logger.info(`📋 Updated transaction data with project: ${project.name} (ID: ${project.id})`);
+    logger.info(`📋 Will use fullTransactionId for confirmation keyboard: ${fullTransactionId}`);
 
     // Clean up mapping
     shortTransactionMap.delete(shortTransactionId);
