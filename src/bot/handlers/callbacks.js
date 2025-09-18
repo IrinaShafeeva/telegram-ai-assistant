@@ -668,8 +668,7 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
 ✨ Принимаем карты РФ и другие способы оплаты`, {
         chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown'
+        message_id: messageId
       });
       break;
 
@@ -690,8 +689,7 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
 ✨ Принимаем PayPal, Visa, Mastercard`, {
         chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown'
+        message_id: messageId
       });
       break;
       
