@@ -293,8 +293,40 @@ const userService = {
       p_user_id: userId,
       p_counter_field: field
     });
-    
+
     if (error) throw error;
+  },
+
+  async checkMonthlyRecordsLimit(userId) {
+    const user = await this.findById(userId);
+    if (!user || user.is_premium) return true; // PRO users have unlimited records
+
+    const { SUBSCRIPTION_LIMITS } = require('../config/constants');
+    const limit = SUBSCRIPTION_LIMITS.FREE.expenses_per_month;
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+    // Count both expenses and incomes for this month
+    const [expensesResult, incomesResult] = await Promise.all([
+      supabase
+        .from('expenses')
+        .select('id', { count: 'exact' })
+        .eq('user_id', userId)
+        .gte('expense_date', startOfMonth.toISOString().split('T')[0])
+        .lte('expense_date', endOfMonth.toISOString().split('T')[0]),
+
+      supabase
+        .from('incomes')
+        .select('id', { count: 'exact' })
+        .eq('user_id', userId)
+        .gte('income_date', startOfMonth.toISOString().split('T')[0])
+        .lte('income_date', endOfMonth.toISOString().split('T')[0])
+    ]);
+
+    const totalRecords = (expensesResult.count || 0) + (incomesResult.count || 0);
+    return totalRecords < limit;
   }
 };
 

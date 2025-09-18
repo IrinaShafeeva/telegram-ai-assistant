@@ -228,6 +228,22 @@ async function handleSaveExpense(chatId, messageId, data, user) {
   }
 
   try {
+    // Check monthly records limit for FREE users
+    const canCreate = await userService.checkMonthlyRecordsLimit(user.id);
+    if (!canCreate) {
+      await bot.editMessageText(
+        `⛔ Лимит записей исчерпан (100 записей в месяц).\n\n💎 В PRO плане: неограниченные записи.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: { inline_keyboard: [[
+            { text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }
+          ]] }
+        }
+      );
+      return;
+    }
+
     // Create a copy without project_name (which is only for display, not database storage)
     const { project_name, ...dbExpenseData } = expenseData;
 
@@ -647,7 +663,7 @@ async function handleUpgradeAction(chatId, messageId, data) {
 1. Перейдите по ссылке: https://boosty.to/loomiq/purchase/3568312?ssource=DIRECT&share=subscription_link
 2. Оформите месячную подписку
 3. Оплатите удобным способом (карты РФ)
-4. Пришлите скриншот об оплате в поддержку @loomiq_support
+4. Пришлите скриншот об оплате в поддержку @loomiq
 5. PRO статус активируется в течение часа!
 
 ✨ Принимаем карты РФ и другие способы оплаты`, {
@@ -669,7 +685,7 @@ async function handleUpgradeAction(chatId, messageId, data) {
 1. Перейдите по ссылке: https://www.patreon.com/14834277/join
 2. Оформите месячную подписку
 3. Оплатите через PayPal или карту
-4. Пришлите скриншот об оплате в поддержку @loomiq_support
+4. Пришлите скриншот об оплате в поддержку @loomiq
 5. PRO статус активируется в течение часа!
 
 ✨ Принимаем PayPal, Visa, Mastercard`, {
@@ -684,10 +700,10 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
 🆓 FREE:
 ✅ 1 проект
-✅ 50 записей/месяц
+✅ 100 записей/месяц
 ✅ 5 AI вопросов/день
 ✅ 1 синхронизация/день
-✅ 9 базовых категорий
+✅ Базовые категории
 ❌ Командная работа
 ❌ Кастомные категории
 
@@ -715,7 +731,7 @@ async function handleUpgradeAction(chatId, messageId, data) {
       const faqText = `❓ Частые вопросы PRO:
 
 Q: Как отменить подписку?
-A: Напишите @loomiq_support
+A: Напишите @loomiq
 
 Q: Есть ли бесплатный пробный период?
 A: Да, 7 дней бесплатно при первом платеже
@@ -726,7 +742,7 @@ A: Да, все данные останутся, но с ограничения�
 Q: Можно ли оплатить картой РФ?
 A: Да, поддерживаются все основные платежные системы
 
-Другие вопросы: @loomiq_support`;
+Другие вопросы: @loomiq`;
 
       await bot.editMessageText(faqText, {
         chat_id: chatId,
@@ -1933,6 +1949,22 @@ async function handleSaveIncome(chatId, messageId, data, user) {
   }
 
   try {
+    // Check monthly records limit for FREE users
+    const canCreate = await userService.checkMonthlyRecordsLimit(user.id);
+    if (!canCreate) {
+      await bot.editMessageText(
+        `⛔ Лимит записей исчерпан (100 записей в месяц).\n\n💎 В PRO плане: неограниченные записи.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: { inline_keyboard: [[
+            { text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }
+          ]] }
+        }
+      );
+      return;
+    }
+
     // Create a copy without project_name (which is only for display, not database storage)
     const { project_name, ...dbIncomeData } = incomeData;
 

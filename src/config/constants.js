@@ -23,7 +23,7 @@ const SUPPORTED_CURRENCIES = ['RUB', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KZT', '
 const SUBSCRIPTION_LIMITS = {
   FREE: {
     projects: 1,
-    expenses_per_month: 50,
+    expenses_per_month: 100,
     ai_questions_per_day: 5,
     syncs_per_day: 1,
     custom_categories: false,
