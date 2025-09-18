@@ -738,6 +738,36 @@ A: Да, поддерживаются все основные платежные
         }
       });
       break;
+
+    case 'info':
+    case 'pro':
+      // Redirect to main upgrade message with full info and buttons
+      const { handleUpgrade } = require('./commands');
+      const upgradeMessage = {
+        chat: { id: chatId },
+        user: { id: chatId } // Will be populated by middleware
+      };
+
+      // Delete current message and send new upgrade message
+      try {
+        await bot.deleteMessage(chatId, messageId);
+      } catch (error) {
+        // If delete fails, just edit the message
+      }
+
+      await handleUpgrade(upgradeMessage);
+      break;
+
+    default:
+      // Unknown upgrade action, show main upgrade info
+      await bot.editMessageText(
+        '💎 Информация о PRO подписке недоступна. Используйте команду /upgrade',
+        {
+          chat_id: chatId,
+          message_id: messageId
+        }
+      );
+      break;
   }
 }
 
