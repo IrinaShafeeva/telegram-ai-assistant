@@ -75,16 +75,20 @@ async function runMigrations() {
 
   // Ensure is_collaborative column exists (migration for existing deployments)
   try {
-    const { error: collaborativeMigrationError } = await supabase.rpc('execute_sql', {
-      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_collaborative BOOLEAN DEFAULT FALSE;'
-    });
-    if (collaborativeMigrationError) {
-      logger.warn('is_collaborative column migration warning:', collaborativeMigrationError);
+    // Try to select from projects table with is_collaborative column to check if it exists
+    const { error: checkError } = await supabase
+      .from('projects')
+      .select('is_collaborative')
+      .limit(1);
+
+    if (checkError && checkError.code === 'PGRST204') {
+      logger.warn('is_collaborative column does not exist. Please add it manually in Supabase SQL Editor:');
+      logger.warn('ALTER TABLE projects ADD COLUMN is_collaborative BOOLEAN DEFAULT FALSE;');
     } else {
-      logger.info('is_collaborative column migration completed successfully');
+      logger.info('is_collaborative column exists or migration completed successfully');
     }
   } catch (error) {
-    logger.warn('Could not run is_collaborative column migration:', error);
+    logger.warn('Could not check is_collaborative column:', error);
   }
 
   // Create increment_counter function if it doesn't exist

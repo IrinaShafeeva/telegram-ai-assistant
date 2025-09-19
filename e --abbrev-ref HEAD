@@ -1,0 +1,27 @@
+[1mdiff --git a/src/bot/handlers/callbacks.js b/src/bot/handlers/callbacks.js[m
+[1mindex 4c23013..25583c7 100644[m
+[1m--- a/src/bot/handlers/callbacks.js[m
+[1m+++ b/src/bot/handlers/callbacks.js[m
+[36m@@ -781,16 +781,16 @@[m [masync function handleSettingsAction(chatId, messageId, data, user) {[m
+             [m
+             const keyboard = [];[m
+ [m
+[31m-            // Add manage/create button[m
+[32m+[m[32m            // Always show create button first[m
+[32m+[m[32m            keyboard.push([[m
+[32m+[m[32m              { text: '➕ Создать категорию', callback_data: 'add_custom_category' }[m
+[32m+[m[32m            ]);[m
+[32m+[m
+[32m+[m[32m            // Add manage button if categories exist[m
+             if (categories.length > 0) {[m
+               keyboard.push([[m
+                 { text: '📝 Управлять', callback_data: 'manage_categories' }[m
+               ]);[m
+[31m-            } else {[m
+[31m-              // If no categories, show create button[m
+[31m-              keyboard.push([[m
+[31m-                { text: '➕ Создать категорию', callback_data: 'add_custom_category' }[m
+[31m-              ]);[m
+             }[m
+ [m
+             // Add back button[m

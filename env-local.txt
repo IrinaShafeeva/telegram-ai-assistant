@@ -1,0 +1,32 @@
+# Local Testing Environment Configuration
+# Telegram Bot Configuration
+BOT_TOKEN=8228219357:AAH3EWYUhhnyb4oGc9AKTLl58xfZklAK9VU
+TELEGRAM_BOT_TOKEN=8228219357:AAH3EWYUhhnyb4oGc9AKTLl58xfZklAK9VU
+
+# Database Configuration (Supabase)
+SUPABASE_URL=your_supabase_url_here
+SUPABASE_ANON_KEY=your_supabase_anon_key_here
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
+
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Google Sheets Configuration
+GOOGLE_SHEETS_CREDENTIALS_PATH=./ai-assistant-sheets-ddaae7505964.json
+GOOGLE_SHEETS_CLIENT_ID=your_google_client_id_here
+GOOGLE_SHEETS_CLIENT_SECRET=your_google_client_secret_here
+GOOGLE_SHEETS_REDIRECT_URI=your_google_redirect_uri_here
+
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# Webhook Configuration (for production)
+USE_WEBHOOK=false
+WEBHOOK_URL=https://your-domain.com
+
+# Payment Configuration (if using payments)
+PAYMENT_PROVIDER_TOKEN=your_payment_provider_token_here
+
+# Logging
+LOG_LEVEL=info
