@@ -14,10 +14,103 @@ async function setupDatabase() {
       logger.info('Setting up database tables...');
       await createTables();
     }
+
+    // Always run migrations
+    await runMigrations();
+
     logger.info('Database connection established');
   } catch (error) {
     logger.error('Database setup failed:', error);
     throw error;
+  }
+}
+
+async function runMigrations() {
+  logger.info('Running database migrations...');
+
+  // Ensure confidence column exists in user_patterns (migration for existing deployments)
+  try {
+    const { error: migrationError } = await supabase.rpc('execute_sql', {
+      sql: 'ALTER TABLE user_patterns ADD COLUMN IF NOT EXISTS confidence DECIMAL(3,2) DEFAULT 0.5;'
+    });
+    if (migrationError) {
+      logger.warn('Confidence column migration warning:', migrationError);
+    } else {
+      logger.info('Confidence column migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run confidence column migration:', error);
+  }
+
+  // Ensure keywords column exists in projects (migration for existing deployments)
+  try {
+    const { error: keywordsMigrationError } = await supabase.rpc('execute_sql', {
+      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS keywords TEXT;'
+    });
+    if (keywordsMigrationError) {
+      logger.warn('Keywords column migration warning:', keywordsMigrationError);
+    } else {
+      logger.info('Keywords column migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run keywords column migration:', error);
+  }
+
+  // Ensure PRO subscription columns exist (migration for existing deployments)
+  try {
+    const { error: proMigrationError } = await supabase.rpc('execute_sql', {
+      sql: `
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_expires_at TIMESTAMP;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_plan_type VARCHAR(20);
+      `
+    });
+    if (proMigrationError) {
+      logger.warn('PRO columns migration warning:', proMigrationError);
+    } else {
+      logger.info('PRO columns migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run PRO columns migration:', error);
+  }
+
+  // Ensure is_collaborative column exists (migration for existing deployments)
+  try {
+    const { error: collaborativeMigrationError } = await supabase.rpc('execute_sql', {
+      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_collaborative BOOLEAN DEFAULT FALSE;'
+    });
+    if (collaborativeMigrationError) {
+      logger.warn('is_collaborative column migration warning:', collaborativeMigrationError);
+    } else {
+      logger.info('is_collaborative column migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run is_collaborative column migration:', error);
+  }
+
+  // Create increment_counter function if it doesn't exist
+  try {
+    const { error: functionError } = await supabase.rpc('execute_sql', {
+      sql: `
+        CREATE OR REPLACE FUNCTION increment_counter(user_id BIGINT, counter_field TEXT)
+        RETURNS VOID AS $$
+        BEGIN
+          -- Update the specified counter field for the user
+          IF counter_field = 'daily_ai_questions_used' THEN
+            UPDATE users SET daily_ai_questions_used = COALESCE(daily_ai_questions_used, 0) + 1 WHERE id = user_id;
+          ELSIF counter_field = 'daily_syncs_used' THEN
+            UPDATE users SET daily_syncs_used = COALESCE(daily_syncs_used, 0) + 1 WHERE id = user_id;
+          END IF;
+        END;
+        $$ LANGUAGE plpgsql SECURITY DEFINER;
+      `
+    });
+    if (functionError) {
+      logger.warn('Could not create increment_counter function:', functionError);
+    } else {
+      logger.info('increment_counter function created successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not create increment_counter function:', error);
   }
 }
 
@@ -145,91 +238,6 @@ async function createTables() {
     if (error) {
       logger.error('Error creating table:', error);
     }
-  }
-
-  // Ensure confidence column exists in user_patterns (migration for existing deployments)
-  try {
-    const { error: migrationError } = await supabase.rpc('execute_sql', {
-      sql: 'ALTER TABLE user_patterns ADD COLUMN IF NOT EXISTS confidence DECIMAL(3,2) DEFAULT 0.5;'
-    });
-    if (migrationError) {
-      logger.warn('Confidence column migration warning:', migrationError);
-    } else {
-      logger.info('Confidence column migration completed successfully');
-    }
-  } catch (error) {
-    logger.warn('Could not run confidence column migration:', error);
-  }
-
-  // Ensure keywords column exists in projects (migration for existing deployments)
-  try {
-    const { error: keywordsMigrationError } = await supabase.rpc('execute_sql', {
-      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS keywords TEXT;'
-    });
-    if (keywordsMigrationError) {
-      logger.warn('Keywords column migration warning:', keywordsMigrationError);
-    } else {
-      logger.info('Keywords column migration completed successfully');
-    }
-  } catch (error) {
-    logger.warn('Could not run keywords column migration:', error);
-  }
-
-  // Ensure PRO subscription columns exist (migration for existing deployments)
-  try {
-    const { error: proMigrationError } = await supabase.rpc('execute_sql', {
-      sql: `
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_expires_at TIMESTAMP;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_plan_type VARCHAR(20);
-      `
-    });
-    if (proMigrationError) {
-      logger.warn('PRO columns migration warning:', proMigrationError);
-    } else {
-      logger.info('PRO columns migration completed successfully');
-    }
-  } catch (error) {
-    logger.warn('Could not run PRO columns migration:', error);
-  }
-
-  // Ensure is_collaborative column exists (migration for existing deployments)
-  try {
-    const { error: collaborativeMigrationError } = await supabase.rpc('execute_sql', {
-      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_collaborative BOOLEAN DEFAULT FALSE;'
-    });
-    if (collaborativeMigrationError) {
-      logger.warn('is_collaborative column migration warning:', collaborativeMigrationError);
-    } else {
-      logger.info('is_collaborative column migration completed successfully');
-    }
-  } catch (error) {
-    logger.warn('Could not run is_collaborative column migration:', error);
-  }
-
-  // Create increment_counter function if it doesn't exist
-  try {
-    const { error: functionError } = await supabase.rpc('execute_sql', {
-      sql: `
-        CREATE OR REPLACE FUNCTION increment_counter(user_id BIGINT, counter_field TEXT)
-        RETURNS VOID AS $$
-        BEGIN
-          -- Update the specified counter field for the user
-          IF counter_field = 'daily_ai_questions_used' THEN
-            UPDATE users SET daily_ai_questions_used = COALESCE(daily_ai_questions_used, 0) + 1 WHERE id = user_id;
-          ELSIF counter_field = 'daily_syncs_used' THEN
-            UPDATE users SET daily_syncs_used = COALESCE(daily_syncs_used, 0) + 1 WHERE id = user_id;
-          END IF;
-        END;
-        $$ LANGUAGE plpgsql SECURITY DEFINER;
-      `
-    });
-    if (functionError) {
-      logger.warn('Could not create increment_counter function:', functionError);
-    } else {
-      logger.info('increment_counter function created successfully');
-    }
-  } catch (error) {
-    logger.warn('Could not create increment_counter function:', error);
   }
 }
 
