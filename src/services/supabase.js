@@ -192,6 +192,20 @@ async function createTables() {
     logger.warn('Could not run PRO columns migration:', error);
   }
 
+  // Ensure is_collaborative column exists (migration for existing deployments)
+  try {
+    const { error: collaborativeMigrationError } = await supabase.rpc('execute_sql', {
+      sql: 'ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_collaborative BOOLEAN DEFAULT FALSE;'
+    });
+    if (collaborativeMigrationError) {
+      logger.warn('is_collaborative column migration warning:', collaborativeMigrationError);
+    } else {
+      logger.info('is_collaborative column migration completed successfully');
+    }
+  } catch (error) {
+    logger.warn('Could not run is_collaborative column migration:', error);
+  }
+
   // Create increment_counter function if it doesn't exist
   try {
     const { error: functionError } = await supabase.rpc('execute_sql', {
