@@ -227,9 +227,51 @@ const userService = {
       .insert(userData)
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
+  },
+
+  async isTeamMember(userId) {
+    // Check if user is a member of any collaborative project
+    const { data, error } = await supabase
+      .from('project_members')
+      .select(`
+        project:projects!inner(is_collaborative)
+      `)
+      .eq('user_id', userId)
+      .eq('projects.is_collaborative', true)
+      .limit(1);
+
+    if (error) throw error;
+    return (data && data.length > 0);
+  },
+
+  async hasUnlimitedAccess(userId) {
+    // Check if user has premium OR is team member
+    const user = await this.findById(userId);
+    if (!user) return false;
+
+    if (user.is_premium) return true;
+
+    // Check if user is team member
+    return await this.isTeamMember(userId);
+  },
+
+  async canCreateProject(userId) {
+    // Check if user is PRO
+    const user = await this.findById(userId);
+    if (!user) return false;
+
+    if (user.is_premium) return true;
+
+    // For non-PRO users, check if they have any owned projects
+    const projects = await projectService.findByUserId(userId);
+    const ownedProjects = projects.filter(p => p.user_role === 'owner');
+
+    // Non-PRO users can create only 1 project ("Личные траты")
+    // This includes team members - they can have 1 personal project
+    return ownedProjects.length === 0;
   },
 
   async findById(id) {
@@ -256,6 +298,10 @@ const userService = {
   },
 
   async checkDailyLimits(userId, action) {
+    // Check if user has unlimited access (PRO or team member)
+    const hasUnlimited = await this.hasUnlimitedAccess(userId);
+    if (hasUnlimited) return true;
+
     const user = await this.findById(userId);
     if (!user) return false;
 
@@ -298,8 +344,9 @@ const userService = {
   },
 
   async checkMonthlyRecordsLimit(userId) {
-    const user = await this.findById(userId);
-    if (!user || user.is_premium) return true; // PRO users have unlimited records
+    // Check if user has unlimited access (PRO or team member)
+    const hasUnlimited = await this.hasUnlimitedAccess(userId);
+    if (hasUnlimited) return true;
 
     const { SUBSCRIPTION_LIMITS } = require('../config/constants');
     const limit = SUBSCRIPTION_LIMITS.FREE.expenses_per_month;
@@ -344,16 +391,36 @@ const projectService = {
   },
 
   async findByUserId(userId) {
-    const { data, error } = await supabase
+    // Get projects where user is owner
+    const { data: ownedProjects, error: ownedError } = await supabase
       .from('projects')
       .select(`
         *,
         project_members(user_id, role)
       `)
-      .or(`owner_id.eq.${userId}`);
-    
-    if (error) throw error;
-    return data;
+      .eq('owner_id', userId);
+
+    if (ownedError) throw ownedError;
+
+    // Get projects where user is a member
+    const { data: memberProjects, error: memberError } = await supabase
+      .from('projects')
+      .select(`
+        *,
+        project_members!inner(user_id, role)
+      `)
+      .eq('project_members.user_id', userId)
+      .neq('owner_id', userId); // Exclude owned projects to avoid duplicates
+
+    if (memberError) throw memberError;
+
+    // Combine and add role information
+    const allProjects = [
+      ...(ownedProjects || []).map(p => ({ ...p, user_role: 'owner' })),
+      ...(memberProjects || []).map(p => ({ ...p, user_role: p.project_members[0]?.role || 'member' }))
+    ];
+
+    return allProjects;
   },
 
   async findById(id) {
@@ -385,9 +452,85 @@ const projectService = {
       .insert({ project_id: projectId, user_id: userId, role })
       .select()
       .single();
-    
+
     if (error) throw error;
     return data;
+  },
+
+  async removeMember(projectId, userId) {
+    const { data, error } = await supabase
+      .from('project_members')
+      .delete()
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async getMembers(projectId) {
+    const { data, error } = await supabase
+      .from('project_members')
+      .select(`
+        *,
+        user:users(id, username, first_name)
+      `)
+      .eq('project_id', projectId);
+
+    if (error) throw error;
+    return data;
+  },
+
+  async getUserProjects(userId) {
+    // Get projects where user is owner OR member
+    const { data, error } = await supabase
+      .from('projects')
+      .select(`
+        *,
+        project_members!inner(user_id, role)
+      `)
+      .or(`owner_id.eq.${userId},project_members.user_id.eq.${userId}`);
+
+    if (error) throw error;
+    return data;
+  },
+
+  async makeCollaborative(projectId, ownerId) {
+    // Check if user is owner
+    const project = await this.findById(projectId);
+    if (!project || project.owner_id !== ownerId) {
+      throw new Error('Only project owner can make project collaborative');
+    }
+
+    const { data, error } = await supabase
+      .from('projects')
+      .update({ is_collaborative: true })
+      .eq('id', projectId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  async hasAccess(projectId, userId) {
+    // Check if user is owner
+    const project = await this.findById(projectId);
+    if (project && project.owner_id === userId) return { access: true, role: 'owner' };
+
+    // Check if user is a member
+    const { data, error } = await supabase
+      .from('project_members')
+      .select('role')
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+
+    return { access: !!data, role: data?.role || null };
   },
 
   async delete(id) {
@@ -750,11 +893,78 @@ const customCategoryService = {
   }
 };
 
+// Project member operations
+const projectMemberService = {
+  async invite(projectId, username, invitedByUserId) {
+    try {
+      // Find user by username
+      const { data: targetUser, error: userError } = await supabase
+        .from('users')
+        .select('id, username, first_name')
+        .eq('username', username)
+        .single();
+
+      if (userError || !targetUser) {
+        throw new Error(`Пользователь @${username} не найден в боте`);
+      }
+
+      // Check if user is already a member or owner
+      const access = await projectService.hasAccess(projectId, targetUser.id);
+      if (access.access) {
+        throw new Error(`Пользователь @${username} уже участвует в проекте`);
+      }
+
+      // Get project info to check if it's collaborative
+      const project = await projectService.findById(projectId);
+      if (!project.is_collaborative) {
+        throw new Error('Проект должен быть коллективным для приглашения участников');
+      }
+
+      // Add user as member
+      const member = await projectService.addMember(projectId, targetUser.id, 'member');
+
+      return {
+        success: true,
+        member,
+        user: targetUser,
+        project
+      };
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async leave(projectId, userId) {
+    // Check if user is owner (owners cannot leave their own projects)
+    const project = await projectService.findById(projectId);
+    if (project.owner_id === userId) {
+      throw new Error('Владелец проекта не может покинуть собственный проект');
+    }
+
+    return await projectService.removeMember(projectId, userId);
+  },
+
+  async kick(projectId, targetUserId, ownerId) {
+    // Only project owner can kick members
+    const project = await projectService.findById(projectId);
+    if (project.owner_id !== ownerId) {
+      throw new Error('Только владелец проекта может исключать участников');
+    }
+
+    if (targetUserId === ownerId) {
+      throw new Error('Владелец не может исключить самого себя');
+    }
+
+    return await projectService.removeMember(projectId, targetUserId);
+  }
+};
+
 module.exports = {
   supabase,
   setupDatabase,
   userService,
   projectService,
+  projectMemberService,
   expenseService,
   incomeService,
   patternService,

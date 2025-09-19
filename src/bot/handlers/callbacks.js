@@ -1,4 +1,4 @@
-const { userService, projectService, expenseService, customCategoryService, incomeService, supabase } = require('../../services/supabase');
+const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService, supabase } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 // Import temp storage from messages handler
 const messagesHandler = require('./messages');
@@ -199,6 +199,22 @@ async function handleCallback(callbackQuery) {
       await handleConfirmDeleteProject(chatId, messageId, data, user);
     } else if (data === 'back_to_projects') {
       await handleBackToProjects(chatId, messageId, user);
+    } else if (data === 'make_collaborative') {
+      await handleMakeCollaborative(chatId, messageId, user);
+    } else if (data === 'invite_member') {
+      await handleInviteMember(chatId, messageId, user);
+    } else if (data === 'manage_members') {
+      await handleManageMembers(chatId, messageId, user);
+    } else if (data.startsWith('make_collab:')) {
+      await handleMakeProjectCollaborative(chatId, messageId, data, user);
+    } else if (data.startsWith('invite_to:')) {
+      await handleInviteToProject(chatId, messageId, data, user);
+    } else if (data.startsWith('show_members:')) {
+      await handleShowMembers(chatId, messageId, data, user);
+    } else if (data.startsWith('kick_member:')) {
+      await handleKickMember(chatId, messageId, data, user);
+    } else if (data === 'back_to_team') {
+      await handleBackToTeam(chatId, messageId, user);
     } else {
       logger.warn('Unknown callback data:', data);
     }
@@ -580,10 +596,11 @@ async function handleCreateProject(chatId, user) {
     const userData = await userService.findById(user.id);
     const userProjects = await projectService.findByUserId(user.id);
 
-    // For FREE users, only allow 1 project
-    if (!userData.is_premium && userProjects.length >= 1) {
-      await bot.sendMessage(chatId, 
-        '⛔ Лимит проектов исчерпан!\n\n🆓 FREE план: 1 проект\n💎 PRO план: неограниченные проекты',
+    // For FREE users, only allow 1 owned project
+    const ownedProjects = userProjects.filter(p => p.user_role === 'owner');
+    if (!userData.is_premium && ownedProjects.length >= 1) {
+      await bot.sendMessage(chatId,
+        `⛔ Лимит проектов исчерпан!\n\n🆓 FREE план: 1 проект (у вас уже ${ownedProjects.length})\n💎 PRO план: неограниченные проекты`,
         { reply_markup: getUpgradeKeyboard() }
       );
       return;
@@ -608,8 +625,8 @@ async function handleCreateProject(chatId, user) {
           await bot.sendMessage(chatId, 
             '📋 Создание нового проекта\n\n' +
             '📊 У вас уже есть подключенные Google таблицы. Выберите опцию:\n\n' +
-            '💡 **Новый лист** - создаст лист в существующей таблице\n' +
-            '📄 **Отдельная таблица** - создаст новую Google таблицу для проекта',
+            '💡 Новый лист - создаст лист в существующей таблице\n' +
+            '📄 Отдельная таблица - создаст новую Google таблицу для проекта',
             {
               parse_mode: 'Markdown',
               reply_markup: {
@@ -653,14 +670,12 @@ async function handleUpgradeAction(chatId, messageId, data) {
   switch (action) {
     case 'boosty':
       await bot.editMessageText(
-        `💎 **Подписка через Boosty.to**
-
+        `💎 **Подписка через Boosty.to
 🇷🇺 Для пользователей из России
 
 **Цена:** 399 ₽ в месяц
 
-**Как подписаться:**
-1. Перейдите по ссылке: https://boosty.to/loomiq/purchase/3568312?ssource=DIRECT&share=subscription_link
+**Как подписаться:1. Перейдите по ссылке: https://boosty.to/loomiq/purchase/3568312?ssource=DIRECT&share=subscription_link
 2. Оформите месячную подписку
 3. Оплатите удобным способом (карты РФ)
 4. Пришлите скриншот об оплате в поддержку @loomiq_support
@@ -674,14 +689,12 @@ async function handleUpgradeAction(chatId, messageId, data) {
 
     case 'patreon':
       await bot.editMessageText(
-        `💎 **Подписка через Patreon**
-
+        `💎 **Подписка через Patreon
 🌍 Для международных пользователей
 
 **Цена:** $4 в месяц
 
-**Как подписаться:**
-1. Перейдите по ссылке: https://www.patreon.com/14834277/join
+**Как подписаться:1. Перейдите по ссылке: https://www.patreon.com/14834277/join
 2. Оформите месячную подписку
 3. Оплатите через PayPal или карту
 4. Пришлите скриншот об оплате в поддержку @loomiq_support
@@ -1259,8 +1272,7 @@ async function handleEditCustomCategory(chatId, messageId, data, user) {
 
     const message = `✏️ Редактирование категории
 
-${category.emoji || '📁'} **${category.name}**
-${keywordsText}
+${category.emoji || '📁'} **${category.name}${keywordsText}
 
 Выберите действие:`;
 
@@ -1401,8 +1413,7 @@ async function handleEditCategoryName(chatId, messageId, data, user) {
     
     await bot.editMessageText(`✏️ Изменение названия категории
 
-Текущее название: **${category.name}**
-
+Текущее название: **${category.name}
 📝 Отправьте новое название категории (максимум 50 символов):`, {
       chat_id: chatId,
       message_id: messageId,
@@ -1454,8 +1465,7 @@ async function handleEditCategoryEmoji(chatId, messageId, data, user) {
     
     await bot.editMessageText(`🎨 Изменение эмодзи категории
 
-Категория: **${category.name}**
-Текущий эмодзи: ${category.emoji || '📁 (по умолчанию)'}
+Категория: **${category.name}Текущий эмодзи: ${category.emoji || '📁 (по умолчанию)'}
 
 🎯 Отправьте новый эмодзи (один символ):
 
@@ -1536,8 +1546,7 @@ async function handleSkipEmoji(chatId, messageId, user) {
 
     await bot.editMessageText(`✅ Категория создана!
 
-📁 **${categoryName}**
-
+📁 **${categoryName}
 Теперь эта категория доступна при записи расходов.`, {
       chat_id: chatId,
       message_id: messageId,
@@ -1592,8 +1601,7 @@ async function handleEditCategoryKeywords(chatId, messageId, data, user) {
 
     await bot.sendMessage(chatId, `🔍 Изменение ключевых слов категории
 
-${category.emoji || '📁'} **${category.name}**
-Текущие ключевые слова: ${currentKeywords}
+${category.emoji || '📁'} **${category.name}Текущие ключевые слова: ${currentKeywords}
 
 📝 Отправьте новые ключевые слова через запятую:
 
@@ -2468,8 +2476,7 @@ async function handleEditProject(chatId, messageId, data, user) {
 
     const message = `✏️ Редактирование проекта
 
-📁 **${project.name}**
-${keywordsText}
+📁 **${project.name}${keywordsText}
 
 Выберите что редактировать:`;
 
@@ -2527,8 +2534,7 @@ async function handleEditProjectKeywords(chatId, messageId, data, user) {
 
     await bot.sendMessage(chatId, `🔍 Изменение ключевых слов проекта
 
-📁 **${project.name}**
-Текущие ключевые слова: ${currentKeywords}
+📁 **${project.name}Текущие ключевые слова: ${currentKeywords}
 
 📝 Отправьте новые ключевые слова через запятую:
 
@@ -2821,8 +2827,9 @@ async function handleSyncProject(chatId, messageId, data, user) {
   const projectId = data.split(':')[1];
 
   try {
-    // Check sync limit for non-premium users
-    if (!user.is_premium) {
+    // Check sync limit for users without unlimited access
+    const hasUnlimited = await userService.hasUnlimitedAccess(user.id);
+    if (!hasUnlimited) {
       const syncLimit = 3;
       if (user.daily_syncs_used >= syncLimit) {
         await bot.editMessageText(
@@ -3190,6 +3197,303 @@ async function handleCancelTransaction(chatId, messageId, data) {
     chat_id: chatId,
     message_id: messageId
   });
+}
+
+// Team collaboration handlers
+async function handleMakeCollaborative(chatId, messageId, user) {
+  const bot = getBot();
+
+  try {
+    const projects = await projectService.findByUserId(user.id);
+    const ownedProjects = projects.filter(p => p.user_role === 'owner' && !p.is_collaborative);
+
+    if (ownedProjects.length === 0) {
+      await bot.editMessageText(
+        '📂 У вас нет проектов для превращения в коллективные.\n\n' +
+        'Создайте проект или все ваши проекты уже коллективные.',
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'back_to_team' }]]
+          }
+        }
+      );
+      return;
+    }
+
+    const keyboard = ownedProjects.map(project => ([{
+      text: `📁 ${project.name}`,
+      callback_data: `make_collab:${project.id}`
+    }]));
+
+    keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_team' }]);
+
+    await bot.editMessageText(
+      'Выберите проект для превращения в коллективный:',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+  } catch (error) {
+    logger.error('Error in handleMakeCollaborative:', error);
+    await bot.editMessageText('❌ Ошибка загрузки проектов', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleMakeProjectCollaborative(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await projectService.makeCollaborative(projectId, user.id);
+
+    await bot.editMessageText(
+      `✅ Проект "${project.name}" теперь коллективный!\n\n` +
+      '👤 Теперь вы можете приглашать участников в этот проект.',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '👤 Пригласить участника', callback_data: 'invite_member' }],
+            [{ text: '🔙 К командной работе', callback_data: 'back_to_team' }]
+          ]
+        }
+      }
+    );
+  } catch (error) {
+    logger.error('Error making project collaborative:', error);
+    await bot.editMessageText(`❌ ${error.message}`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'make_collaborative' }]]
+      }
+    });
+  }
+}
+
+async function handleInviteMember(chatId, messageId, user) {
+  const bot = getBot();
+
+  try {
+    const projects = await projectService.findByUserId(user.id);
+    const collaborativeProjects = projects.filter(p => p.is_collaborative && p.user_role === 'owner');
+
+    if (collaborativeProjects.length === 0) {
+      await bot.editMessageText(
+        '📂 У вас нет коллективных проектов.\n\n' +
+        'Сначала сделайте проект коллективным.',
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'back_to_team' }]]
+          }
+        }
+      );
+      return;
+    }
+
+    const keyboard = collaborativeProjects.map(project => ([{
+      text: `📁 ${project.name}`,
+      callback_data: `invite_to:${project.id}`
+    }]));
+
+    keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_team' }]);
+
+    await bot.editMessageText(
+      'Выберите проект для приглашения участника:',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+  } catch (error) {
+    logger.error('Error in handleInviteMember:', error);
+    await bot.editMessageText('❌ Ошибка загрузки проектов', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleInviteToProject(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await projectService.findById(projectId);
+
+    await bot.editMessageText(
+      `👤 Приглашение в проект "${project.name}"\n\n` +
+      'Отправьте username участника (без @):\n\n' +
+      'Например: ivan_petrov',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'invite_member' }]]
+        }
+      }
+    );
+
+    // Set state for username input
+    stateManager.setState(chatId, 'WAITING_INVITE_USERNAME', { projectId, messageId });
+
+  } catch (error) {
+    logger.error('Error in handleInviteToProject:', error);
+    await bot.editMessageText(`❌ ${error.message}`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleManageMembers(chatId, messageId, user) {
+  const bot = getBot();
+
+  try {
+    const projects = await projectService.findByUserId(user.id);
+    const collaborativeProjects = projects.filter(p => p.is_collaborative && p.user_role === 'owner');
+
+    if (collaborativeProjects.length === 0) {
+      await bot.editMessageText(
+        '📂 У вас нет коллективных проектов.',
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'back_to_team' }]]
+          }
+        }
+      );
+      return;
+    }
+
+    const keyboard = collaborativeProjects.map(project => ([{
+      text: `📁 ${project.name}`,
+      callback_data: `show_members:${project.id}`
+    }]));
+
+    keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_team' }]);
+
+    await bot.editMessageText(
+      'Выберите проект для управления участниками:',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+  } catch (error) {
+    logger.error('Error in handleManageMembers:', error);
+    await bot.editMessageText('❌ Ошибка загрузки проектов', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleShowMembers(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await projectService.findById(projectId);
+    const members = await projectService.getMembers(projectId);
+
+    let message = `👥 Участники проекта "${project.name}"\n\n`;
+    message += `👑 Владелец: @${user.username || user.first_name}\n\n`;
+
+    if (members.length > 0) {
+      message += 'Участники:\n';
+      for (const member of members) {
+        const username = member.user?.username ? `@${member.user.username}` : member.user?.first_name || 'Пользователь';
+        message += `• ${username}\n`;
+      }
+    } else {
+      message += 'Пока нет участников.';
+    }
+
+    const keyboard = [];
+
+    // Add kick buttons for each member
+    for (const member of members) {
+      const username = member.user?.username || member.user?.first_name || 'Пользователь';
+      keyboard.push([{
+        text: `🚫 Исключить ${username}`,
+        callback_data: `kick_member:${projectId}:${member.user_id}`
+      }]);
+    }
+
+    keyboard.push([{ text: '🔙 Назад', callback_data: 'manage_members' }]);
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+  } catch (error) {
+    logger.error('Error in handleShowMembers:', error);
+    await bot.editMessageText(`❌ ${error.message}`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleKickMember(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, projectId, userId] = data.split(':');
+
+  try {
+    await projectMemberService.kick(projectId, parseInt(userId), user.id);
+
+    // Refresh the members list
+    await handleShowMembers(chatId, messageId, `show_members:${projectId}`, user);
+
+  } catch (error) {
+    logger.error('Error in handleKickMember:', error);
+    await bot.editMessageText(`❌ ${error.message}`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Назад', callback_data: `show_members:${projectId}` }]]
+      }
+    });
+  }
+}
+
+async function handleBackToTeam(chatId, messageId, user) {
+  const commands = require('./commands');
+
+  // Clear any existing state
+  stateManager.clearState(chatId);
+
+  // Call handleTeam with a mock message object
+  const mockMsg = {
+    chat: { id: chatId },
+    user: user
+  };
+
+  await commands.handleTeam(mockMsg);
+
+  // Delete the callback message
+  const bot = getBot();
+  try {
+    await bot.deleteMessage(chatId, messageId);
+  } catch (error) {
+    // Ignore if can't delete
+  }
 }
 
 module.exports = {

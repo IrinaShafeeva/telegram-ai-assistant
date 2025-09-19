@@ -81,6 +81,7 @@ const BOT_COMMANDS = [
   { command: 'connect', description: 'Подключить Google таблицу' },
   { command: 'sync', description: 'Синхронизация с Google Sheets' },
   { command: 'categories', description: 'Свои категории (PRO)' },
+  { command: 'team', description: 'Командная работа (PRO)' },
   { command: 'upgrade', description: 'Информация о PRO плане' }
 ];
 

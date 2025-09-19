@@ -338,8 +338,7 @@ async function handleUpgrade(msg, match) {
 
 💰 Цена: 399 ₽ / $4 в месяц
 
-💳 **Как подписаться:**
-
+💳 **Как подписаться:
 **Boosty.to** (для России - 399 ₽/мес):
 • Принимаем карты РФ и другие способы оплаты
 • Мгновенная активация
@@ -873,6 +872,69 @@ async function handleListPro(msg) {
   }
 }
 
+async function handleTeam(msg) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    if (!user.is_premium) {
+      await bot.sendMessage(chatId,
+        '💎 Командная работа доступна только в PRO плане!\n\n' +
+        'Используйте команду /upgrade для получения информации о подписке.'
+      );
+      return;
+    }
+
+    // Get user's projects to see which ones are collaborative
+    const projects = await projectService.findByUserId(user.id);
+
+    if (projects.length === 0) {
+      await bot.sendMessage(chatId,
+        '📂 У вас пока нет проектов.\n\n' +
+        'Создайте проект через команду "📋 Проекты"'
+      );
+      return;
+    }
+
+    const collaborativeProjects = projects.filter(p => p.is_collaborative && p.user_role === 'owner');
+    const memberProjects = projects.filter(p => p.user_role === 'member');
+
+    let message = '👥 Командная работа\n\n';
+
+    if (collaborativeProjects.length > 0) {
+      message += '📋 Ваши коллективные проекты:\n';
+      for (const project of collaborativeProjects) {
+        const members = await projectService.getMembers(project.id);
+        message += `• ${project.name} (${members.length + 1} участников)\n`;
+      }
+      message += '\n';
+    }
+
+    if (memberProjects.length > 0) {
+      message += '🤝 Проекты где вы участник:\n';
+      for (const project of memberProjects) {
+        message += `• ${project.name}\n`;
+      }
+      message += '\n';
+    }
+
+    const keyboard = [
+      [{ text: '➕ Сделать проект коллективным', callback_data: 'make_collaborative' }],
+      [{ text: '👤 Пригласить участника', callback_data: 'invite_member' }],
+      [{ text: '👥 Управление участниками', callback_data: 'manage_members' }]
+    ];
+
+    await bot.sendMessage(chatId, message, {
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+  } catch (error) {
+    logger.error('Error in handleTeam:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка загрузки командных проектов');
+  }
+}
+
 module.exports = {
   handleStart,
   handleHelp,
@@ -881,6 +943,7 @@ module.exports = {
   handleSettings,
   handleCategories,
   handleUpgrade,
+  handleTeam,
   handleInvite,
   handleEmail,
   handleConnect,

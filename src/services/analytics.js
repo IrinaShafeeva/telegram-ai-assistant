@@ -103,8 +103,8 @@ class AnalyticsService {
       // Check AI limits
       const canUseAI = await userService.checkDailyLimits(userId, 'ai_question');
       if (!canUseAI) {
-        const user = await userService.findById(userId);
-        const limit = user.is_premium ? 20 : 5;
+        const hasUnlimited = await userService.hasUnlimitedAccess(userId);
+        const limit = hasUnlimited ? 20 : 5;
         throw new Error(`⛔ Лимит AI вопросов исчерпан (${limit}/день)`);
       }
 

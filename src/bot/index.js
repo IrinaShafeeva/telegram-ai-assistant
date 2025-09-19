@@ -94,6 +94,7 @@ async function setupBot(bot) {
     bot.onText(/\/connect(?:\s+(.+))?/, withUser(commandHandlers.handleConnect));
     bot.onText(/\/sync/, withUser(commandHandlers.handleSync));
     bot.onText(/\/upgrade/, withUser(commandHandlers.handleUpgrade));
+    bot.onText(/\/team/, withUser(commandHandlers.handleTeam));
     bot.onText(/\/devpro/, withUser(commandHandlers.handleDevPro));
 
     // Admin commands for PRO management

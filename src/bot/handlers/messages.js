@@ -1,9 +1,9 @@
-const { userService, projectService, expenseService, customCategoryService, incomeService } = require('../../services/supabase');
+const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
 const googleSheetsService = require('../../services/googleSheets');
 const analyticsService = require('../../services/analytics');
 const userContextService = require('../../services/userContext');
-const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
+const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
@@ -284,9 +284,9 @@ async function handleExpenseText(msg) {
 
       await bot.editMessageText(`🤖 Не могу определить проект для этой транзакции.
 
-📝 **Описание:** ${parsedTransaction.description}
-💵 **Сумма:** ${parsedTransaction.amount} ${parsedTransaction.currency}
-📂 **Категория:** ${transactionData.category}
+📝 Описание: ${parsedTransaction.description}
+💵 Сумма: ${parsedTransaction.amount} ${parsedTransaction.currency}
+📂 Категория: ${transactionData.category}
 
 Выберите проект:`, {
         chat_id: chatId,
@@ -529,7 +529,15 @@ async function handleStateInput(msg, userState) {
       case STATE_TYPES.EDITING_INCOME_DESCRIPTION:
         await handleIncomeDescriptionEdit(msg, userState);
         break;
-        
+
+      case STATE_TYPES.WAITING_INVITE_USERNAME:
+        await handleInviteUsernameInput(msg, userState);
+        break;
+
+      case STATE_TYPES.WAITING_MEMBER_PROJECT_KEYWORDS:
+        await handleMemberProjectKeywordsInput(msg, userState);
+        break;
+
       default:
         logger.warn(`Unknown state type: ${userState.type}`);
         stateManager.clearState(chatId);
@@ -779,7 +787,7 @@ async function handleProjectNameInputSimple(msg, userState) {
     });
 
     await bot.sendMessage(chatId,
-      `📝 Теперь добавьте ключевые слова для проекта "${text}"\n\n🔍 Ключевые слова помогут AI автоматически определять транзакции для этого проекта.\n\n💡 Примеры:\n• отпуск, отдых, путешествие, гостиница\n• магазин, продукты, еда, супермаркет\n• кафе, ресторан, обед, ужин\n\nОтправьте **-** если не хотите добавлять ключевые слова`
+      `📝 Теперь добавьте ключевые слова для проекта "${text}"\n\n🔍 Ключевые слова помогут AI автоматически определять транзакции для этого проекта.\n\n💡 Примеры:\n• отпуск, отдых, путешествие, гостиница\n• магазин, продукты, еда, супермаркет\n• кафе, ресторан, обед, ужин\n\nОтправьте - если не хотите добавлять ключевые слова`
     );
     
   } catch (error) {
@@ -938,7 +946,7 @@ async function handleCategoryNameInput(msg, userState) {
 
     await bot.editMessageText(`🎨 Выбор эмодзи для категории
 
-📁 Название: **${text}**
+📁 Название: ${text}
 
 🎯 Отправьте эмодзи для категории (один символ):
 
@@ -947,7 +955,6 @@ async function handleCategoryNameInput(msg, userState) {
 Или нажмите "Пропустить" для создания без эмодзи.`, {
       chat_id: chatId,
       message_id: messageId,
-      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: '➡️ Пропустить эмодзи', callback_data: 'skip_emoji' }],
@@ -992,15 +999,13 @@ async function handleCategoryEmojiInput(msg, userState) {
 
     await bot.sendMessage(chatId, `🔍 Ключевые слова для категории
 
-${emoji} **${categoryName}**
+${emoji} ${categoryName}
 
 Укажите ключевые слова через запятую, чтобы я автоматически определял траты в эту категорию:
 
 💡 Например: "кафе, ресторан, пицца, еда" или "автобус, такси, метро"
 
-✅ Если не нужны ключевые слова, отправьте "-"`, {
-      parse_mode: 'Markdown'
-    });
+✅ Если не нужны ключевые слова, отправьте "-"`);
   } catch (error) {
     logger.error('Error creating category with emoji:', error);
     await bot.sendMessage(chatId, '❌ Ошибка создания категории.');
@@ -1050,11 +1055,10 @@ async function handleCategoryNameEditInput(msg, userState) {
 
     await bot.editMessageText(`✅ Название категории изменено!
 
-Старое: **${currentName}**
-Новое: **${text}**`, {
+Старое: ${currentName}
+Новое: ${text}`, {
       chat_id: chatId,
       message_id: messageId,
-      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [[{ text: '🔙 К категории', callback_data: `edit_category:${categoryId}` }]]
       }
@@ -1530,11 +1534,10 @@ async function handleProjectKeywordsEditInput(msg, userState) {
 
     await bot.sendMessage(chatId, `✅ Ключевые слова проекта обновлены!
 
-📁 **${updatedProject.name}**
+📁 ${updatedProject.name}
 ${keywordsText}
 
 Теперь AI будет использовать эти ключевые слова для автоматического определения транзакций в этот проект.`, {
-      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: '🔙 Назад к проекту', callback_data: `edit_project:${projectId}` }],
@@ -1731,8 +1734,9 @@ async function handleSyncCommand(msg) {
       return;
     }
 
-    // Check daily sync limit for non-premium users
-    if (!user.is_premium) {
+    // Check daily sync limit for users without unlimited access
+    const hasUnlimited = await userService.hasUnlimitedAccess(user.id);
+    if (!hasUnlimited) {
       const syncLimit = 3; // Free users get 3 syncs per day
       if (user.daily_syncs_used >= syncLimit) {
         await bot.sendMessage(chatId,
@@ -1754,7 +1758,7 @@ async function handleSyncCommand(msg) {
     }]);
 
     await bot.sendMessage(chatId,
-      `📊 **Синхронизация с Google Sheets**\n\n` +
+      `📊 Синхронизация с Google Sheets\n\n` +
       `Выберите проект для синхронизации:\n` +
       `(данные будут загружены из Google таблицы в бот)\n\n` +
       `💎 Лимит: ${user.is_premium ? '∞' : `${user.daily_syncs_used || 0}/3`}`,
@@ -1850,7 +1854,7 @@ async function handleCategoryKeywordsInput(msg, userState) {
     await bot.editMessageText(
       `✅ Категория создана!
 
-${emoji} **${categoryName}**${keywordsText}
+${emoji} ${categoryName}${keywordsText}
 
 Теперь эта категория доступна при записи расходов.`, {
         chat_id: chatId,
@@ -1900,11 +1904,10 @@ async function handleCategoryKeywordsEditInput(msg, userState) {
 
     await bot.sendMessage(chatId, `✅ Ключевые слова обновлены!
 
-${updatedCategory.emoji || '📁'} **${updatedCategory.name}**
+${updatedCategory.emoji || '📁'} ${updatedCategory.name}
 ${keywordsText}
 
 Теперь AI будет использовать эти ключевые слова для автоматического определения транзакций в эту категорию.`, {
-      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [{ text: '🔙 Назад к категории', callback_data: `edit_custom_category:${categoryId}` }],
@@ -2036,6 +2039,141 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
   } catch (error) {
     logger.error('Error handling multiple transactions:', error);
     await bot.sendMessage(chatId, '❌ Ошибка обработки транзакций. Попробуйте по одной.');
+  }
+}
+
+// Handle invite username input
+async function handleInviteUsernameInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const username = msg.text.trim().replace('@', ''); // Remove @ if user includes it
+  const bot = getBot();
+  const { projectId, messageId } = userState.data;
+
+  if (username.length < 3 || username.length > 32) {
+    await bot.sendMessage(chatId, '❌ Username должен быть от 3 до 32 символов!');
+    return;
+  }
+
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+    await bot.sendMessage(chatId, '❌ Username может содержать только буквы, цифры и подчеркивания!');
+    return;
+  }
+
+  try {
+    const result = await projectMemberService.invite(projectId, username, msg.user.id);
+
+    stateManager.clearState(chatId);
+
+    let ownerMessage = `✅ Пользователь @${username} приглашен в проект "${result.project.name}"!\n\n`;
+
+    if (result.project.google_sheet_id) {
+      const sheetsUrl = `https://docs.google.com/spreadsheets/d/${result.project.google_sheet_id}/edit`;
+      ownerMessage += `📊 ВАЖНО: Предоставьте @${username} доступ к Google таблице:\n\n` +
+        `1️⃣ Откройте таблицу: ${sheetsUrl}\n` +
+        `2️⃣ Нажмите "Настройки доступа" (справа вверху)\n` +
+        `3️⃣ Добавьте email пользователя или сделайте "доступно всем по ссылке"\n` +
+        `4️⃣ Установите права "Редактор"\n\n`;
+    }
+
+    ownerMessage += `🎉 Участник уже может добавлять расходы в бот и они будут синхронизироваться с таблицей!`;
+
+    await bot.editMessageText(ownerMessage, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '👤 Пригласить еще', callback_data: 'invite_member' }],
+          [{ text: '🔙 К командной работе', callback_data: 'back_to_team' }]
+        ]
+      }
+    });
+
+    // Notify the invited user with Google Sheets link and keyword setup
+    try {
+      let notificationMessage = `🎉 Вас пригласили в коллективный проект!\n\n` +
+        `📁 Проект: "${result.project.name}"\n` +
+        `👤 Пригласил: @${msg.user.username || msg.user.first_name}\n\n`;
+
+      // Add Google Sheets link if available
+      if (result.project.google_sheet_id) {
+        const sheetsUrl = `https://docs.google.com/spreadsheets/d/${result.project.google_sheet_id}/edit`;
+        notificationMessage += `📊 Google таблица: ${sheetsUrl}\n\n` +
+          `⚠️ Обратитесь к @${msg.user.username || msg.user.first_name} за доступом к таблице!\n\n`;
+      }
+
+      notificationMessage += `🔍 Настройте ключевые слова для проекта, чтобы AI автоматически определял ваши транзакции:\n\n` +
+        `Отправьте ключевые слова через запятую или "-" если не нужны.`;
+
+      await bot.sendMessage(result.user.id, notificationMessage);
+
+      // Set state for keyword input
+      stateManager.setState(result.user.id, 'WAITING_MEMBER_PROJECT_KEYWORDS', {
+        projectId: result.project.id,
+        projectName: result.project.name
+      });
+
+    } catch (notifyError) {
+      logger.error('Failed to notify invited user:', notifyError);
+      // Continue anyway, invitation was successful
+    }
+
+  } catch (error) {
+    logger.error('Error inviting user:', error);
+    stateManager.clearState(chatId);
+
+    await bot.editMessageText(`❌ ${error.message}`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'invite_member' }]]
+      }
+    });
+  }
+}
+
+// Handle member project keywords input
+async function handleMemberProjectKeywordsInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { projectId, projectName } = userState.data;
+
+  try {
+    let keywords = null;
+
+    if (text !== '-' && text.length > 0) {
+      // Validate keywords (allow letters, spaces, commas, and common punctuation)
+      if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        return;
+      }
+
+      keywords = text;
+    }
+
+    // Get current project and add keywords for this user
+    const project = await projectService.findById(projectId);
+
+    stateManager.clearState(chatId);
+
+    const keywordsText = keywords ?
+      `🔍 Ваши ключевые слова: ${keywords}\n\n✨ Теперь при упоминании этих слов расходы будут автоматически попадать в проект "${projectName}"!` :
+      `📝 Ключевые слова не заданы - будете выбирать проект вручную.`;
+
+    await bot.sendMessage(chatId,
+      `✅ Настройка проекта завершена!\n\n` +
+      `📁 Проект: "${projectName}"\n` +
+      `${keywordsText}\n\n` +
+      `🎉 Теперь вы можете добавлять расходы в этот коллективный проект!`
+    );
+
+    // Note: We don't update project keywords for members as those are owner-specific
+    // Each user can have their own interpretation/keywords for the same project
+
+  } catch (error) {
+    logger.error('Error handling member project keywords:', error);
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, '❌ Ошибка настройки проекта. Попробуйте позже.');
   }
 }
 
