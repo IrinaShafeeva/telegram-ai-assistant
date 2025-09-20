@@ -403,10 +403,17 @@ async function handleEditCategory(chatId, messageId, data, user) {
 
 async function handleEditProject(chatId, messageId, data, user) {
   const tempId = data.split(':')[1];
+  logger.info(`🔧 handleEditProject called with tempId: ${tempId}`);
+  logger.info(`💾 tempExpenses has keys: ${Array.from(tempExpenses.keys()).join(', ')}`);
+
   const expenseData = tempExpenses.get(tempId);
+  logger.info(`💾 Found expenseData: ${expenseData ? 'YES' : 'NO'}`);
+  logger.info(`👤 User is premium: ${user.is_premium}`);
+
   const bot = getBot();
 
   if (!user.is_premium) {
+    logger.info(`🚫 User ${user.id} is not premium, showing premium message`);
     await bot.editMessageText('💎 Проекты доступны только в PRO плане!', {
       chat_id: chatId,
       message_id: messageId,
@@ -416,6 +423,7 @@ async function handleEditProject(chatId, messageId, data, user) {
   }
 
   if (!expenseData) {
+    logger.info(`❌ No expenseData found for tempId: ${tempId}`);
     await bot.editMessageText('❌ Данные расхода устарели.', {
       chat_id: chatId,
       message_id: messageId
