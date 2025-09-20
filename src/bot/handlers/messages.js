@@ -2115,7 +2115,7 @@ async function handleInviteUsernameInput(msg, userState) {
 
     // Notify the invited user with Google Sheets link and keyword setup
     try {
-      let notificationMessage = `🎉 Вас пригласили в коллективный проект!\n\n` +
+      let notificationMessage = `🎉 Вас пригласили в командный проект!\n\n` +
         `📁 Проект: "${result.project.name}"\n` +
         `👤 Пригласил: @${msg.user.username || msg.user.first_name}\n\n`;
 
@@ -2191,7 +2191,7 @@ async function handleMemberProjectKeywordsInput(msg, userState) {
       `✅ Настройка проекта завершена!\n\n` +
       `📁 Проект: "${projectName}"\n` +
       `${keywordsText}\n\n` +
-      `🎉 Теперь вы можете добавлять расходы в этот коллективный проект!`
+      `🎉 Теперь вы можете добавлять расходы в этот командный проект!`
     );
 
     // Note: We don't update project keywords for members as those are owner-specific

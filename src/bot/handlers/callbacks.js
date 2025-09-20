@@ -3209,8 +3209,8 @@ async function handleMakeCollaborative(chatId, messageId, user) {
 
     if (ownedProjects.length === 0) {
       await bot.editMessageText(
-        '📂 У вас нет проектов для превращения в коллективные.\n\n' +
-        'Создайте проект или все ваши проекты уже коллективные.',
+        '📂 У вас нет проектов для превращения в командные.\n\n' +
+        'Создайте проект или все ваши проекты уже командные.',
         {
           chat_id: chatId,
           message_id: messageId,
@@ -3230,7 +3230,7 @@ async function handleMakeCollaborative(chatId, messageId, user) {
     keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_team' }]);
 
     await bot.editMessageText(
-      'Выберите проект для превращения в коллективный:',
+      'Выберите проект для превращения в командный:',
       {
         chat_id: chatId,
         message_id: messageId,
@@ -3254,7 +3254,7 @@ async function handleMakeProjectCollaborative(chatId, messageId, data, user) {
     const project = await projectService.makeCollaborative(projectId, user.id);
 
     await bot.editMessageText(
-      `✅ Проект "${project.name}" теперь коллективный!\n\n` +
+      `✅ Проект "${project.name}" теперь командный!\n\n` +
       '👤 Теперь вы можете приглашать участников в этот проект.',
       {
         chat_id: chatId,
@@ -3288,8 +3288,8 @@ async function handleInviteMember(chatId, messageId, user) {
 
     if (collaborativeProjects.length === 0) {
       await bot.editMessageText(
-        '📂 У вас нет коллективных проектов.\n\n' +
-        'Сначала сделайте проект коллективным.',
+        '📂 У вас нет командных проектов.\n\n' +
+        'Сначала сделайте проект командным.',
         {
           chat_id: chatId,
           message_id: messageId,
@@ -3370,7 +3370,7 @@ async function handleManageMembers(chatId, messageId, user) {
 
     if (collaborativeProjects.length === 0) {
       await bot.editMessageText(
-        '📂 У вас нет коллективных проектов.',
+        '📂 У вас нет командных проектов.',
         {
           chat_id: chatId,
           message_id: messageId,

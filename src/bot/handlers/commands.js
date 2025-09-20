@@ -903,7 +903,7 @@ async function handleTeam(msg) {
     let message = '👥 Командная работа\n\n';
 
     if (collaborativeProjects.length > 0) {
-      message += '📋 Ваши коллективные проекты:\n';
+      message += '📋 Ваши командные проекты:\n';
       for (const project of collaborativeProjects) {
         const members = await projectService.getMembers(project.id);
         message += `• ${project.name} (${members.length + 1} участников)\n`;
@@ -920,7 +920,7 @@ async function handleTeam(msg) {
     }
 
     const keyboard = [
-      [{ text: '➕ Сделать проект коллективным', callback_data: 'make_collaborative' }],
+      [{ text: '➕ Сделать проект командным', callback_data: 'make_collaborative' }],
       [{ text: '👤 Пригласить участника', callback_data: 'invite_member' }],
       [{ text: '👥 Управление участниками', callback_data: 'manage_members' }]
     ];

@@ -882,17 +882,9 @@ const projectMemberService = {
         }
       }
 
-      // If still not found, show available users
+      // If still not found, show error
       if (!targetUser) {
-        logger.info(`User @${username} not found, checking all users...`);
-        const { data: allUsers } = await supabase
-          .from('users')
-          .select('id, username, first_name')
-          .limit(10);
-        logger.info('Recent users:', allUsers);
-
-        const userList = allUsers.map(u => `@${u.username || u.first_name} (${u.first_name})`).join('\n');
-        throw new Error(`Пользователь @${username} не найден в боте.\n\nДоступные пользователи:\n${userList}\n\n💡 Попросите пользователя написать /start боту, если его нет в списке.`);
+        throw new Error(`Пользователь @${username} не найден в боте.\n\n💡 Попросите пользователя написать /start боту, а затем повторите приглашение.`);
       }
 
       // Check if user is already a member or owner
@@ -904,7 +896,7 @@ const projectMemberService = {
       // Get project info to check if it's collaborative
       const project = await projectService.findById(projectId);
       if (!project.is_collaborative) {
-        throw new Error('Проект должен быть коллективным для приглашения участников');
+        throw new Error('Проект должен быть командным для приглашения участников');
       }
 
       // Add user as member
@@ -939,7 +931,7 @@ const projectMemberService = {
       // Get project info to check if it's collaborative
       const project = await projectService.findById(projectId);
       if (!project.is_collaborative) {
-        throw new Error('Проект должен быть коллективным для приглашения участников');
+        throw new Error('Проект должен быть командным для приглашения участников');
       }
 
       // Add user as member
