@@ -191,8 +191,8 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('delete_project:')) {
       await handleDeleteProject(chatId, messageId, data, user);
     } else if (data.startsWith('manage_project:')) {
-      logger.info(`🔧 SECOND handleEditProject called for project management: ${data}`);
-      await handleEditProject(chatId, messageId, data, user);
+      logger.info(`🔧 SECOND handleManageProject called for project management: ${data}`);
+      await handleManageProject(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project_name:')) {
       await handleEditProjectName(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project_keywords:')) {
@@ -2490,7 +2490,7 @@ async function handleConfirmDeleteProject(chatId, messageId, data, user) {
   }
 }
 
-async function handleEditProject(chatId, messageId, data, user) {
+async function handleManageProject(chatId, messageId, data, user) {
   const bot = getBot();
   const projectId = data.split(':')[1];
 
