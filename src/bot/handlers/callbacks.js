@@ -73,6 +73,7 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('set_currency:')) {
       await handleSetTransactionCurrency(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project:')) {
+      logger.info(`🔧 FIRST handleEditProject called for transaction editing: ${data}`);
       await handleEditProject(chatId, messageId, data, user);
     } else if (data.startsWith('set_project:')) {
       await handleSetProject(chatId, messageId, data, user);
@@ -190,6 +191,7 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('delete_project:')) {
       await handleDeleteProject(chatId, messageId, data, user);
     } else if (data.startsWith('manage_project:')) {
+      logger.info(`🔧 SECOND handleEditProject called for project management: ${data}`);
       await handleEditProject(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project_name:')) {
       await handleEditProjectName(chatId, messageId, data, user);
