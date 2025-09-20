@@ -294,10 +294,26 @@ async function handleSaveExpense(chatId, messageId, data, user) {
 📋 Проект: ${project.name}
 ${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}`;
 
-    await bot.editMessageText(successText, {
-      chat_id: chatId,
-      message_id: messageId
-    });
+    try {
+      await bot.editMessageText(successText, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+    } catch (telegramError) {
+      // Ignore "message not modified" errors - data is already saved
+      if (telegramError.code === 'ETELEGRAM' &&
+          telegramError.response?.body?.description?.includes('message is not modified')) {
+        logger.info('Message not modified (Telegram API) - expense already saved successfully');
+      } else {
+        logger.error('Telegram API error while updating message:', telegramError);
+        // Try to send new message as fallback
+        try {
+          await bot.sendMessage(chatId, successText);
+        } catch (fallbackError) {
+          logger.error('Failed to send fallback message:', fallbackError);
+        }
+      }
+    }
 
     // Remove temp data
     tempExpenses.delete(tempId);
@@ -2000,10 +2016,26 @@ async function handleSaveIncome(chatId, messageId, data, user) {
 📋 Проект: ${project.name}
 ${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}`;
 
-    await bot.editMessageText(successText, {
-      chat_id: chatId,
-      message_id: messageId
-    });
+    try {
+      await bot.editMessageText(successText, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+    } catch (telegramError) {
+      // Ignore "message not modified" errors - data is already saved
+      if (telegramError.code === 'ETELEGRAM' &&
+          telegramError.response?.body?.description?.includes('message is not modified')) {
+        logger.info('Message not modified (Telegram API) - income already saved successfully');
+      } else {
+        logger.error('Telegram API error while updating message:', telegramError);
+        // Try to send new message as fallback
+        try {
+          await bot.sendMessage(chatId, successText);
+        } catch (fallbackError) {
+          logger.error('Failed to send fallback message:', fallbackError);
+        }
+      }
+    }
 
     // Clean up temp data
     tempIncomes.delete(tempId);
