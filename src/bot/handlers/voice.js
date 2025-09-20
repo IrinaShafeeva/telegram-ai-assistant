@@ -131,7 +131,7 @@ async function handleVoice(msg) {
       // Handle expense transaction
       const expenseData = {
         user_id: user.id,
-        project_id: activeProject.id,
+        project_id: selectedProject.id,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
         category: parsedTransaction.category || 'Прочее',
