@@ -203,98 +203,36 @@ async function handleExpenseText(msg) {
       logger.info(`💱 Using user default currency: ${parsedTransaction.currency} (was: ${originalCurrency || 'null'})`);
     }
 
-    // Determine target project: use AI suggested project or fallback logic
-    let activeProject = null;
+    // Get user's projects (all of them, AI will choose the right one)
+    const projects = await projectService.findByUserId(user.id);
+    const defaultProject = projects[0]; // fallback project
 
-    // First try to use AI-suggested project
-    if (parsedTransaction.project) {
-      logger.info(`🤖 AI suggested project: "${parsedTransaction.project}"`);
-      const projects = await projectService.findByUserId(user.id);
-      activeProject = projects.find(p => p.name === parsedTransaction.project);
-
-      if (activeProject) {
-        logger.info(`✅ Found AI-suggested project: ${activeProject.name} (ID: ${activeProject.id})`);
-      } else {
-        logger.warn(`⚠️ AI-suggested project "${parsedTransaction.project}" not found`);
-      }
-    }
-
-    // If AI couldn't determine project, ask user to choose
-    if (!activeProject) {
-      const projects = await projectService.findByUserId(user.id);
-
-      if (projects.length === 0) {
-        await bot.editMessageText('📋 Сначала создайте проект для отслеживания транзакций.', {
-          chat_id: chatId,
-          message_id: processingMessage.message_id,
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '➕ Создать проект', callback_data: 'create_project' }
-            ]]
-          }
-        });
-        return;
-      }
-
-      // Store transaction temporarily and ask user to select project
-      const tempId = uuidv4();
-      const baseTransactionData = {
-        user_id: user.id,
-        amount: parsedTransaction.amount,
-        currency: parsedTransaction.currency,
-        category: parsedTransaction.category || (
-          parsedTransaction.type === 'income' ? 'Прочие доходы' : 'Прочее'
-        ),
-        description: parsedTransaction.description,
-        type: parsedTransaction.type
-      };
-
-      if (parsedTransaction.type === 'income') {
-        const incomeData = {
-          ...baseTransactionData,
-          income_date: new Date().toISOString().split('T')[0]
-        };
-        tempIncomes.set(tempId, incomeData);
-      } else {
-        const expenseData = {
-          ...baseTransactionData,
-          expense_date: new Date().toISOString().split('T')[0]
-        };
-        tempExpenses.set(tempId, expenseData);
-      }
-
-      // Auto-expire after 5 minutes
-      setTimeout(() => {
-        if (parsedTransaction.type === 'income') {
-          tempIncomes.delete(tempId);
-        } else {
-          tempExpenses.delete(tempId);
-        }
-      }, 5 * 60 * 1000);
-
-      const { getProjectSelectionForTransactionKeyboard } = require('../keyboards/inline');
-
-      // Store mapping for short transaction ID
-      const shortId = tempId.substring(0, 8);
-      logger.info(`Creating mapping: shortId=${shortId}, fullTransactionId=${tempId}, projectsCount=${projects.length}`);
-      shortTransactionMap.set(shortId, {
-        fullTransactionId: tempId,
-        projects: projects
-      });
-
-      await bot.editMessageText(`🤖 Не могу определить проект для этой транзакции.
-
-📝 Описание: ${parsedTransaction.description}
-💵 Сумма: ${parsedTransaction.amount} ${parsedTransaction.currency}
-📂 Категория: ${transactionData.category}
-
-Выберите проект:`, {
+    if (!defaultProject) {
+      await bot.editMessageText('📋 Сначала создайте проект для отслеживания транзакций.', {
         chat_id: chatId,
         message_id: processingMessage.message_id,
-        reply_markup: getProjectSelectionForTransactionKeyboard(projects, shortId, parsedTransaction.type)
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '➕ Создать проект', callback_data: 'create_project' }
+          ]]
+        }
       });
       return;
     }
+
+    // Find the correct project based on AI analysis
+    let selectedProject = defaultProject; // default fallback
+    if (parsedTransaction.project) {
+      const foundProject = projects.find(p => p.name === parsedTransaction.project);
+      if (foundProject) {
+        selectedProject = foundProject;
+        logger.info(`🎯 AI selected project: ${foundProject.name} for transaction: ${text}`);
+      } else {
+        logger.warn(`⚠️ AI suggested project "${parsedTransaction.project}" not found, using default: ${defaultProject.name}`);
+      }
+    }
+
+    const tempId = uuidv4();
 
 
     if (parsedTransaction.type === 'income') {
@@ -302,13 +240,13 @@ async function handleExpenseText(msg) {
       const tempId = uuidv4();
       const incomeData = {
         user_id: user.id,
-        project_id: activeProject.id,
-        project_name: activeProject.name,
+        project_id: selectedProject.id,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
         category: parsedTransaction.category || 'Прочие доходы',
         description: parsedTransaction.description,
-        income_date: new Date().toISOString().split('T')[0]
+        income_date: new Date().toISOString().split('T')[0],
+        source_text: text
       };
 
       // Store temporarily for income
@@ -321,7 +259,7 @@ async function handleExpenseText(msg) {
 💵 Сумма: ${incomeData.amount} ${incomeData.currency}
 📂 Категория: ${incomeData.category}
 📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
-📋 Проект: ${activeProject.name}
+📋 Проект: ${selectedProject.name}
 
 Всё верно?`;
 
@@ -341,8 +279,7 @@ async function handleExpenseText(msg) {
       const tempId = uuidv4();
       const expenseData = {
         user_id: user.id,
-        project_id: activeProject.id,
-        project_name: activeProject.name,
+        project_id: selectedProject.id,
         amount: parsedTransaction.amount,
         currency: parsedTransaction.currency,
         category: parsedTransaction.category || 'Прочее',
@@ -360,7 +297,7 @@ async function handleExpenseText(msg) {
 💵 Сумма: ${expenseData.amount} ${expenseData.currency}
 📂 Категория: ${expenseData.category}
 📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
-📋 Проект: ${activeProject.name}
+📋 Проект: ${selectedProject.name}
 
 Всё верно?`;
 
@@ -1976,7 +1913,8 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
           currency: transaction.currency,
           category: transaction.category || 'Прочие доходы',
           description: transaction.description,
-          income_date: new Date().toISOString().split('T')[0]
+          income_date: new Date().toISOString().split('T')[0],
+        source_text: text
         };
 
         tempIncomes.set(tempId, incomeData);

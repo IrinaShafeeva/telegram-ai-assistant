@@ -513,6 +513,27 @@ ${transactionsList}
     }
   }
 
+  async generateResponse(prompt) {
+    try {
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 50
+      });
+
+      return completion.choices[0].message.content.trim();
+    } catch (error) {
+      logger.error('Response generation failed:', error);
+      throw new Error('Не удалось получить ответ от AI');
+    }
+  }
+
 }
 
 module.exports = new OpenAIService();

@@ -189,7 +189,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
 
       actionRow.push({
         text: '✏️ Изменить',
-        callback_data: `edit_project:${project.id}`
+        callback_data: `manage_project:${project.id}`
       });
 
       actionRow.push({

@@ -189,7 +189,7 @@ async function handleCallback(callbackQuery) {
       await handleSwitchProject(chatId, messageId, data, user);
     } else if (data.startsWith('delete_project:')) {
       await handleDeleteProject(chatId, messageId, data, user);
-    } else if (data.startsWith('edit_project:')) {
+    } else if (data.startsWith('manage_project:')) {
       await handleEditProject(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project_name:')) {
       await handleEditProjectName(chatId, messageId, data, user);
@@ -2549,7 +2549,7 @@ async function handleEditProjectKeywords(chatId, messageId, data, user) {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '❌ Отмена', callback_data: `edit_project:${projectId}` }]
+          [{ text: '❌ Отмена', callback_data: `manage_project:${projectId}` }]
         ]
       }
     });
