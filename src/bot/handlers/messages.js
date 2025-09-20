@@ -55,7 +55,7 @@ async function handleText(msg) {
         stateManager.clearState(chatId);
         // Continue to transaction processing below
       } else {
-        logger.info(`🎯 Found state: ${userState.type}, calling handleStateInput`);
+        logger.info(`🎯 Found state: ${userState.type}, calling handleStateInput for message: "${text}"`);
         await handleStateInput(msg, userState);
         return;
       }
@@ -2137,6 +2137,8 @@ async function handleMemberProjectKeywordsInput(msg, userState) {
   const text = msg.text.trim();
   const bot = getBot();
   const { projectId, projectName } = userState.data;
+
+  logger.info(`🔤 Processing member project keywords input: "${text}" for project "${projectName}"`);
 
   try {
     let keywords = null;
