@@ -3334,8 +3334,12 @@ async function handleInviteToProject(chatId, messageId, data, user) {
 
     await bot.editMessageText(
       `👤 Приглашение в проект "${project.name}"\n\n` +
-      'Отправьте username участника (без @):\n\n' +
-      'Например: ivan_petrov',
+      '🔤 Отправьте username участника (без @)\n' +
+      '📨 Или перешлите любое сообщение от этого пользователя\n\n' +
+      '💡 Примеры:\n' +
+      '• ivan_petrov\n' +
+      '• @username (с @)\n' +
+      '• Форвард сообщения',
       {
         chat_id: chatId,
         message_id: messageId,

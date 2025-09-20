@@ -2045,22 +2045,47 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
 // Handle invite username input
 async function handleInviteUsernameInput(msg, userState) {
   const chatId = msg.chat.id;
-  const username = msg.text.trim().replace('@', ''); // Remove @ if user includes it
   const bot = getBot();
   const { projectId, messageId } = userState.data;
 
-  if (username.length < 3 || username.length > 32) {
-    await bot.sendMessage(chatId, '❌ Username должен быть от 3 до 32 символов!');
-    return;
-  }
+  let targetUserId = null;
+  let username = null;
 
-  if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-    await bot.sendMessage(chatId, '❌ Username может содержать только буквы, цифры и подчеркивания!');
-    return;
+  // Check if this is a forwarded message
+  if (msg.forward_from) {
+    targetUserId = msg.forward_from.id;
+    username = msg.forward_from.username || msg.forward_from.first_name;
+    logger.info(`Invite via forward: user ${targetUserId}, username: ${username}`);
+  }
+  // Check if message contains user mention
+  else if (msg.entities && msg.entities.some(e => e.type === 'mention')) {
+    const mentionEntity = msg.entities.find(e => e.type === 'mention');
+    username = msg.text.substring(mentionEntity.offset + 1, mentionEntity.offset + mentionEntity.length);
+  }
+  // Regular username input
+  else if (msg.text) {
+    username = msg.text.trim().replace('@', ''); // Remove @ if user includes it
+
+    if (username.length < 3 || username.length > 32) {
+      await bot.sendMessage(chatId, '❌ Username должен быть от 3 до 32 символов!');
+      return;
+    }
+
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      await bot.sendMessage(chatId, '❌ Username может содержать только буквы, цифры и подчеркивания!');
+      return;
+    }
   }
 
   try {
-    const result = await projectMemberService.invite(projectId, username, msg.user.id);
+    let result;
+    if (targetUserId) {
+      // Direct invitation by Telegram ID
+      result = await projectMemberService.inviteByTelegramId(projectId, targetUserId, msg.user.id);
+    } else {
+      // Invitation by username
+      result = await projectMemberService.invite(projectId, username, msg.user.id);
+    }
 
     stateManager.clearState(chatId);
 

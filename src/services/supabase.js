@@ -862,28 +862,78 @@ const customCategoryService = {
 const projectMemberService = {
   async invite(projectId, username, invitedByUserId) {
     try {
-      // Find user by username
-      const { data: targetUser, error: userError } = await supabase
+      // Try to find user by current username first
+      let { data: targetUser, error: userError } = await supabase
         .from('users')
         .select('id, username, first_name')
         .eq('username', username)
         .single();
 
-      // Debug: log all users if not found
+      // If not found by current username, search by first_name as fallback
       if (userError || !targetUser) {
+        const { data: usersByName } = await supabase
+          .from('users')
+          .select('id, username, first_name')
+          .ilike('first_name', `%${username}%`);
+
+        if (usersByName && usersByName.length > 0) {
+          targetUser = usersByName[0]; // Take first match
+          logger.info(`Found user by name: ${targetUser.first_name} (${targetUser.username})`);
+        }
+      }
+
+      // If still not found, show available users
+      if (!targetUser) {
         logger.info(`User @${username} not found, checking all users...`);
         const { data: allUsers } = await supabase
           .from('users')
           .select('id, username, first_name')
           .limit(10);
         logger.info('Recent users:', allUsers);
-        throw new Error(`Пользователь @${username} не найден в боте`);
+
+        const userList = allUsers.map(u => `@${u.username || u.first_name} (${u.first_name})`).join('\n');
+        throw new Error(`Пользователь @${username} не найден в боте.\n\nДоступные пользователи:\n${userList}\n\n💡 Попросите пользователя написать /start боту, если его нет в списке.`);
       }
 
       // Check if user is already a member or owner
       const access = await projectService.hasAccess(projectId, targetUser.id);
       if (access.access) {
         throw new Error(`Пользователь @${username} уже участвует в проекте`);
+      }
+
+      // Get project info to check if it's collaborative
+      const project = await projectService.findById(projectId);
+      if (!project.is_collaborative) {
+        throw new Error('Проект должен быть коллективным для приглашения участников');
+      }
+
+      // Add user as member
+      const member = await projectService.addMember(projectId, targetUser.id, 'member');
+
+      return {
+        success: true,
+        member,
+        user: targetUser,
+        project
+      };
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async inviteByTelegramId(projectId, telegramId, invitedByUserId) {
+    try {
+      // Find user by Telegram ID
+      const targetUser = await userService.findById(telegramId);
+
+      if (!targetUser) {
+        throw new Error(`Пользователь не найден в боте.\n\n💡 Попросите пользователя написать /start боту.`);
+      }
+
+      // Check if user is already a member or owner
+      const access = await projectService.hasAccess(projectId, targetUser.id);
+      if (access.access) {
+        throw new Error(`Пользователь @${targetUser.username || targetUser.first_name} уже участвует в проекте`);
       }
 
       // Get project info to check if it's collaborative
