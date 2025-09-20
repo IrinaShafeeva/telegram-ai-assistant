@@ -112,7 +112,7 @@ async function handleVoice(msg) {
 💵 Сумма: ${incomeData.amount} ${incomeData.currency}
 📂 Категория: ${incomeData.category}
 📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
-📋 Проект: ${activeProject.name}
+📋 Проект: ${selectedProject.name}
 
 Всё верно?`;
 
@@ -151,7 +151,7 @@ async function handleVoice(msg) {
 💵 Сумма: ${expenseData.amount} ${expenseData.currency}
 📂 Категория: ${expenseData.category}
 📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
-📋 Проект: ${activeProject.name}
+📋 Проект: ${selectedProject.name}
 
 Всё верно?`;
 
