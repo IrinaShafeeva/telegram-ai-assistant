@@ -869,7 +869,14 @@ const projectMemberService = {
         .eq('username', username)
         .single();
 
+      // Debug: log all users if not found
       if (userError || !targetUser) {
+        logger.info(`User @${username} not found, checking all users...`);
+        const { data: allUsers } = await supabase
+          .from('users')
+          .select('id, username, first_name')
+          .limit(10);
+        logger.info('Recent users:', allUsers);
         throw new Error(`Пользователь @${username} не найден в боте`);
       }
 
