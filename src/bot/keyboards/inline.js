@@ -186,18 +186,22 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
       
       // Action buttons row
       const actionRow = [];
-      
-      
+
       actionRow.push({
         text: '✏️ Изменить',
         callback_data: `edit_project:${project.id}`
       });
-      
+
+      actionRow.push({
+        text: '👥 Команда',
+        callback_data: `manage_team:${project.id}`
+      });
+
       // Can't delete if it's the last project
       if (projects.length > 1) {
-        actionRow.push({ 
-          text: '🗑️ Удалить', 
-          callback_data: `delete_project:${project.id}` 
+        actionRow.push({
+          text: '🗑️ Удалить',
+          callback_data: `delete_project:${project.id}`
         });
       }
       

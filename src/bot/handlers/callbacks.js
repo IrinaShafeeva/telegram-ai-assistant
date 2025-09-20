@@ -199,6 +199,8 @@ async function handleCallback(callbackQuery) {
       await handleConfirmDeleteProject(chatId, messageId, data, user);
     } else if (data === 'back_to_projects') {
       await handleBackToProjects(chatId, messageId, user);
+    } else if (data.startsWith('manage_team:')) {
+      await handleManageTeam(chatId, messageId, data, user);
     } else if (data === 'make_collaborative') {
       await handleMakeCollaborative(chatId, messageId, user);
     } else if (data === 'invite_member') {
@@ -3497,6 +3499,74 @@ async function handleBackToTeam(chatId, messageId, user) {
     await bot.deleteMessage(chatId, messageId);
   } catch (error) {
     // Ignore if can't delete
+  }
+}
+
+// Handle team management for specific project
+async function handleManageTeam(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if user is owner
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Только владелец проекта может управлять командой', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const keyboard = [];
+
+    if (project.is_collaborative) {
+      // Project is already collaborative - show team management options
+      keyboard.push([
+        { text: '👤 Пригласить участника', callback_data: `invite_to:${projectId}` }
+      ]);
+      keyboard.push([
+        { text: '👥 Управление участниками', callback_data: `show_members:${projectId}` }
+      ]);
+    } else {
+      // Project is not collaborative - offer to make it collaborative
+      keyboard.push([
+        { text: '🔄 Сделать проект командным', callback_data: `make_collab:${projectId}` }
+      ]);
+    }
+
+    keyboard.push([
+      { text: '🔙 Назад к проектам', callback_data: 'back_to_projects' }
+    ]);
+
+    const statusText = project.is_collaborative ? 'командный' : 'личный';
+    await bot.editMessageText(
+      `👥 Управление командой\n\n` +
+      `📁 Проект: ${project.name}\n` +
+      `📊 Статус: ${statusText}\n\n` +
+      `Выберите действие:`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleManageTeam:', error);
+    await bot.editMessageText('❌ Ошибка управления командой', {
+      chat_id: chatId,
+      message_id: messageId
+    });
   }
 }
 
