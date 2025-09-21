@@ -216,8 +216,8 @@ async function handleSync(msg, match) {
     // Increment usage counter
     await userService.incrementDailyUsage(user.id, 'sync');
 
-    await bot.sendMessage(chatId, 
-      `✅ Синхронизация завершена!\n\n📥 Импортировано: ${totalImported} записей\n${totalErrors > 0 ? `❌ Ошибок: ${totalErrors}` : ''}\n\nПроверьте свои данные командой /stats`
+    await bot.sendMessage(chatId,
+      `✅ Синхронизация завершена!\n\n📥 Импортировано: ${totalImported} записей${totalErrors > 0 ? `\n❌ Ошибок: ${totalErrors}` : ''}`
     );
   } catch (error) {
     logger.error('Sync command error:', error);
