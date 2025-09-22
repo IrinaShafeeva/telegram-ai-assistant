@@ -187,7 +187,7 @@ async function handleExpenseText(msg) {
 
     // Handle multiple transactions
     if (Array.isArray(parsedResult)) {
-      await handleMultipleTransactions(chatId, processingMessage.message_id, parsedResult, userContext, user);
+      await handleMultipleTransactions(chatId, processingMessage.message_id, parsedResult, userContext, user, text);
       return;
     }
 
@@ -1863,7 +1863,7 @@ ${keywordsText}
 }
 
 // Handle multiple transactions from single message
-async function handleMultipleTransactions(chatId, messageId, transactions, userContext, user) {
+async function handleMultipleTransactions(chatId, messageId, transactions, userContext, user, text) {
   const bot = getBot();
 
   try {
@@ -1914,7 +1914,7 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
           category: transaction.category || 'Прочие доходы',
           description: transaction.description,
           income_date: new Date().toISOString().split('T')[0],
-        source_text: text
+          source_text: text
         };
 
         tempIncomes.set(tempId, incomeData);
@@ -1947,7 +1947,8 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
           currency: transaction.currency,
           category: transaction.category || 'Прочее',
           description: transaction.description,
-          expense_date: new Date().toISOString().split('T')[0]
+          expense_date: new Date().toISOString().split('T')[0],
+          source_text: text
         };
 
         tempExpenses.set(tempId, expenseData);

@@ -67,7 +67,16 @@ async function handleVoice(msg) {
     logger.info(`👤 User context for voice transaction: ${JSON.stringify(userContext)}`);
 
     // Parse transaction with AI (could be income or expense)
-    const parsedTransaction = await openaiService.parseTransaction(transcription, userContext);
+    const parsedResult = await openaiService.parseTransaction(transcription, userContext);
+
+    // Handle multiple transactions from voice input
+    if (Array.isArray(parsedResult)) {
+      await handleMultipleVoiceTransactions(chatId, processingMessage.message_id, parsedResult, userContext, user, projects, transcription);
+      return;
+    }
+
+    // Handle single transaction
+    const parsedTransaction = parsedResult;
 
     // Use user's primary currency if not specified
     if (!parsedTransaction.currency) {
@@ -194,6 +203,124 @@ async function handleVoice(msg) {
       // Fallback to sending new message if editing fails
       await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`);
     }
+  }
+}
+
+// Handle multiple transactions from voice input
+async function handleMultipleVoiceTransactions(chatId, messageId, transactions, userContext, user, projects, transcription) {
+  const bot = getBot();
+
+  try {
+    logger.info(`🔢 Processing ${transactions.length} voice transactions`);
+
+    // Delete the processing message
+    await bot.deleteMessage(chatId, messageId);
+
+    // Send summary message
+    await bot.sendMessage(chatId, `🎤 Распознано: "${transcription}"\n🔢 Найдено ${transactions.length} транзакций. Подтвердите каждую:`);
+
+    // Create individual confirmation cards for each transaction
+    for (let i = 0; i < transactions.length; i++) {
+      const transaction = transactions[i];
+
+      // Apply user's default currency
+      if (!transaction.currency) {
+        transaction.currency = userContext.primaryCurrency || 'RUB';
+      }
+
+      // Find project for this transaction
+      let selectedProject = null;
+      if (transaction.project) {
+        selectedProject = projects.find(p => p.name === transaction.project);
+      }
+
+      if (!selectedProject) {
+        selectedProject = projects[0]; // Use default project
+      }
+
+      if (!selectedProject) {
+        await bot.sendMessage(chatId, `❌ Транзакция ${i + 1}: не найден проект для "${transaction.description}"`);
+        continue;
+      }
+
+      // Store transaction temporarily
+      const tempId = uuidv4();
+
+      if (transaction.type === 'income') {
+        const incomeData = {
+          user_id: user.id,
+          project_id: selectedProject.id,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          category: transaction.category || 'Прочие доходы',
+          description: transaction.description,
+          income_date: new Date().toISOString().split('T')[0],
+          source_text: transcription
+        };
+
+        tempIncomes.set(tempId, incomeData);
+
+        // Show individual confirmation card
+        const confirmationText = `💰 Подтвердите доход ${i + 1}/${transactions.length}:
+
+🎤 Распознано: "${transcription}"
+📝 Описание: ${incomeData.description}
+💵 Сумма: ${incomeData.amount} ${incomeData.currency}
+📂 Категория: ${incomeData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${selectedProject.name}
+
+Всё верно?`;
+
+        await bot.sendMessage(chatId, confirmationText, {
+          reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+        });
+
+        // Auto-expire after 5 minutes
+        setTimeout(() => {
+          tempIncomes.delete(tempId);
+        }, 5 * 60 * 1000);
+
+      } else {
+        const expenseData = {
+          user_id: user.id,
+          project_id: selectedProject.id,
+          amount: transaction.amount,
+          currency: transaction.currency,
+          category: transaction.category || 'Прочее',
+          description: transaction.description,
+          expense_date: new Date().toISOString().split('T')[0],
+          source_text: transcription
+        };
+
+        tempExpenses.set(tempId, expenseData);
+
+        // Show individual confirmation card
+        const confirmationText = `💰 Подтвердите расход ${i + 1}/${transactions.length}:
+
+🎤 Распознано: "${transcription}"
+📝 Описание: ${expenseData.description}
+💵 Сумма: ${expenseData.amount} ${expenseData.currency}
+📂 Категория: ${expenseData.category}
+📅 Дата: ${new Date().toLocaleDateString('ru-RU')}
+📋 Проект: ${selectedProject.name}
+
+Всё верно?`;
+
+        await bot.sendMessage(chatId, confirmationText, {
+          reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+        });
+
+        // Auto-expire after 5 minutes
+        setTimeout(() => {
+          tempExpenses.delete(tempId);
+        }, 5 * 60 * 1000);
+      }
+    }
+
+  } catch (error) {
+    logger.error('Error handling multiple voice transactions:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка обработки голосовых транзакций. Попробуйте по одной.');
   }
 }
 

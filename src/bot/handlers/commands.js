@@ -1,7 +1,7 @@
 const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
-const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
+const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard, getCurrencySelectionKeyboard } = require('../keyboards/inline');
 const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
 const { stateManager } = require('../../utils/stateManager');
@@ -28,8 +28,11 @@ async function handleStart(msg, match) {
     stateManager.clearState(chatId);
 
     if (!user) {
+      logger.error(`Start command: user is null for chatId ${chatId}`);
       return bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте еще раз.');
     }
+
+    logger.info(`Start command called by user ${user.id} (${user.first_name || 'unknown'})`);
 
 
     // Check if user already has projects
@@ -37,8 +40,6 @@ async function handleStart(msg, match) {
     
     if (userProjects.length === 0) {
       // First time user - show currency selection first
-      const { getCurrencySelectionKeyboard } = require('../keyboards/inline');
-
       await bot.sendMessage(chatId,
         `🌟 Добро пожаловать в AI трекер расходов!
 
