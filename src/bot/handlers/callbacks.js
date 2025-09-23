@@ -64,10 +64,6 @@ async function handleCallback(callbackQuery) {
       await handleSaveExpense(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:')) {
       await handleEditCategory(chatId, messageId, data, user);
-    } else if (data.startsWith('edit_amount:')) {
-      await handleEditAmount(chatId, messageId, data, user);
-    } else if (data.startsWith('edit_description:')) {
-      await handleEditDescription(chatId, messageId, data, user);
     } else if (data.startsWith('edit_currency:')) {
       await handleEditCurrency(chatId, messageId, data, user);
     } else if (data.startsWith('edit_income_currency:')) {
@@ -3724,8 +3720,11 @@ async function handleCancelEdit(chatId, messageId, user) {
 async function handleEditTransactionAmount(chatId, messageId, data, user) {
   const bot = getBot();
 
+  logger.info(`🔧 handleEditTransactionAmount called: chatId=${chatId}, data="${data}", messageId=${messageId}`);
+
   try {
     const [, transactionType, transactionId] = data.split(':');
+    logger.info(`🔧 Parsed data: transactionType=${transactionType}, transactionId=${transactionId}`);
 
     // Set state for editing amount
     logger.info(`🔧 Setting state EDITING_TRANSACTION_AMOUNT for chatId: ${chatId}, transactionId: ${transactionId}, type: ${transactionType}`);
