@@ -45,6 +45,15 @@ async function handleText(msg) {
   if (text.startsWith('/')) return;
 
   try {
+    // Check if user wants to edit transactions (priority over states)
+    const editRequestResult = isEditRequest(text);
+    if (editRequestResult) {
+      stateManager.clearState(chatId); // Clear any active state
+      const { handleEdit } = require('./commands');
+      await handleEdit(msg, null, editRequestResult.limit);
+      return;
+    }
+
     // Check if user has active state
     const userState = stateManager.getState(chatId);
     logger.info(`🔍 Checking user state for ${chatId}: ${userState ? userState.type : 'NO_STATE'}`);
@@ -89,14 +98,6 @@ async function handleText(msg) {
     // Handle sync command
     if (text.toLowerCase() === 'синк' || text.toLowerCase() === 'sync') {
       await handleSyncCommand(msg);
-      return;
-    }
-
-    // Check if user wants to edit transactions
-    const editRequestResult = isEditRequest(text);
-    if (editRequestResult) {
-      const { handleEdit } = require('./commands');
-      await handleEdit(msg, null, editRequestResult.limit);
       return;
     }
 
@@ -333,15 +334,14 @@ async function handleExpenseText(msg) {
 function isEditRequest(text) {
   const editKeywords = [
     'редактировать', 'отредактировать', 'исправить', 'изменить',
-    'последние транзакции', 'последние записи', 'последние расходы',
-    'показать последние', 'хочу редактировать', 'редактирование',
-    'поправить', 'исправление', 'корректировка', 'edit'
+    'хочу редактировать', 'редактирование', 'поправить', 'исправление',
+    'корректировка', 'edit'
   ];
 
   const lowerText = text.toLowerCase();
-  const isEditRequest = editKeywords.some(keyword => lowerText.includes(keyword));
+  const isEditKeyword = editKeywords.some(keyword => lowerText.includes(keyword));
 
-  if (!isEditRequest) {
+  if (!isEditKeyword) {
     return false;
   }
 
@@ -400,10 +400,29 @@ async function handleAnalyticsQuestion(msg) {
 
   try {
     await bot.sendMessage(chatId, '🧠 Анализирую ваши расходы...');
-    
+
     const analysis = await analyticsService.askAIAnalytics(user.id, question);
-    await bot.sendMessage(chatId, analysis);
-    
+
+    // Check if this looks like a request for recent transactions list
+    const lowerQuestion = question.toLowerCase();
+    const isTransactionListRequest = /последние\s+\d+|показать?.*последние|список.*транзакций|все.*транзакции/i.test(question);
+
+    if (isTransactionListRequest) {
+      // Extract number from question for edit button
+      const numberMatch = question.match(/(\d+)/);
+      const limit = numberMatch ? Math.min(parseInt(numberMatch[1]), 20) : 3;
+
+      const keyboard = {
+        inline_keyboard: [[
+          { text: '✏️ Редактировать эти записи', callback_data: `edit_from_analytics:${limit}` }
+        ]]
+      };
+
+      await bot.sendMessage(chatId, analysis, { reply_markup: keyboard });
+    } else {
+      await bot.sendMessage(chatId, analysis);
+    }
+
   } catch (error) {
     logger.error('Analytics question error:', error);
     await bot.sendMessage(chatId, `❌ ${error.message || 'Не удалось проанализировать расходы.'}`);

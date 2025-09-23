@@ -252,6 +252,8 @@ async function handleCallback(callbackQuery) {
       await handleConfirmDelete(chatId, messageId, data, user);
     } else if (data === 'cancel_edit') {
       await handleCancelEdit(chatId, messageId, user);
+    } else if (data.startsWith('edit_from_analytics:')) {
+      await handleEditFromAnalytics(chatId, messageId, data, user);
     } else {
       logger.warn('Unknown callback data:', data);
     }
@@ -3990,6 +3992,53 @@ async function handleConfirmDelete(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error in handleConfirmDelete:', error);
     await bot.editMessageText('❌ Ошибка удаления транзакции.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Handle edit from analytics button
+async function handleEditFromAnalytics(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    // Extract limit from callback data: edit_from_analytics:15
+    const [, limit] = data.split(':');
+    const numLimit = parseInt(limit) || 3;
+
+    // Clear any active states
+    stateManager.clearState(chatId);
+
+    // Get recent transactions
+    const recentTransactions = await transactionService.getRecentTransactions(user.id, numLimit);
+
+    if (recentTransactions.length === 0) {
+      await bot.editMessageText(
+        '📝 У вас пока нет транзакций для редактирования.\n\n💡 Добавьте несколько трат или доходов, чтобы потом их можно было изменить.',
+        {
+          chat_id: chatId,
+          message_id: messageId
+        }
+      );
+      return;
+    }
+
+    const keyboard = getRecentTransactionsKeyboard(recentTransactions);
+
+    await bot.editMessageText(
+      `✏️ **Редактирование транзакций**\n\nПоказано последних записей: ${recentTransactions.length}\nВыберите транзакцию для редактирования:`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleEditFromAnalytics:', error);
+    await bot.editMessageText('❌ Ошибка загрузки транзакций. Попробуйте позже.', {
       chat_id: chatId,
       message_id: messageId
     });
