@@ -1,7 +1,7 @@
-const { userService, projectService, expenseService, customCategoryService } = require('../../services/supabase');
+const { userService, projectService, expenseService, customCategoryService, transactionService } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
-const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard, getCurrencySelectionKeyboard } = require('../keyboards/inline');
+const { getProjectSelectionKeyboard, getSettingsKeyboard, getUpgradeKeyboard, getCurrencySelectionKeyboard, getRecentTransactionsKeyboard } = require('../keyboards/inline');
 const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
 const { stateManager } = require('../../utils/stateManager');
@@ -937,6 +937,42 @@ async function handleTeam(msg) {
   }
 }
 
+// Command: /edit
+async function handleEdit(msg, match) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const bot = getBot();
+
+  try {
+    // Clear any active states
+    stateManager.clearState(chatId);
+
+    // Get recent transactions
+    const recentTransactions = await transactionService.getRecentTransactions(user.id, 3);
+
+    if (recentTransactions.length === 0) {
+      await bot.sendMessage(chatId,
+        '📝 У вас пока нет транзакций для редактирования.\n\n💡 Добавьте несколько трат или доходов, чтобы потом их можно было изменить.'
+      );
+      return;
+    }
+
+    const keyboard = getRecentTransactionsKeyboard(recentTransactions);
+
+    await bot.sendMessage(chatId,
+      '✏️ **Редактирование транзакций**\n\nВыберите транзакцию для редактирования:',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      }
+    );
+
+  } catch (error) {
+    logger.error('Edit command error:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка загрузки транзакций. Попробуйте позже.');
+  }
+}
+
 module.exports = {
   handleStart,
   handleHelp,
@@ -951,6 +987,7 @@ module.exports = {
   handleConnect,
   handleDevPro,
   handleAsk,
+  handleEdit,
   handleActivatePro,
   handleDeactivatePro,
   handleCheckPro,

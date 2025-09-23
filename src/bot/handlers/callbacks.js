@@ -1,4 +1,4 @@
-const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService, supabase } = require('../../services/supabase');
+const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService, transactionService, supabase } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 // Import temp storage from messages handler
 const messagesHandler = require('./messages');
@@ -17,7 +17,8 @@ const {
   getExportFormatKeyboard,
   getExportPeriodKeyboard,
   getSettingsKeyboard,
-  getCurrencySelectionKeyboard
+  getCurrencySelectionKeyboard,
+  getTransactionEditKeyboard
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
@@ -72,6 +73,22 @@ async function handleCallback(callbackQuery) {
       await handleEditIncomeCurrency(chatId, messageId, data, user);
     } else if (data.startsWith('set_currency:')) {
       await handleSetTransactionCurrency(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_transaction:')) {
+      await handleEditTransaction(chatId, messageId, data, user);
+    } else if (data === 'cancel_edit') {
+      await handleCancelEdit(chatId, messageId, user);
+    } else if (data.startsWith('edit_amount:') && data.split(':').length === 3) {
+      await handleEditTransactionAmount(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_description:') && data.split(':').length === 3) {
+      await handleEditTransactionDescription(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_category:') && data.split(':').length === 3) {
+      await handleEditTransactionCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project:') && data.split(':').length === 3) {
+      await handleEditTransactionProject(chatId, messageId, data, user);
+    } else if (data.startsWith('delete_transaction:')) {
+      await handleDeleteTransaction(chatId, messageId, data, user);
+    } else if (data.startsWith('confirm_delete:')) {
+      await handleConfirmDelete(chatId, messageId, data, user);
     } else if (data.startsWith('edit_project:')) {
       logger.info(`🔧 FIRST handleEditProject called for transaction editing: ${data}`);
       await handleEditProject(chatId, messageId, data, user);
@@ -3606,6 +3623,357 @@ async function handleManageTeam(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error in handleManageTeam:', error);
     await bot.editMessageText('❌ Ошибка управления командой', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Transaction editing handlers
+async function handleEditTransaction(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    // Parse callback data: edit_transaction:type:id
+    const [, transactionType, transactionId] = data.split(':');
+
+    // Get transaction details
+    let transaction;
+    if (transactionType === 'expense') {
+      transaction = await expenseService.findById(transactionId);
+    } else if (transactionType === 'income') {
+      transaction = await incomeService.findById(transactionId);
+    } else {
+      throw new Error('Invalid transaction type');
+    }
+
+    if (!transaction || transaction.user_id !== user.id) {
+      await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Get project name
+    const project = await projectService.findById(transaction.project_id);
+
+    const emoji = transactionType === 'expense' ? '📤' : '📥';
+    const dateField = transactionType === 'expense' ? transaction.expense_date : transaction.income_date;
+    const date = new Date(dateField).toLocaleDateString('ru-RU');
+
+    const editText = `${emoji} **Редактирование транзакции**
+
+📝 Описание: ${transaction.description}
+💵 Сумма: ${transaction.amount} ${transaction.currency}
+🏷️ Категория: ${transaction.category}
+📂 Проект: ${project?.name || 'Неизвестно'}
+📅 Дата: ${date}
+
+Что хотите изменить?`;
+
+    await bot.editMessageText(editText, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: getTransactionEditKeyboard(transactionId, transactionType)
+    });
+
+  } catch (error) {
+    logger.error('Error in handleEditTransaction:', error);
+    await bot.editMessageText('❌ Ошибка загрузки транзакции.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleCancelEdit(chatId, messageId, user) {
+  const bot = getBot();
+
+  try {
+    await bot.editMessageText('✅ Редактирование отменено.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  } catch (error) {
+    logger.error('Error in handleCancelEdit:', error);
+  }
+}
+
+// Edit transaction amount
+async function handleEditTransactionAmount(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, transactionType, transactionId] = data.split(':');
+
+    // Set state for editing amount
+    stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_AMOUNT, {
+      transactionType,
+      transactionId,
+      messageId
+    });
+
+    await bot.editMessageText(
+      '💵 **Редактирование суммы**\n\nВведите новую сумму (только число):',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleEditTransactionAmount:', error);
+    await bot.editMessageText('❌ Ошибка редактирования суммы.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Edit transaction description
+async function handleEditTransactionDescription(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, transactionType, transactionId] = data.split(':');
+
+    stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_DESCRIPTION, {
+      transactionType,
+      transactionId,
+      messageId
+    });
+
+    await bot.editMessageText(
+      '📝 **Редактирование описания**\n\nВведите новое описание транзакции:',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleEditTransactionDescription:', error);
+    await bot.editMessageText('❌ Ошибка редактирования описания.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Edit transaction category
+async function handleEditTransactionCategory(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, transactionType, transactionId] = data.split(':');
+
+    // Get current transaction to show category options
+    let transaction;
+    if (transactionType === 'expense') {
+      transaction = await expenseService.findById(transactionId);
+    } else {
+      transaction = await incomeService.findById(transactionId);
+    }
+
+    if (!transaction || transaction.user_id !== user.id) {
+      await bot.editMessageText('❌ Транзакция не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Set state for category editing
+    stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_CATEGORY, {
+      transactionType,
+      transactionId,
+      messageId
+    });
+
+    // Show category selection
+    const keyboard = transactionType === 'expense'
+      ? getCategorySelectionKeyboard(transactionId, user.is_premium)
+      : getIncomeCategorySelectionKeyboard(transactionId);
+
+    await bot.editMessageText(
+      '🏷️ **Выберите новую категорию:**',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleEditTransactionCategory:', error);
+    await bot.editMessageText('❌ Ошибка редактирования категории.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Edit transaction project
+async function handleEditTransactionProject(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, transactionType, transactionId] = data.split(':');
+
+    // Get user's projects
+    const projects = await projectService.findByUserId(user.id);
+
+    if (projects.length === 0) {
+      await bot.editMessageText('❌ У вас нет проектов для перемещения транзакции.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Set state for project editing
+    stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_PROJECT, {
+      transactionType,
+      transactionId,
+      messageId
+    });
+
+    // Show project selection
+    const keyboard = getProjectSelectionForTransactionKeyboard(projects, transactionId, transactionType);
+
+    await bot.editMessageText(
+      '📂 **Выберите новый проект:**',
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleEditTransactionProject:', error);
+    await bot.editMessageText('❌ Ошибка редактирования проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Delete transaction
+async function handleDeleteTransaction(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, transactionType, transactionId] = data.split(':');
+
+    // Get transaction details for confirmation
+    let transaction;
+    if (transactionType === 'expense') {
+      transaction = await expenseService.findById(transactionId);
+    } else {
+      transaction = await incomeService.findById(transactionId);
+    }
+
+    if (!transaction || transaction.user_id !== user.id) {
+      await bot.editMessageText('❌ Транзакция не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Show confirmation
+    const emoji = transactionType === 'expense' ? '📤' : '📥';
+    const confirmText = `🗑️ **Удаление транзакции**
+
+${emoji} ${transaction.description}
+💵 ${transaction.amount} ${transaction.currency}
+🏷️ ${transaction.category}
+
+⚠️ Вы уверены, что хотите удалить эту транзакцию? Это действие нельзя отменить.`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '✅ Да, удалить', callback_data: `confirm_delete:${transactionType}:${transactionId}` },
+          { text: '❌ Отмена', callback_data: 'cancel_edit' }
+        ]
+      ]
+    };
+
+    await bot.editMessageText(confirmText, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    });
+
+  } catch (error) {
+    logger.error('Error in handleDeleteTransaction:', error);
+    await bot.editMessageText('❌ Ошибка удаления транзакции.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Confirm delete transaction
+async function handleConfirmDelete(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, transactionType, transactionId] = data.split(':');
+
+    // Get transaction details
+    let transaction;
+    if (transactionType === 'expense') {
+      transaction = await expenseService.findById(transactionId);
+    } else {
+      transaction = await incomeService.findById(transactionId);
+    }
+
+    if (!transaction || transaction.user_id !== user.id) {
+      await bot.editMessageText('❌ Транзакция не найдена.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Delete from database
+    if (transactionType === 'expense') {
+      await expenseService.delete(transactionId, user.id);
+    } else {
+      await incomeService.delete(transactionId, user.id);
+    }
+
+    // Update Google Sheets if connected
+    try {
+      if (transaction.project_id) {
+        await googleSheetsService.deleteTransactionFromSheet(transaction, transaction.project_id, transactionType);
+      }
+    } catch (sheetsError) {
+      logger.warn('Failed to delete from Google Sheets:', sheetsError);
+    }
+
+    const emoji = transactionType === 'expense' ? '📤' : '📥';
+    await bot.editMessageText(
+      `✅ Транзакция удалена\n\n${emoji} ${transaction.description}\n💵 ${transaction.amount} ${transaction.currency}`,
+      {
+        chat_id: chatId,
+        message_id: messageId
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleConfirmDelete:', error);
+    await bot.editMessageText('❌ Ошибка удаления транзакции.', {
       chat_id: chatId,
       message_id: messageId
     });

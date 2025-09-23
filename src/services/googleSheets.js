@@ -704,6 +704,109 @@ class GoogleSheetsService {
       throw error;
     }
   }
+
+  // Update transaction in Google Sheets
+  async updateTransactionInSheet(transaction, projectId, type = 'expense') {
+    try {
+      if (!this.sheets) {
+        logger.debug('Google Sheets not available - skipping transaction update');
+        return;
+      }
+
+      const project = await projectService.findById(projectId);
+      if (!project?.google_sheet_id) {
+        logger.debug('No Google Sheet ID for project:', projectId);
+        return;
+      }
+
+      // If transaction doesn't have sheets_row_id, it can't be updated
+      if (!transaction.sheets_row_id) {
+        logger.debug('Transaction has no sheets_row_id - cannot update in sheets');
+        return;
+      }
+
+      const user = await userService.findById(transaction.user_id);
+      const authorName = user?.username || user?.first_name || 'Unknown';
+
+      // For expenses, make amount negative; for incomes, keep positive
+      const amount = type === 'expense' ? -Math.abs(transaction.amount) : Math.abs(transaction.amount);
+      const date = type === 'expense' ? transaction.expense_date : transaction.income_date;
+
+      const values = [[
+        this.formatDate(date),
+        transaction.description,
+        amount,
+        transaction.currency,
+        transaction.category,
+        authorName,
+        type
+      ]];
+
+      // Use project name as sheet name
+      const sheetName = project.name;
+      const range = `${sheetName}!A${transaction.sheets_row_id}:G${transaction.sheets_row_id}`;
+
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: project.google_sheet_id,
+        range: range,
+        valueInputOption: 'USER_ENTERED',
+        resource: { values }
+      });
+
+      logger.info(`Updated ${type} in Google Sheets: row ${transaction.sheets_row_id}, project: ${project.name}`);
+
+    } catch (error) {
+      logger.error(`Failed to update ${type} in Google Sheets:`, error);
+      // Don't throw error - this is not critical for the operation
+    }
+  }
+
+  // Delete transaction from Google Sheets
+  async deleteTransactionFromSheet(transaction, projectId, type = 'expense') {
+    try {
+      if (!this.sheets) {
+        logger.debug('Google Sheets not available - skipping transaction deletion');
+        return;
+      }
+
+      const project = await projectService.findById(projectId);
+      if (!project?.google_sheet_id) {
+        logger.debug('No Google Sheet ID for project:', projectId);
+        return;
+      }
+
+      // If transaction doesn't have sheets_row_id, it can't be deleted
+      if (!transaction.sheets_row_id) {
+        logger.debug('Transaction has no sheets_row_id - cannot delete from sheets');
+        return;
+      }
+
+      const sheetName = project.name;
+
+      // Delete the row by clearing its content and then deleting the row
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: project.google_sheet_id,
+        resource: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId: 0, // This should be dynamically determined based on sheet name
+                dimension: 'ROWS',
+                startIndex: transaction.sheets_row_id - 1, // 0-based index
+                endIndex: transaction.sheets_row_id
+              }
+            }
+          }]
+        }
+      });
+
+      logger.info(`Deleted ${type} from Google Sheets: row ${transaction.sheets_row_id}, project: ${project.name}`);
+
+    } catch (error) {
+      logger.error(`Failed to delete ${type} from Google Sheets:`, error);
+      // Don't throw error - this is not critical for the operation
+    }
+  }
 }
 
 module.exports = new GoogleSheetsService();

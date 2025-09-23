@@ -417,6 +417,55 @@ function getProjectSelectionForTransactionKeyboard(projects, transactionId, tran
   return { inline_keyboard: keyboard };
 }
 
+function getRecentTransactionsKeyboard(transactions) {
+  const keyboard = [];
+
+  transactions.forEach((transaction, index) => {
+    const emoji = transaction.type === 'expense' ? '📤' : '📥';
+    const date = new Date(transaction.expense_date || transaction.income_date).toLocaleDateString('ru-RU');
+    const amount = `${transaction.amount} ${transaction.currency}`;
+    const description = transaction.description.length > 20
+      ? transaction.description.substring(0, 20) + '...'
+      : transaction.description;
+
+    const buttonText = `${emoji} ${date} | ${description} | ${amount}`;
+
+    keyboard.push([{
+      text: buttonText,
+      callback_data: `edit_transaction:${transaction.type}:${transaction.id}`
+    }]);
+  });
+
+  // Add cancel button
+  keyboard.push([{
+    text: '❌ Отмена',
+    callback_data: 'cancel_edit'
+  }]);
+
+  return { inline_keyboard: keyboard };
+}
+
+function getTransactionEditKeyboard(transactionId, transactionType) {
+  return {
+    inline_keyboard: [
+      [
+        { text: '✏️ Сумма', callback_data: `edit_amount:${transactionType}:${transactionId}` },
+        { text: '📝 Описание', callback_data: `edit_description:${transactionType}:${transactionId}` }
+      ],
+      [
+        { text: '🏷️ Категория', callback_data: `edit_category:${transactionType}:${transactionId}` },
+        { text: '📂 Проект', callback_data: `edit_project:${transactionType}:${transactionId}` }
+      ],
+      [
+        { text: '🗑️ Удалить', callback_data: `delete_transaction:${transactionType}:${transactionId}` }
+      ],
+      [
+        { text: '❌ Отмена', callback_data: 'cancel_edit' }
+      ]
+    ]
+  };
+}
+
 module.exports = {
   getExpenseConfirmationKeyboard,
   getIncomeConfirmationKeyboard,
@@ -433,5 +482,7 @@ module.exports = {
   getPaginationKeyboard,
   getExportFormatKeyboard,
   getExportPeriodKeyboard,
-  getCurrencySelectionKeyboard
+  getCurrencySelectionKeyboard,
+  getRecentTransactionsKeyboard,
+  getTransactionEditKeyboard
 };

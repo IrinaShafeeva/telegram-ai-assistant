@@ -475,6 +475,14 @@ async function handleStateInput(msg, userState) {
         await handleMemberProjectKeywordsInput(msg, userState);
         break;
 
+      case STATE_TYPES.EDITING_TRANSACTION_AMOUNT:
+        await handleTransactionAmountEdit(msg, userState);
+        break;
+
+      case STATE_TYPES.EDITING_TRANSACTION_DESCRIPTION:
+        await handleTransactionDescriptionEdit(msg, userState);
+        break;
+
       default:
         logger.warn(`Unknown state type: ${userState.type}`);
         stateManager.clearState(chatId);
@@ -2140,6 +2148,73 @@ async function handleMemberProjectKeywordsInput(msg, userState) {
     logger.error('Error handling member project keywords:', error);
     stateManager.clearState(chatId);
     await bot.sendMessage(chatId, '❌ Ошибка настройки проекта. Попробуйте позже.');
+  }
+}
+
+// Handle transaction amount edit
+async function handleTransactionAmountEdit(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { transactionId, transactionType } = userState.data;
+
+  try {
+    // Validate amount
+    const amount = parseFloat(text.replace(',', '.'));
+    if (isNaN(amount) || amount <= 0) {
+      await bot.sendMessage(chatId, '❌ Введите корректную сумму (больше 0)');
+      return;
+    }
+
+    // Update transaction
+    const service = transactionType === 'expense' ? expenseService : incomeService;
+    const updatedTransaction = await service.update(transactionId, { amount });
+
+    // Update Google Sheets
+    if (updatedTransaction && updatedTransaction.project_id) {
+      await googleSheetsService.updateTransactionInSheet(updatedTransaction, updatedTransaction.project_id, transactionType);
+    }
+
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, `✅ Сумма ${transactionType === 'expense' ? 'расхода' : 'дохода'} обновлена: ${amount}`);
+
+  } catch (error) {
+    logger.error('Error updating transaction amount:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при обновлении суммы');
+    stateManager.clearState(chatId);
+  }
+}
+
+// Handle transaction description edit
+async function handleTransactionDescriptionEdit(msg, userState) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const bot = getBot();
+  const { transactionId, transactionType } = userState.data;
+
+  try {
+    // Validate description
+    if (text.length > 200) {
+      await bot.sendMessage(chatId, '❌ Описание слишком длинное (максимум 200 символов)');
+      return;
+    }
+
+    // Update transaction
+    const service = transactionType === 'expense' ? expenseService : incomeService;
+    const updatedTransaction = await service.update(transactionId, { description: text });
+
+    // Update Google Sheets
+    if (updatedTransaction && updatedTransaction.project_id) {
+      await googleSheetsService.updateTransactionInSheet(updatedTransaction, updatedTransaction.project_id, transactionType);
+    }
+
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, `✅ Описание ${transactionType === 'expense' ? 'расхода' : 'дохода'} обновлено: "${text}"`);
+
+  } catch (error) {
+    logger.error('Error updating transaction description:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при обновлении описания');
+    stateManager.clearState(chatId);
   }
 }
 

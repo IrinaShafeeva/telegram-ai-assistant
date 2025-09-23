@@ -18,6 +18,11 @@ async function setupBot(bot) {
     
     // User middleware function (will be called in each handler)
     global.ensureUser = async (msg) => {
+      if (!msg.from) {
+        logger.error('ensureUser: msg.from is missing', { chatId: msg.chat?.id });
+        return null;
+      }
+
       if (msg.from) {
         try {
           let user = await userService.findById(msg.from.id);
@@ -64,7 +69,11 @@ async function setupBot(bot) {
           msg.user = user;
           return user;
         } catch (error) {
-          logger.error('User middleware error:', error);
+          logger.error('User middleware error:', error, {
+            userId: msg.from?.id,
+            username: msg.from?.username,
+            chatId: msg.chat?.id
+          });
           return null;
         }
       }
@@ -73,8 +82,22 @@ async function setupBot(bot) {
 
     // Wrapper function to ensure user exists before calling handler
     const withUser = (handler) => async (msg, match) => {
-      await global.ensureUser(msg);
-      return handler(msg, match);
+      try {
+        const user = await global.ensureUser(msg);
+        if (!user) {
+          logger.error(`withUser: Failed to ensure user for chatId ${msg.chat?.id}, userId ${msg.from?.id}`);
+          await bot.sendMessage(msg.chat.id, '❌ Произошла ошибка при обработке команды. Попробуйте позже.');
+          return;
+        }
+        return await handler(msg, match);
+      } catch (error) {
+        logger.error('withUser wrapper error:', error);
+        try {
+          await bot.sendMessage(msg.chat.id, '❌ Произошла ошибка. Попробуйте позже.');
+        } catch (sendError) {
+          logger.error('Error sending error message in withUser:', sendError);
+        }
+      }
     };
 
     const withUserCallback = (handler) => async (callbackQuery) => {
@@ -95,6 +118,7 @@ async function setupBot(bot) {
     bot.onText(/\/sync/, withUser(commandHandlers.handleSync));
     bot.onText(/\/upgrade/, withUser(commandHandlers.handleUpgrade));
     bot.onText(/\/team/, withUser(commandHandlers.handleTeam));
+    bot.onText(/\/edit/, withUser(commandHandlers.handleEdit));
     bot.onText(/\/devpro/, withUser(commandHandlers.handleDevPro));
 
     // Admin commands for PRO management

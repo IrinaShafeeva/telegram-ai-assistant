@@ -600,7 +600,18 @@ const expenseService = {
       .insert(expenseData)
       .select()
       .single();
-    
+
+    if (error) throw error;
+    return data;
+  },
+
+  async findById(id) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('*')
+      .eq('id', id)
+      .single();
+
     if (error) throw error;
     return data;
   },
@@ -673,6 +684,26 @@ const expenseService = {
       ...expense,
       project_name: expense.projects?.name
     }));
+  },
+
+  async getRecentTransactions(userId, limit = 3) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select(`
+        *,
+        projects!inner(name)
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    return data.map(expense => ({
+      ...expense,
+      type: 'expense',
+      project_name: expense.projects?.name
+    }));
   }
 };
 
@@ -685,6 +716,17 @@ const incomeService = {
       .select()
       .single();
     
+    if (error) throw error;
+    return data;
+  },
+
+  async findById(id) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .select('*')
+      .eq('id', id)
+      .single();
+
     if (error) throw error;
     return data;
   },
@@ -743,6 +785,26 @@ const incomeService = {
     // Transform data for export
     return data.map(income => ({
       ...income,
+      project_name: income.projects?.name
+    }));
+  },
+
+  async getRecentTransactions(userId, limit = 3) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .select(`
+        *,
+        projects!inner(name)
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    return data.map(income => ({
+      ...income,
+      type: 'income',
       project_name: income.projects?.name
     }));
   }
@@ -973,6 +1035,30 @@ const projectMemberService = {
   }
 };
 
+// Transaction operations (combined expenses and incomes)
+const transactionService = {
+  async getRecentTransactions(userId, limit = 3) {
+    try {
+      // Get recent expenses and incomes in parallel
+      const [expenses, incomes] = await Promise.all([
+        expenseService.getRecentTransactions(userId, limit),
+        incomeService.getRecentTransactions(userId, limit)
+      ]);
+
+      // Combine and sort by creation date
+      const allTransactions = [...expenses, ...incomes].sort((a, b) =>
+        new Date(b.created_at) - new Date(a.created_at)
+      );
+
+      // Return only the requested number of transactions
+      return allTransactions.slice(0, limit);
+    } catch (error) {
+      logger.error('Error getting recent transactions:', error);
+      throw error;
+    }
+  }
+};
+
 module.exports = {
   supabase,
   setupDatabase,
@@ -982,5 +1068,6 @@ module.exports = {
   expenseService,
   incomeService,
   patternService,
-  customCategoryService
+  customCategoryService,
+  transactionService
 };
