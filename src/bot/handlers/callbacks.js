@@ -236,6 +236,22 @@ async function handleCallback(callbackQuery) {
       await handleKickMember(chatId, messageId, data, user);
     } else if (data === 'back_to_team') {
       await handleBackToTeam(chatId, messageId, user);
+    } else if (data.startsWith('edit_transaction:')) {
+      await handleEditTransaction(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_amount:')) {
+      await handleEditTransactionAmount(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_description:')) {
+      await handleEditTransactionDescription(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_category:')) {
+      await handleEditTransactionCategory(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project:')) {
+      await handleEditTransactionProject(chatId, messageId, data, user);
+    } else if (data.startsWith('delete_transaction:')) {
+      await handleDeleteTransaction(chatId, messageId, data, user);
+    } else if (data.startsWith('confirm_delete:')) {
+      await handleConfirmDelete(chatId, messageId, data, user);
+    } else if (data === 'cancel_edit') {
+      await handleCancelEdit(chatId, messageId, user);
     } else {
       logger.warn('Unknown callback data:', data);
     }
@@ -1094,8 +1110,8 @@ async function handleSetCurrency(chatId, messageId, data, user) {
         `✅ Проект "Личные расходы" создан!
 
 ✨ Теперь попробуйте добавить трату:
-• Голосом: "Потратил 200 рублей на кофе"
-• Текстом: "кофе 200р"
+• Голосом: "Потратил 15 евро на кофе"
+• Текстом: "кофе 15€"
 
 📊 Для подключения Google таблицы используйте команду: /connect`,
         { reply_markup: getMainMenuKeyboard() }

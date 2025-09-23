@@ -192,16 +192,16 @@ async function handleVoice(msg) {
     // Try to edit the processing message if it exists, otherwise send new message
     try {
       if (processingMessage) {
-        await bot.editMessageText(`${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`, {
+        await bot.editMessageText(`${errorMessage}\n\n💡 Пример: "Потратил 15 евро на кофе"`, {
           chat_id: chatId,
           message_id: processingMessage.message_id
         });
       } else {
-        await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`);
+        await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 15 евро на кофе"`);
       }
     } catch (editError) {
       // Fallback to sending new message if editing fails
-      await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 200 рублей на кофе"`);
+      await bot.sendMessage(chatId, `${errorMessage}\n\n💡 Пример: "Потратил 15 евро на кофе"`);
     }
   }
 }

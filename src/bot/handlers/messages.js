@@ -92,6 +92,14 @@ async function handleText(msg) {
       return;
     }
 
+    // Check if user wants to edit transactions
+    const editRequestResult = isEditRequest(text);
+    if (editRequestResult) {
+      const { handleEdit } = require('./commands');
+      await handleEdit(msg, null, editRequestResult.limit);
+      return;
+    }
+
     // Check if it's an analytics question
     if (await isAnalyticsQuestion(text)) {
       await handleAnalyticsQuestion(msg);
@@ -158,8 +166,8 @@ async function createFirstProject(chatId, user, currency) {
 2️⃣ Используйте команду: /connect
 
 ✨ Попробуйте добавить первую трату:
-• Голосом: "Потратил 200 рублей на кофе"
-• Текстом: "кофе 200р"
+• Голосом: "Потратил 15 евро на кофе"
+• Текстом: "кофе 15€"
 
 Бот автоматически определит категорию и предложит сохранить.`,
       { reply_markup: getMainMenuKeyboard() }
@@ -316,9 +324,32 @@ async function handleExpenseText(msg) {
   } catch (error) {
     logger.error('Expense text processing error:', error);
     await bot.sendMessage(chatId, 
-      `❌ ${error.message || 'Не удалось обработать расход. Попробуйте написать яснее.'}\n\n💡 Пример: "кофе 200 рублей"`
+      `❌ ${error.message || 'Не удалось обработать расход. Попробуйте написать яснее.'}\n\n💡 Пример: "кофе 15 евро"`
     );
   }
+}
+
+// Check if user wants to edit transactions
+function isEditRequest(text) {
+  const editKeywords = [
+    'редактировать', 'отредактировать', 'исправить', 'изменить',
+    'последние транзакции', 'последние записи', 'последние расходы',
+    'показать последние', 'хочу редактировать', 'редактирование',
+    'поправить', 'исправление', 'корректировка', 'edit'
+  ];
+
+  const lowerText = text.toLowerCase();
+  const isEditRequest = editKeywords.some(keyword => lowerText.includes(keyword));
+
+  if (!isEditRequest) {
+    return false;
+  }
+
+  // Extract number from the request (default to 3)
+  const numberMatch = text.match(/(\d+)/);
+  const limit = numberMatch ? Math.min(parseInt(numberMatch[1]), 20) : 3; // Max 20 records
+
+  return { limit };
 }
 
 async function isAnalyticsQuestion(text) {
