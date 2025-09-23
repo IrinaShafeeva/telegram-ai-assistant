@@ -360,6 +360,26 @@ async function isAnalyticsQuestion(text) {
       return false; // Definitely a transaction
     }
 
+    // Quick check for obvious analytics patterns
+    const analyticsPatterns = [
+      /покажи?.*последние/i,
+      /список.*транзакций/i,
+      /последние.*\d+.*запис/i,
+      /последние.*\d+.*транзакц/i,
+      /последние.*\d+.*расход/i,
+      /последние.*\d+.*доход/i,
+      /сколько.*потратил/i,
+      /на что.*трачу/i,
+      /баланс/i,
+      /статистик/i,
+      /аналитик/i
+    ];
+
+    const isObviousAnalytics = analyticsPatterns.some(pattern => pattern.test(text));
+    if (isObviousAnalytics) {
+      return true; // Definitely analytics
+    }
+
     // Use AI to determine if this is an analytics question
     const prompt = `Определи тип запроса пользователя:
 
