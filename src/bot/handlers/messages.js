@@ -456,6 +456,7 @@ async function handleStateInput(msg, userState) {
   const bot = getBot();
   
   try {
+    logger.info(`🔄 Processing state: ${userState.type} for chatId: ${chatId}, text: "${text}"`);
     switch (userState.type) {
       case STATE_TYPES.WAITING_EXPENSE_DESCRIPTION:
         await handleDescriptionInput(msg, userState);
@@ -2227,6 +2228,8 @@ async function handleTransactionAmountEdit(msg, userState) {
   const text = msg.text.trim();
   const bot = getBot();
   const { transactionId, transactionType } = userState.data;
+
+  logger.info(`🔧 handleTransactionAmountEdit called: chatId=${chatId}, text="${text}", transactionId=${transactionId}, type=${transactionType}`);
 
   try {
     // Validate amount
