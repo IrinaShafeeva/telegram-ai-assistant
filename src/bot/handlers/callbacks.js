@@ -18,7 +18,8 @@ const {
   getExportPeriodKeyboard,
   getSettingsKeyboard,
   getCurrencySelectionKeyboard,
-  getTransactionEditKeyboard
+  getTransactionEditKeyboard,
+  getRecentTransactionsKeyboard
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
