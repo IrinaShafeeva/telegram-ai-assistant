@@ -3728,11 +3728,13 @@ async function handleEditTransactionAmount(chatId, messageId, data, user) {
     const [, transactionType, transactionId] = data.split(':');
 
     // Set state for editing amount
+    logger.info(`🔧 Setting state EDITING_TRANSACTION_AMOUNT for chatId: ${chatId}, transactionId: ${transactionId}, type: ${transactionType}`);
     stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_AMOUNT, {
       transactionType,
       transactionId,
       messageId
     });
+    logger.info(`✅ State set successfully for chatId: ${chatId}`);
 
     await bot.editMessageText(
       '💵 **Редактирование суммы**\n\nВведите новую сумму (только число):',
