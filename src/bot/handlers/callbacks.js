@@ -24,7 +24,7 @@ const {
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
-const tributeService = require('../../services/tribute');
+const channelCheckService = require('../../services/channelCheck');
 
 async function handleCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
@@ -177,6 +177,8 @@ async function handleCallback(callbackQuery) {
       await handleExportPeriod(chatId, messageId, data, user);
     } else if (data === 'confirm_clear_data') {
       await handleConfirmClearData(chatId, messageId, user);
+    } else if (data === 'check_pro_status') {
+      await handleCheckProStatus(chatId, messageId, user);
     } else if (data === 'cancel_clear_data') {
       await handleCancelClearData(chatId, messageId, user);
     } else if (data.startsWith('sync_project:')) {
@@ -731,35 +733,43 @@ async function handleUpgradeAction(chatId, messageId, data, user) {
   switch (action) {
     case 'tribute':
       try {
-        // Create payment link for this user
-        const paymentLink = await tributeService.createSubscriptionLink(user.id);
+        // Get PRO channel link
+        const channelLink = await channelCheckService.getProChannelLink();
 
         await bot.editMessageText(
-          `💎 **Подписка через Tribute
+          `💎 **PRO подписка через Tribute
 🌍 Для всех пользователей
 
 **Цена:** 399 ₽ в месяц
 
 **Как подписаться:**
-1. Перейдите по ссылке: ${paymentLink}
-2. Оформите месячную подписку
-3. Оплатите удобным способом
-4. PRO статус активируется автоматически!
+1. Нажмите кнопку "Подписаться на канал"
+2. Оплатите подписку через @tribute бота
+3. PRO статус активируется автоматически!
 
-✨ Принимаем карты всех стран и криптовалюты`, {
+✨ Принимаем карты всех стран и криптовалюты
+
+📋 **PRO возможности:**
+• Неограниченные проекты
+• Неограниченные записи
+• 20 AI вопросов/день
+• 10 синхронизаций/день
+• Командная работа
+• Кастомные категории`, {
           chat_id: chatId,
           message_id: messageId,
           parse_mode: 'Markdown',
           reply_markup: {
-            inline_keyboard: [[
-              { text: '💳 Оплатить', url: paymentLink }
-            ]]
+            inline_keyboard: [
+              [{ text: '💎 Подписаться на канал', url: channelLink }],
+              [{ text: '🔄 Проверить подписку', callback_data: 'check_pro_status' }]
+            ]
           }
         });
       } catch (error) {
-        logger.error('Error creating Tribute payment link:', error);
+        logger.error('Error getting PRO channel link:', error);
         await bot.editMessageText(
-          `❌ Произошла ошибка при создании ссылки для оплаты.
+          `❌ Произошла ошибка при получении ссылки на канал.
 
 Пожалуйста, обратитесь в поддержку @loomiq_support`, {
           chat_id: chatId,
@@ -4043,6 +4053,73 @@ async function handleEditFromAnalytics(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error in handleEditFromAnalytics:', error);
     await bot.editMessageText('❌ Ошибка загрузки транзакций. Попробуйте позже.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Check PRO status by verifying channel membership
+async function handleCheckProStatus(chatId, messageId, user) {
+  const bot = getBot();
+
+  try {
+    await bot.editMessageText('🔄 Проверяю статус подписки...', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+
+    // Check channel membership and update database
+    const updatedUser = await channelCheckService.syncUserProStatus(user);
+
+    if (updatedUser.is_premium) {
+      await bot.editMessageText(
+        `✅ **PRO статус активен!**
+
+🎉 Поздравляем! Вы успешно подписались на PRO план.
+
+**Ваши возможности:**
+• ∞ Неограниченные проекты
+• ∞ Неограниченные записи
+• 20 AI вопросов/день
+• 10 синхронизаций/день
+• 👥 Командная работа
+• 📂 Кастомные категории
+• ⚡ Приоритетная поддержка
+
+Начните использовать расширенные функции прямо сейчас! 🚀`, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+      });
+    } else {
+      await bot.editMessageText(
+        `❌ **PRO статус не активен**
+
+Для активации PRO статуса:
+1. Подпишитесь на PRO канал
+2. Оплатите подписку через @tribute
+3. Нажмите "Проверить подписку" снова
+
+💡 После оплаты может потребоваться несколько минут для активации.`, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '💎 Подписаться', callback_data: 'upgrade:tribute' }],
+            [{ text: '🔄 Проверить снова', callback_data: 'check_pro_status' }]
+          ]
+        }
+      });
+    }
+
+  } catch (error) {
+    logger.error('Error checking PRO status:', error);
+    await bot.editMessageText(
+      `❌ Ошибка при проверке статуса подписки.
+
+Пожалуйста, попробуйте позже или обратитесь в поддержку @loomiq_support`, {
       chat_id: chatId,
       message_id: messageId
     });
