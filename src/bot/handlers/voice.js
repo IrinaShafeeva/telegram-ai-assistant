@@ -6,7 +6,7 @@ const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = requir
 const { tempExpenses, tempIncomes } = require('./messages');
 const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
-const { v4: uuidv4 } = require('uuid');
+const { generateShortId } = require('../../utils/shortId');
 
 async function handleVoice(msg) {
   const chatId = msg.chat.id;
@@ -95,7 +95,7 @@ async function handleVoice(msg) {
       }
     }
 
-    const tempId = uuidv4();
+    const tempId = generateShortId();
 
     if (parsedTransaction.type === 'income') {
       // Handle income transaction
@@ -244,7 +244,7 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
       }
 
       // Store transaction temporarily
-      const tempId = uuidv4();
+      const tempId = generateShortId();
 
       if (transaction.type === 'income') {
         const incomeData = {

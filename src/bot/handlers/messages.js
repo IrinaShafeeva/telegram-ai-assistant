@@ -10,7 +10,7 @@ const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const { shortTransactionMap } = require('../../utils/transactionMap');
 const logger = require('../../utils/logger');
-const { v4: uuidv4 } = require('uuid');
+const { generateShortId } = require('../../utils/shortId');
 
 // Function to detect currency based on language and text content
 function detectCurrencyByLanguage(text, languageCode) {
@@ -241,12 +241,12 @@ async function handleExpenseText(msg) {
       }
     }
 
-    const tempId = uuidv4();
+    const tempId = generateShortId();
 
 
     if (parsedTransaction.type === 'income') {
       // Handle income transaction
-      const tempId = uuidv4();
+      const tempId = generateShortId();
       const incomeData = {
         user_id: user.id,
         project_id: selectedProject.id,
@@ -285,7 +285,7 @@ async function handleExpenseText(msg) {
 
     } else {
       // Handle expense transaction
-      const tempId = uuidv4();
+      const tempId = generateShortId();
       const expenseData = {
         user_id: user.id,
         project_id: selectedProject.id,
@@ -1982,7 +1982,7 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
       }
 
       // Store transaction temporarily
-      const tempId = uuidv4();
+      const tempId = generateShortId();
 
       if (transaction.type === 'income') {
         const incomeData = {
