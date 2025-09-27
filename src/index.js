@@ -72,38 +72,52 @@ async function startBot() {
         res.sendStatus(200);
       });
 
-      // Tribute webhook endpoint
-      app.post('/webhook/tribute', async (req, res) => {
-        try {
-          const signature = req.headers['x-tribute-signature'];
-          const rawBody = JSON.stringify(req.body);
 
-          // Verify webhook signature
-          if (!tributeService.verifyWebhookSignature(rawBody, signature)) {
-            logger.warn('Invalid Tribute webhook signature');
-            return res.status(401).json({ error: 'Invalid signature' });
-          }
-
-          // Process webhook
-          const result = await tributeService.processWebhook(req.body);
-          logger.info('Tribute webhook processed:', result);
-
-          res.json({ success: true });
-        } catch (error) {
-          logger.error('Error processing Tribute webhook:', error);
-          res.status(500).json({ error: 'Internal server error' });
-        }
-      });
-      
     } else {
       // Use polling mode for development
       bot = new TelegramBot(botToken, { polling: true });
       global.bot = bot; // Make bot globally available
       await setupBot(bot);
-      
+
       logger.info('🏦 Expense Tracker Bot started successfully in polling mode');
     }
-    
+
+    // Tribute webhook endpoint (available in both modes)
+    app.post('/webhook/tribute', async (req, res) => {
+      try {
+        logger.info('Received Tribute webhook:', req.body);
+
+        const signature = req.headers['x-tribute-signature'];
+        const rawBody = JSON.stringify(req.body);
+
+        // Temporarily disable signature verification for testing
+        // TODO: Enable this when Tribute provides proper secret key
+        // if (!tributeService.verifyWebhookSignature(rawBody, signature)) {
+        //   logger.warn('Invalid Tribute webhook signature');
+        //   return res.status(401).json({ error: 'Invalid signature' });
+        // }
+
+        // Process webhook
+        const result = await tributeService.processWebhook(req.body);
+        logger.info('Tribute webhook processed:', result);
+
+        res.json({ success: true, message: 'Webhook processed successfully' });
+      } catch (error) {
+        logger.error('Error processing Tribute webhook:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Test endpoint for Tribute webhook
+    app.get('/webhook/tribute', (req, res) => {
+      res.json({
+        status: 'Tribute webhook endpoint is working',
+        method: 'GET',
+        timestamp: new Date().toISOString(),
+        note: 'Use POST method for actual webhook calls'
+      });
+    });
+
     // Start web server
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
