@@ -1099,14 +1099,14 @@ async function handleSetCurrency(chatId, messageId, data, user) {
       // Create first project automatically
       const project = await projectService.create({
         owner_id: user.id,
-        name: 'Личные расходы',
+        name: 'Личные траты',
         description: 'Проект для отслеживания расходов',
         is_active: true
       });
 
       const { getMainMenuKeyboard } = require('../keyboards/reply');
       await bot.sendMessage(chatId,
-        `✅ Проект "Личные расходы" создан!
+        `✅ Проект "Личные траты" создан!
 
 ✨ Теперь попробуйте добавить трату:
 • Голосом: "Потратил 15 евро на кофе"

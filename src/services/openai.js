@@ -145,7 +145,12 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
 6. currency: определи из контекста или используй "${primaryCurrency}" по умолчанию
 7. description: краткое описание на русском
 8. category: ТОЧНОЕ название из пользовательских или стандартных категорий
-9. project: ТОЧНОЕ название проекта из пользовательских или null
+9. project: Если есть прямое совпадение с ключевыми словами - название проекта, иначе "Личные траты"
+
+ВАЖНО ДЛЯ ПРОЕКТОВ:
+- Если в тексте есть ключевые слова конкретного проекта - назначай этот проект
+- Если НЕТ совпадений с ключевыми словами проектов - назначай "Личные траты"
+- НЕ оставляй project как null
 
 РАСПОЗНАВАНИЕ ВАЛЮТ (учитывай все варианты написания и склонения):
 - RUB: рубль, рублей, рублям, рублями, рублях, руб, р, ₽
@@ -162,11 +167,12 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
 Расходы: Еда, Транспорт, Развлечения, Здоровье, Покупки, Прочее
 
 Примеры:
-"Получил зарплату 50000" → {"type": "income", "amount": 50000, "currency": "RUB", "description": "Зарплата", "category": "Зарплата", "project": null}
-"Потратил 200 на кофе" → {"type": "expense", "amount": 200, "currency": "RUB", "description": "Кофе", "category": "Еда", "project": null}
-"135 гривен продукты" → {"type": "expense", "amount": 135, "currency": "UAH", "description": "Продукты", "category": "Еда", "project": null}
-"50 долларов такси" → {"type": "expense", "amount": 50, "currency": "USD", "description": "Такси", "category": "Транспорт", "project": null}
-"135 гривен продукты и 50 гривен шины" → [{"type": "expense", "amount": 135, "currency": "UAH", "description": "Продукты", "category": "Еда", "project": null}, {"type": "expense", "amount": 50, "currency": "UAH", "description": "Шины", "category": "Транспорт", "project": null}]
+"Получил зарплату 50000" → {"type": "income", "amount": 50000, "currency": "RUB", "description": "Зарплата", "category": "Зарплата", "project": "Личные траты"}
+"Потратил 200 на кофе" → {"type": "expense", "amount": 200, "currency": "RUB", "description": "Кофе", "category": "Еда", "project": "Личные траты"}
+"135 гривен продукты" → {"type": "expense", "amount": 135, "currency": "UAH", "description": "Продукты", "category": "Еда", "project": "Личные траты"}
+"50 долларов такси" → {"type": "expense", "amount": 50, "currency": "USD", "description": "Такси", "category": "Транспорт", "project": "Личные траты"}
+"Расходы на аренду машины 5000" (если есть проект "RentaCar" с ключевыми словами "аренда, машина") → {"type": "expense", "amount": 5000, "currency": "RUB", "description": "Аренда машины", "category": "Транспорт", "project": "RentaCar"}
+"Обед в ресторане 1500" (даже если есть проект RentaCar) → {"type": "expense", "amount": 1500, "currency": "RUB", "description": "Обед в ресторане", "category": "Еда", "project": "Личные траты"}
 `;
 
       const completion = await openai.chat.completions.create({

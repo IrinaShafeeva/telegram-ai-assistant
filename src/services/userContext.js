@@ -63,7 +63,7 @@ class UserContextService {
   }
 
   /**
-   * Получить кастомные проекты пользователя (кроме "Личные расходы")
+   * Получить кастомные проекты пользователя (кроме "Личные траты")
    * @param {string} userId - ID пользователя
    * @returns {Array} Массив проектов с ключевыми словами
    */
@@ -89,7 +89,7 @@ class UserContextService {
   }
 
   /**
-   * Получить дефолтный проект "Личные расходы"
+   * Получить дефолтный проект "Личные траты"
    * @param {string} userId - ID пользователя
    * @returns {Object|null} Дефолтный проект
    */
@@ -99,7 +99,7 @@ class UserContextService {
         .from('projects')
         .select('id, name')
         .eq('owner_id', userId)
-        .eq('name', 'Личные расходы')
+        .eq('name', 'Личные траты')
         .eq('is_active', true)
         .single();
 
