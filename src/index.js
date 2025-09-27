@@ -4,6 +4,7 @@ const express = require('express');
 const { setupDatabase } = require('./services/supabase');
 const { setupBot } = require('./bot');
 const logger = require('./utils/logger');
+const tributeService = require('./services/tribute');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -69,6 +70,29 @@ async function startBot() {
       app.post(`/webhook/${botToken}`, (req, res) => {
         bot.processUpdate(req.body);
         res.sendStatus(200);
+      });
+
+      // Tribute webhook endpoint
+      app.post('/webhook/tribute', async (req, res) => {
+        try {
+          const signature = req.headers['x-tribute-signature'];
+          const rawBody = JSON.stringify(req.body);
+
+          // Verify webhook signature
+          if (!tributeService.verifyWebhookSignature(rawBody, signature)) {
+            logger.warn('Invalid Tribute webhook signature');
+            return res.status(401).json({ error: 'Invalid signature' });
+          }
+
+          // Process webhook
+          const result = await tributeService.processWebhook(req.body);
+          logger.info('Tribute webhook processed:', result);
+
+          res.json({ success: true });
+        } catch (error) {
+          logger.error('Error processing Tribute webhook:', error);
+          res.status(500).json({ error: 'Internal server error' });
+        }
       });
       
     } else {

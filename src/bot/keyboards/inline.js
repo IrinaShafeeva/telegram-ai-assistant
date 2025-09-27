@@ -252,10 +252,7 @@ function getUpgradeKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: '💎 Подписаться через Boosty', callback_data: 'upgrade:boosty' }
-      ],
-      [
-        { text: '💎 Подписаться через Patreon', callback_data: 'upgrade:patreon' }
+        { text: '💎 Подписаться через Tribute', callback_data: 'upgrade:tribute' }
       ],
       [
         { text: '📋 Сравнить планы', callback_data: 'upgrade:compare' }

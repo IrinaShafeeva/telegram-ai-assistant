@@ -24,6 +24,7 @@ const {
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
+const tributeService = require('../../services/tribute');
 
 async function handleCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
@@ -197,7 +198,7 @@ async function handleCallback(callbackQuery) {
     } else if (data.startsWith('create_project')) {
       await handleCreateProject(chatId, user);
     } else if (data.startsWith('upgrade:')) {
-      await handleUpgradeAction(chatId, messageId, data);
+      await handleUpgradeAction(chatId, messageId, data, user);
     } else if (data.startsWith('settings:')) {
       await handleSettingsAction(chatId, messageId, data, user);
     } else if (data.startsWith('switch_project:')) {
@@ -724,46 +725,47 @@ async function handleCreateProject(chatId, user) {
   }
 }
 
-async function handleUpgradeAction(chatId, messageId, data) {
+async function handleUpgradeAction(chatId, messageId, data, user) {
   const action = data.split(':')[1];
 
   switch (action) {
-    case 'boosty':
-      await bot.editMessageText(
-        `💎 **Подписка через Boosty.to
-🇷🇺 Для пользователей из России
+    case 'tribute':
+      try {
+        // Create payment link for this user
+        const paymentLink = await tributeService.createSubscriptionLink(user.id);
+
+        await bot.editMessageText(
+          `💎 **Подписка через Tribute
+🌍 Для всех пользователей
 
 **Цена:** 399 ₽ в месяц
 
-**Как подписаться:1. Перейдите по ссылке: https://boosty.to/loomiq/purchase/3568312?ssource=DIRECT&share=subscription_link
+**Как подписаться:**
+1. Перейдите по ссылке: ${paymentLink}
 2. Оформите месячную подписку
-3. Оплатите удобным способом (карты РФ)
-4. Пришлите скриншот об оплате в поддержку @loomiq_support
-5. PRO статус активируется в течение часа!
+3. Оплатите удобным способом
+4. PRO статус активируется автоматически!
 
-✨ Принимаем карты РФ и другие способы оплаты`, {
-        chat_id: chatId,
-        message_id: messageId
-      });
-      break;
+✨ Принимаем карты всех стран и криптовалюты`, {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '💳 Оплатить', url: paymentLink }
+            ]]
+          }
+        });
+      } catch (error) {
+        logger.error('Error creating Tribute payment link:', error);
+        await bot.editMessageText(
+          `❌ Произошла ошибка при создании ссылки для оплаты.
 
-    case 'patreon':
-      await bot.editMessageText(
-        `💎 **Подписка через Patreon
-🌍 Для международных пользователей
-
-**Цена:** $4 в месяц
-
-**Как подписаться:1. Перейдите по ссылке: https://www.patreon.com/14834277/join
-2. Оформите месячную подписку
-3. Оплатите через PayPal или карту
-4. Пришлите скриншот об оплате в поддержку @loomiq_support
-5. PRO статус активируется в течение часа!
-
-✨ Принимаем PayPal, Visa, Mastercard`, {
-        chat_id: chatId,
-        message_id: messageId
-      });
+Пожалуйста, обратитесь в поддержку @loomiq_support`, {
+          chat_id: chatId,
+          message_id: messageId
+        });
+      }
       break;
       
     case 'compare':
