@@ -1864,9 +1864,14 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
         ? `📊 Нет данных за выбранный период для проекта "${projectName}".`
         : '📊 Нет данных за выбранный период для экспорта.';
 
+      const keyboard = projectId
+        ? [[{ text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }]]
+        : [[{ text: '🔙 Назад к настройкам', callback_data: 'settings:main' }]];
+
       await bot.editMessageText(noDataText, {
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
       });
       return;
     }

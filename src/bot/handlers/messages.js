@@ -827,7 +827,7 @@ async function handleProjectKeywordsInput(msg, userState) {
     if (text !== '-' && text.length > 0) {
       // Validate keywords (allow letters, spaces, commas, and common punctuation)
       if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
-        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!\n\n📝 Попробуйте ещё раз или отправьте "-" чтобы пропустить:');
         return;
       }
       
@@ -1536,7 +1536,7 @@ async function handleProjectKeywordsEditInput(msg, userState) {
     if (text !== '-' && text.length > 0) {
       // Validate keywords (allow letters, spaces, commas, and common punctuation)
       if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
-        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!\n\n📝 Попробуйте ещё раз или отправьте "-" чтобы пропустить:');
         return;
       }
 
@@ -1842,7 +1842,7 @@ async function handleCategoryKeywordsInput(msg, userState) {
     if (text !== '-' && text.length > 0) {
       // Validate keywords (allow letters, spaces, commas, and common punctuation)
       if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
-        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!\n\n📝 Попробуйте ещё раз или отправьте "-" чтобы пропустить:');
         return;
       }
 
@@ -1906,7 +1906,7 @@ async function handleCategoryKeywordsEditInput(msg, userState) {
     if (text !== '-' && text.length > 0) {
       // Validate keywords (allow letters, spaces, commas, and common punctuation)
       if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
-        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!\n\n📝 Попробуйте ещё раз или отправьте "-" чтобы пропустить:');
         return;
       }
 
@@ -2189,7 +2189,7 @@ async function handleMemberProjectKeywordsInput(msg, userState) {
     if (text !== '-' && text.length > 0) {
       // Validate keywords (allow letters, spaces, commas, and common punctuation)
       if (!/^[a-zA-Zа-яА-Я0-9\s,.-]+$/.test(text)) {
-        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!');
+        await bot.sendMessage(chatId, '❌ Ключевые слова могут содержать только буквы, цифры, пробелы и запятые!\n\n📝 Попробуйте ещё раз или отправьте "-" чтобы пропустить:');
         return;
       }
 
