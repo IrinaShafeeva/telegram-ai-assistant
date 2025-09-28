@@ -4245,8 +4245,7 @@ async function handleProjectInfo(chatId, messageId, data, user) {
 
     const isOwner = project.owner_id === user.id;
     const keyboard = [
-      [{ text: '📝 Последние записи', callback_data: `project_transactions:${projectId}` }],
-      [{ text: '📊 Подробная статистика', callback_data: `project_analytics:${projectId}` }]
+      [{ text: '📝 Последние записи', callback_data: `project_transactions:${projectId}` }]
     ];
 
     if (isOwner) {
