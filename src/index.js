@@ -71,6 +71,18 @@ async function startBot() {
         res.sendStatus(200);
       });
 
+      // Tribute webhook endpoint
+      app.post('/webhook/tribute', async (req, res) => {
+        try {
+          const { handleTributeWebhook } = require('./services/tributeWebhook');
+          await handleTributeWebhook(req.body);
+          res.sendStatus(200);
+        } catch (error) {
+          logger.error('Tribute webhook error:', error);
+          res.sendStatus(500);
+        }
+      });
+
 
     } else {
       // Use polling mode for development
@@ -81,6 +93,18 @@ async function startBot() {
       logger.info('🏦 Expense Tracker Bot started successfully in polling mode');
     }
 
+
+    // Tribute webhook endpoint (available in both modes)
+    app.post('/webhook/tribute', async (req, res) => {
+      try {
+        const { handleTributeWebhook } = require('./services/tributeWebhook');
+        await handleTributeWebhook(req.body);
+        res.sendStatus(200);
+      } catch (error) {
+        logger.error('Tribute webhook error:', error);
+        res.sendStatus(500);
+      }
+    });
 
     // Start web server
     app.listen(PORT, () => {

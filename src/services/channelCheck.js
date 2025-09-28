@@ -10,9 +10,9 @@ class ChannelCheckService {
   }
 
   /**
-   * Check if user is member of PRO channel
+   * Check if user has PAID PRO subscription (not just channel membership)
    * @param {string} userId - Telegram user ID
-   * @returns {Promise<boolean>} Is user PRO member
+   * @returns {Promise<boolean>} Is user PRO subscriber with payment
    */
   async isUserProMember(userId) {
     try {
@@ -24,18 +24,54 @@ class ChannelCheckService {
       const bot = getBot();
       const chatMember = await bot.getChatMember(this.proChannelId, userId);
 
-      // Valid PRO statuses: creator, administrator, member
+      // Check if user is in channel first
       const validStatuses = ['creator', 'administrator', 'member'];
-      const isPro = validStatuses.includes(chatMember.status);
+      if (!validStatuses.includes(chatMember.status)) {
+        logger.info(`User ${userId} not in PRO channel: ${chatMember.status}`);
+        return false;
+      }
 
-      logger.info(`User ${userId} PRO status: ${chatMember.status} -> ${isPro}`);
-      return isPro;
+      // For channel members, check if they have PAID subscriber role
+      // @tribute should give custom title "PRO Subscriber" to paid users
+      const isPaidSubscriber = this.checkPaidSubscriberStatus(chatMember);
+
+      logger.info(`User ${userId} channel status: ${chatMember.status}, paid subscriber: ${isPaidSubscriber}`);
+      return isPaidSubscriber;
 
     } catch (error) {
       // User not in channel or other error
       logger.info(`User ${userId} not in PRO channel: ${error.message}`);
       return false;
     }
+  }
+
+  /**
+   * Check if user has paid subscriber status based on their role/title
+   * @param {Object} chatMember - Telegram chat member object
+   * @returns {boolean} Is paid subscriber
+   */
+  checkPaidSubscriberStatus(chatMember) {
+    // Method 1: Check custom title (assigned by our webhook system)
+    if (chatMember.custom_title) {
+      const paidTitles = ['PRO Subscriber', 'Paid Member', 'Tribute Subscriber'];
+      if (paidTitles.some(title => chatMember.custom_title.includes(title))) {
+        return true;
+      }
+    }
+
+    // Method 2: Check if user is creator (channel owner gets PRO)
+    if (chatMember.status === 'creator') {
+      return true;
+    }
+
+    // Method 3: Check if user is administrator with PRO title
+    // (Our webhook system makes paid users admins with limited rights)
+    if (chatMember.status === 'administrator' && chatMember.custom_title === 'PRO Subscriber') {
+      return true;
+    }
+
+    // All other cases - no PRO access
+    return false;
   }
 
   /**
