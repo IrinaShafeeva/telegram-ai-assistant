@@ -7,12 +7,15 @@ const logger = require('../utils/logger');
 async function handleTributeWebhook(payload) {
   try {
     logger.info('Received Tribute webhook:', JSON.stringify(payload, null, 2));
+    logger.info('Payload keys:', Object.keys(payload || {}));
+    logger.info('Payload type:', typeof payload);
 
     // Extract data from @tribute webhook
     const { event, user_id, amount, currency, status, subscription_id } = payload;
 
     if (!event || !user_id) {
       logger.warn('Invalid Tribute webhook payload - missing required fields');
+      logger.warn('Expected: event, user_id. Got:', { event, user_id, keys: Object.keys(payload || {}) });
       return;
     }
 
