@@ -179,6 +179,8 @@ async function handleCallback(callbackQuery) {
       await handleConfirmClearData(chatId, messageId, user);
     } else if (data === 'check_pro_status') {
       await handleCheckProStatus(chatId, messageId, user);
+    } else if (data.startsWith('project_info:')) {
+      await handleProjectInfo(chatId, messageId, data, user);
     } else if (data === 'cancel_clear_data') {
       await handleCancelClearData(chatId, messageId, user);
     } else if (data.startsWith('sync_project:')) {
@@ -4120,6 +4122,94 @@ async function handleCheckProStatus(chatId, messageId, user) {
       `❌ Ошибка при проверке статуса подписки.
 
 Пожалуйста, попробуйте позже или обратитесь в поддержку @loomiq_support`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+// Show detailed project information and management options
+async function handleProjectInfo(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const projectId = data.split(':')[1];
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if user has access to this project
+    if (project.owner_id !== user.id) {
+      const isMember = await projectMemberService.findByProjectAndUser(projectId, user.id);
+      if (!isMember) {
+        await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+    }
+
+    // Get project statistics
+    const [expenseStats, incomeStats, memberCount] = await Promise.all([
+      expenseService.getProjectStats(projectId),
+      incomeService.getProjectStats(projectId),
+      projectMemberService.getMemberCount(projectId)
+    ]);
+
+    const totalExpenses = expenseStats.total || 0;
+    const totalIncomes = incomeStats.total || 0;
+    const expenseCount = expenseStats.count || 0;
+    const incomeCount = incomeStats.count || 0;
+    const balance = totalIncomes - totalExpenses;
+
+    const balanceEmoji = balance >= 0 ? '📈' : '📉';
+    const balanceText = balance >= 0 ? `+${balance.toFixed(2)}` : balance.toFixed(2);
+
+    const infoText = `📊 Проект: ${project.name}
+
+📈 Статистика:
+• 💸 Расходы: ${totalExpenses.toFixed(2)} (${expenseCount} записей)
+• 💰 Доходы: ${totalIncomes.toFixed(2)} (${incomeCount} записей)
+• ${balanceEmoji} Баланс: ${balanceText}
+
+👥 Участники: ${memberCount} чел.
+📅 Создан: ${new Date(project.created_at).toLocaleDateString('ru-RU')}
+
+Выберите действие:`;
+
+    const isOwner = project.owner_id === user.id;
+    const keyboard = [
+      [{ text: '📝 Последние записи', callback_data: `project_transactions:${projectId}` }],
+      [{ text: '📊 Подробная статистика', callback_data: `project_analytics:${projectId}` }]
+    ];
+
+    if (isOwner) {
+      keyboard.push([{ text: '⚙️ Настройки проекта', callback_data: `project_settings:${projectId}` }]);
+    }
+
+    if (project.google_sheet_id) {
+      keyboard.push([{ text: '🔄 Синхронизация с Sheets', callback_data: `sync_project:${projectId}` }]);
+    }
+
+    keyboard.push([{ text: '📤 Экспорт данных', callback_data: `export_project:${projectId}` }]);
+    keyboard.push([{ text: '🔙 Назад', callback_data: 'back_to_projects' }]);
+
+    await bot.editMessageText(infoText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+  } catch (error) {
+    logger.error('Error showing project info:', error);
+    await bot.editMessageText('❌ Ошибка загрузки информации о проекте.', {
       chat_id: chatId,
       message_id: messageId
     });

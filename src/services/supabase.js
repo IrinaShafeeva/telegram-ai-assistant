@@ -704,6 +704,21 @@ const expenseService = {
       type: 'expense',
       project_name: expense.projects?.name
     }));
+  },
+
+  async getProjectStats(projectId) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('amount')
+      .eq('project_id', projectId);
+
+    if (error) throw error;
+
+    const total = data.reduce((sum, expense) => sum + expense.amount, 0);
+    return {
+      total,
+      count: data.length
+    };
   }
 };
 
@@ -807,6 +822,21 @@ const incomeService = {
       type: 'income',
       project_name: income.projects?.name
     }));
+  },
+
+  async getProjectStats(projectId) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .select('amount')
+      .eq('project_id', projectId);
+
+    if (error) throw error;
+
+    const total = data.reduce((sum, income) => sum + income.amount, 0);
+    return {
+      total,
+      count: data.length
+    };
   }
 };
 
@@ -1032,6 +1062,18 @@ const projectMemberService = {
     }
 
     return await projectService.removeMember(projectId, targetUserId);
+  },
+
+  async getMemberCount(projectId) {
+    const { data, error } = await supabase
+      .from('project_members')
+      .select('id')
+      .eq('project_id', projectId);
+
+    if (error) throw error;
+
+    // Add 1 for project owner
+    return (data?.length || 0) + 1;
   }
 };
 
