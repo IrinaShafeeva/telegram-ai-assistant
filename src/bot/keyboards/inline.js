@@ -232,8 +232,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
 
 function getSettingsKeyboard(isPremium = false) {
   const keyboard = [
-    [{ text: '💱 Валюта', callback_data: 'settings:currency' }],
-    [{ text: '📊 Экспорт данных', callback_data: 'settings:export' }]
+    [{ text: '💱 Валюта', callback_data: 'settings:currency' }]
   ];
   
   if (isPremium) {

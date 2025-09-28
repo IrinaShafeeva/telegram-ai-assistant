@@ -1684,7 +1684,7 @@ ${category.emoji || '📁'} **${category.name}Текущие ключевые с
 • кафе, ресторан, еда, пицца
 • бензин, заправка, топливо
 
-Отправьте **-** чтобы удалить ключевые слова`, {
+Отправьте "-" чтобы удалить ключевые слова`, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -2633,7 +2633,7 @@ async function handleEditProjectKeywords(chatId, messageId, data, user) {
 • магазин, продукты, еда, супермаркет
 • кафе, ресторан, обед, ужин
 
-Отправьте **-** чтобы удалить ключевые слова`, {
+Отправьте "-" чтобы удалить ключевые слова`, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -2977,16 +2977,16 @@ async function handleSyncProject(chatId, messageId, data, user) {
     }
 
     // Show result
-    let resultText = `✅ **Синхронизация завершена!**\n\n`;
+    let resultText = `✅ Синхронизация завершена!\n\n`;
     resultText += `📋 Проект: ${project.name}\n`;
     resultText += `📊 Загружено записей: ${result.imported}\n`;
 
     if (result.errors && result.errors.length > 0) {
       resultText += `⚠️ Ошибок: ${result.errors.length}\n\n`;
       if (result.errors.length <= 3) {
-        resultText += `**Ошибки:**\n${result.errors.join('\n')}`;
+        resultText += `Ошибки:\n${result.errors.join('\n')}`;
       } else {
-        resultText += `**Первые ошибки:**\n${result.errors.slice(0, 3).join('\n')}\n...и ещё ${result.errors.length - 3}`;
+        resultText += `Первые ошибки:\n${result.errors.slice(0, 3).join('\n')}\n...и ещё ${result.errors.length - 3}`;
       }
     }
 
@@ -3004,7 +3004,7 @@ async function handleSyncProject(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error in handleSyncProject:', error);
     await bot.editMessageText(
-      `❌ **Ошибка синхронизации**\n\n${error.message || 'Неизвестная ошибка'}`,
+      `❌ Ошибка синхронизации\n\n${error.message || 'Неизвестная ошибка'}`,
       {
         chat_id: chatId,
         message_id: messageId,
@@ -3116,14 +3116,14 @@ async function handleSelectProjectForConnect(chatId, messageId, data, user) {
     stateManager.setState(chatId, STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK, { selectedProjectId: projectId });
 
     await bot.editMessageText(
-      `🔗 **Подключение к проекту "${project.name}"**\n\n` +
-      `**Пошаговая инструкция:**\n\n` +
+      `🔗 Подключение к проекту "${project.name}"\n\n` +
+      `Пошаговая инструкция:\n\n` +
       `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
-      `2️⃣ Нажмите **"Настроить доступ"** → **"Предоставить доступ"**\n` +
-      `3️⃣ Добавьте email: **exp-trck@ai-assistant-sheets.iam.gserviceaccount.com**\n` +
-      `4️⃣ Установите права: **"Редактор"**\n` +
+      `2️⃣ Нажмите "Настроить доступ" → "Предоставить доступ"\n` +
+      `3️⃣ Добавьте email: exp-trck@ai-assistant-sheets.iam.gserviceaccount.com\n` +
+      `4️⃣ Установите права: "Редактор"\n` +
       `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
-      `📝 **Пример ссылки:**\n` +
+      `📝 Пример ссылки:\n` +
       `https://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\n` +
       `✨ Просто отправьте ссылку следующим сообщением!`,
       {
@@ -3691,7 +3691,7 @@ async function handleEditTransaction(chatId, messageId, data, user) {
     const dateField = transactionType === 'expense' ? transaction.expense_date : transaction.income_date;
     const date = new Date(dateField).toLocaleDateString('ru-RU');
 
-    const editText = `${emoji} **Редактирование транзакции**
+    const editText = `${emoji} Редактирование транзакции
 
 📝 Описание: ${transaction.description}
 💵 Сумма: ${transaction.amount} ${transaction.currency}
@@ -3750,7 +3750,7 @@ async function handleEditTransactionAmount(chatId, messageId, data, user) {
     logger.info(`✅ State set successfully for chatId: ${chatId}`);
 
     await bot.editMessageText(
-      '💵 **Редактирование суммы**\n\nВведите новую сумму (только число):',
+      '💵 Редактирование суммы\n\nВведите новую сумму (только число):',
       {
         chat_id: chatId,
         message_id: messageId,
@@ -3781,7 +3781,7 @@ async function handleEditTransactionDescription(chatId, messageId, data, user) {
     });
 
     await bot.editMessageText(
-      '📝 **Редактирование описания**\n\nВведите новое описание транзакции:',
+      '📝 Редактирование описания\n\nВведите новое описание транзакции:',
       {
         chat_id: chatId,
         message_id: messageId,
@@ -3834,7 +3834,7 @@ async function handleEditTransactionCategory(chatId, messageId, data, user) {
       : getIncomeCategorySelectionKeyboard(transactionId);
 
     await bot.editMessageText(
-      '🏷️ **Выберите новую категорию:**',
+      '🏷️ Выберите новую категорию:',
       {
         chat_id: chatId,
         message_id: messageId,
@@ -3881,7 +3881,7 @@ async function handleEditTransactionProject(chatId, messageId, data, user) {
     const keyboard = getProjectSelectionForTransactionKeyboard(projects, transactionId, transactionType);
 
     await bot.editMessageText(
-      '📂 **Выберите новый проект:**',
+      '📂 Выберите новый проект:',
       {
         chat_id: chatId,
         message_id: messageId,
@@ -3924,7 +3924,7 @@ async function handleDeleteTransaction(chatId, messageId, data, user) {
 
     // Show confirmation
     const emoji = transactionType === 'expense' ? '📤' : '📥';
-    const confirmText = `🗑️ **Удаление транзакции**
+    const confirmText = `🗑️ Удаление транзакции
 
 ${emoji} ${transaction.description}
 💵 ${transaction.amount} ${transaction.currency}
@@ -4043,7 +4043,7 @@ async function handleEditFromAnalytics(chatId, messageId, data, user) {
     const keyboard = getRecentTransactionsKeyboard(recentTransactions);
 
     await bot.editMessageText(
-      `✏️ **Редактирование транзакций**\n\nПоказано последних записей: ${recentTransactions.length}\nВыберите транзакцию для редактирования:`,
+      `✏️ Редактирование транзакций\n\nПоказано последних записей: ${recentTransactions.length}\nВыберите транзакцию для редактирования:`,
       {
         chat_id: chatId,
         message_id: messageId,

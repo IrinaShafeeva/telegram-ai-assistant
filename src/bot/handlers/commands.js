@@ -133,37 +133,21 @@ async function handleProjects(msg, match) {
       return;
     }
 
-    let message = '📋 Управление проектами:\n\n';
-    
-    for (const project of projects) {
-      const isOwner = project.owner_id === user.id;
+    // Create clickable project buttons
+    const keyboard = projects.map(project => ([{
+      text: `📁 ${project.name}`,
+      callback_data: `project_info:${project.id}`
+    }]));
 
-      // Get expense count for this project
-      let expenseCount = 0;
-      try {
-        const expenses = await expenseService.findByProject(project.id, 100, 0);
-        expenseCount = expenses?.length || 0;
-      } catch (error) {
-        logger.warn('Could not get expense count for project:', project.id);
-        expenseCount = '?';
-      }
+    // Add create project button
+    keyboard.push([{ text: '➕ Создать проект', callback_data: 'create_project' }]);
 
-      message += `📁 ${project.name}\n`;
-      message += `   💰 Транзакций: ${expenseCount}\n`;
-      if (project.keywords) {
-        message += `   🔍 Ключевые слова: ${project.keywords}\n`;
-      }
-      if (project.google_sheet_id && project.google_sheet_url) {
-        message += `   📊 [Google Sheets](${project.google_sheet_url}) подключены\n`;
-      } else if (project.google_sheet_id) {
-        message += `   📊 Google Sheets подключены\n`;
-      }
-      message += '\n';
-    }
+    let message = '📋 Ваши проекты:\n\nНажмите на проект для просмотра детальной информации:';
 
     await bot.sendMessage(chatId, message, {
-      parse_mode: 'Markdown',
-      reply_markup: getProjectSelectionKeyboard(projects, 'manage', user.is_premium)
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
     });
   } catch (error) {
     logger.error('Projects command error:', error);
@@ -469,7 +453,7 @@ async function handleConnect(msg, match) {
       }]);
 
       await bot.sendMessage(chatId,
-        `🔗 **Подключение Google Sheets**\n\n` +
+        `🔗 Подключение Google Sheets\n\n` +
         `📋 Выберите проект для подключения таблицы:`,
         {
           parse_mode: 'Markdown',
@@ -703,14 +687,14 @@ async function handleActivatePro(msg, match) {
 
     // Notify admin
     await bot.sendMessage(chatId,
-      `✅ **PRO активирован**\n\n👤 Пользователь: ${targetUserId}\n📅 Период: ${periodNames[period]}\n⏰ Действует до: ${expiryDateStr}`,
+      `✅ PRO активирован\n\n👤 Пользователь: ${targetUserId}\n📅 Период: ${periodNames[period]}\n⏰ Действует до: ${expiryDateStr}`,
       { parse_mode: 'Markdown' }
     );
 
     // Notify user about PRO activation
     try {
       await bot.sendMessage(targetUserId,
-        `🎉 **PRO статус активирован!**\n\n💎 Период: ${periodNames[period]}\n📅 Действует до: ${expiryDateStr}\n\n✨ Теперь вам доступны все PRO функции:\n• ∞ Неограниченные проекты\n• ∞ Неограниченные записи\n• 20 AI вопросов/день\n• 10 синхронизаций/день\n• 👥 Командная работа\n• 📂 Кастомные категории\n\nСпасибо за поддержку! 🚀`,
+        `🎉 PRO статус активирован!\n\n💎 Период: ${periodNames[period]}\n📅 Действует до: ${expiryDateStr}\n\n✨ Теперь вам доступны все PRO функции:\n• ∞ Неограниченные проекты\n• ∞ Неограниченные записи\n• 20 AI вопросов/день\n• 10 синхронизаций/день\n• 👥 Командная работа\n• 📂 Кастомные категории\n\nСпасибо за поддержку! 🚀`,
         { parse_mode: 'Markdown' }
       );
     } catch (notifyError) {
@@ -747,7 +731,7 @@ async function handleDeactivatePro(msg, match) {
     });
 
     await bot.sendMessage(chatId,
-      `✅ **PRO деактивирован**\n\n👤 Пользователь: ${targetUserId}`,
+      `✅ PRO деактивирован\n\n👤 Пользователь: ${targetUserId}`,
       { parse_mode: 'Markdown' }
     );
 
@@ -789,11 +773,11 @@ async function handleCheckPro(msg, match) {
     }
 
     const statusText = targetUser.is_premium
-      ? `✅ **PRO активен**\n📅 До: ${new Date(targetUser.pro_expires_at).toLocaleDateString('ru-RU')}\n📋 План: ${targetUser.pro_plan_type}`
-      : `❌ **PRO неактивен**`;
+      ? `✅ PRO активен\n📅 До: ${new Date(targetUser.pro_expires_at).toLocaleDateString('ru-RU')}\n📋 План: ${targetUser.pro_plan_type}`
+      : `❌ PRO неактивен`;
 
     await bot.sendMessage(chatId,
-      `👤 **Пользователь:** ${targetUserId}\n🏷️ **Имя:** ${targetUser.first_name || 'Не указано'}\n📱 **Username:** @${targetUser.username || 'Не указан'}\n\n${statusText}`,
+      `👤 Пользователь: ${targetUserId}\n🏷️ Имя: ${targetUser.first_name || 'Не указано'}\n📱 Username: @${targetUser.username || 'Не указан'}\n\n${statusText}`,
       { parse_mode: 'Markdown' }
     );
 
@@ -826,18 +810,18 @@ async function handleListPro(msg) {
     }
 
     if (!proUsers || proUsers.length === 0) {
-      await bot.sendMessage(chatId, '📋 **PRO пользователи не найдены**', { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, '📋 PRO пользователи не найдены');
       return;
     }
 
-    let message = `📋 **Список PRO пользователей** (${proUsers.length}):\n\n`;
+    let message = `📋 Список PRO пользователей (${proUsers.length}):\n\n`;
 
     proUsers.forEach((proUser, index) => {
       const expiry = new Date(proUser.pro_expires_at).toLocaleDateString('ru-RU');
       const name = proUser.first_name || 'Не указано';
       const username = proUser.username ? `@${proUser.username}` : 'Не указан';
 
-      message += `${index + 1}. **${name}** (${username})\n`;
+      message += `${index + 1}. ${name} (${username})\n`;
       message += `   👤 ID: ${proUser.id}\n`;
       message += `   📅 До: ${expiry}\n`;
       message += `   📋 План: ${proUser.pro_plan_type}\n\n`;
@@ -846,10 +830,10 @@ async function handleListPro(msg) {
     // Split message if too long
     if (message.length > 4000) {
       const chunks = [];
-      let currentChunk = `📋 **Список PRO пользователей** (${proUsers.length}):\n\n`;
+      let currentChunk = `📋 Список PRO пользователей (${proUsers.length}):\n\n`;
 
       proUsers.forEach((proUser, index) => {
-        const userInfo = `${index + 1}. **${proUser.first_name || 'Не указано'}** (@${proUser.username || 'Не указан'})\n   👤 ID: ${proUser.id}\n   📅 До: ${new Date(proUser.pro_expires_at).toLocaleDateString('ru-RU')}\n   📋 План: ${proUser.pro_plan_type}\n\n`;
+        const userInfo = `${index + 1}. ${proUser.first_name || 'Не указано'} (@${proUser.username || 'Не указан'})\n   👤 ID: ${proUser.id}\n   📅 До: ${new Date(proUser.pro_expires_at).toLocaleDateString('ru-RU')}\n   📋 План: ${proUser.pro_plan_type}\n\n`;
 
         if (currentChunk.length + userInfo.length > 4000) {
           chunks.push(currentChunk);
@@ -962,7 +946,7 @@ async function handleEdit(msg, match, limit = 3) {
     const keyboard = getRecentTransactionsKeyboard(recentTransactions);
 
     await bot.sendMessage(chatId,
-      `✏️ **Редактирование транзакций**\n\nПоказано последних записей: ${recentTransactions.length}\nВыберите транзакцию для редактирования:`,
+      `✏️ Редактирование транзакций\n\nПоказано последних записей: ${recentTransactions.length}\nВыберите транзакцию для редактирования:`,
       {
         parse_mode: 'Markdown',
         reply_markup: keyboard
