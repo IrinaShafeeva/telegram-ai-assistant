@@ -181,6 +181,14 @@ async function handleCallback(callbackQuery) {
       await handleCheckProStatus(chatId, messageId, user);
     } else if (data.startsWith('project_info:')) {
       await handleProjectInfo(chatId, messageId, data, user);
+    } else if (data.startsWith('export_project:')) {
+      await handleExportProject(chatId, messageId, data, user);
+    } else if (data.startsWith('project_transactions:')) {
+      await handleProjectTransactions(chatId, messageId, data, user);
+    } else if (data.startsWith('project_settings:')) {
+      await handleProjectSettings(chatId, messageId, data, user);
+    } else if (data.startsWith('export_format:')) {
+      await handleExportFormat(chatId, messageId, data, user);
     } else if (data === 'cancel_clear_data') {
       await handleCancelClearData(chatId, messageId, user);
     } else if (data.startsWith('sync_project:')) {
@@ -1742,30 +1750,44 @@ async function handleExportFormat(chatId, messageId, data, user) {
 async function handleExportPeriod(chatId, messageId, data, user) {
   const bot = getBot();
   const parts = data.split(':');
-  const format = parts[1]; // xlsx or csv
-  const period = parts[2]; // today, week, month, custom
-  
+
+  // Check if this is project-specific export (format:projectId:period) or general export (format:period)
+  let format, period, projectId;
+
+  if (parts.length === 4) {
+    // Project-specific: export_period:format:projectId:period
+    format = parts[1];
+    projectId = parts[2];
+    period = parts[3];
+  } else {
+    // General export: export_period:format:period
+    format = parts[1];
+    period = parts[2];
+    projectId = null;
+  }
+
   if (period === 'custom') {
     // Set state for custom date range input
-    stateManager.setState(chatId, 'WAITING_CUSTOM_EXPORT_DATES', { 
+    stateManager.setState(chatId, 'WAITING_CUSTOM_EXPORT_DATES', {
       format,
-      messageId 
+      projectId,
+      messageId
     });
-    
+
     await bot.editMessageText('📅 Укажите период экспорта:\n\n📝 Формат: ДД.ММ.ГГГГ - ДД.ММ.ГГГГ\n\n✅ Пример: 01.12.2024 - 31.12.2024', {
       chat_id: chatId,
       message_id: messageId
     });
     return;
   }
-  
+
   try {
     // Calculate date range
     const { startDate, endDate } = getDateRange(period);
-    
-    // Generate export
-    await generateExport(chatId, messageId, user, format, startDate, endDate);
-    
+
+    // Generate export (with optional projectId)
+    await generateExport(chatId, messageId, user, format, startDate, endDate, projectId);
+
   } catch (error) {
     logger.error('Export error:', error);
     await bot.editMessageText('❌ Ошибка создания экспорта. Попробуйте позже.', {
@@ -1799,59 +1821,91 @@ function getDateRange(period) {
   return { startDate, endDate };
 }
 
-async function generateExport(chatId, messageId, user, format, startDate, endDate) {
+async function generateExport(chatId, messageId, user, format, startDate, endDate, projectId = null) {
   const bot = getBot();
-  
+
   // Show processing message
-  await bot.editMessageText('⏳ Генерируем экспорт...', {
+  const processingText = projectId ? '⏳ Генерируем экспорт проекта...' : '⏳ Генерируем экспорт...';
+  await bot.editMessageText(processingText, {
     chat_id: chatId,
     message_id: messageId
   });
-  
+
   try {
-    // Get user's expenses and incomes for the period
-    const [expenses, incomes] = await Promise.all([
-      expenseService.getExpensesForExport(user.id, startDate, endDate),
-      incomeService.getIncomesForExport(user.id, startDate, endDate)
-    ]);
+    let expenses, incomes, projectName = '';
+
+    if (projectId) {
+      // Get project data
+      const project = await projectService.findById(projectId);
+      if (!project) {
+        await bot.editMessageText('❌ Проект не найден.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+      projectName = project.name;
+
+      // Get project-specific expenses and incomes for the period
+      [expenses, incomes] = await Promise.all([
+        expenseService.getExpensesForExportByProject(projectId, startDate, endDate),
+        incomeService.getIncomesForExportByProject(projectId, startDate, endDate)
+      ]);
+    } else {
+      // Get all user's expenses and incomes for the period
+      [expenses, incomes] = await Promise.all([
+        expenseService.getExpensesForExport(user.id, startDate, endDate),
+        incomeService.getIncomesForExport(user.id, startDate, endDate)
+      ]);
+    }
 
     if (expenses.length === 0 && incomes.length === 0) {
-      await bot.editMessageText('📊 Нет данных за выбранный период для экспорта.', {
+      const noDataText = projectId
+        ? `📊 Нет данных за выбранный период для проекта "${projectName}".`
+        : '📊 Нет данных за выбранный период для экспорта.';
+
+      await bot.editMessageText(noDataText, {
         chat_id: chatId,
         message_id: messageId
       });
       return;
     }
-    
+
     let fileContent, fileName, mimeType;
-    
+
+    const filePrefix = projectId ? `${projectName}_transactions` : 'transactions';
+
     if (format === 'csv') {
       // Generate CSV
       const csvData = generateCSV(expenses, incomes);
       fileContent = Buffer.from(csvData, 'utf-8');
-      fileName = `transactions_${formatDate(startDate)}_${formatDate(endDate)}.csv`;
+      fileName = `${filePrefix}_${formatDate(startDate)}_${formatDate(endDate)}.csv`;
       mimeType = 'text/csv';
     } else {
       // Generate Excel - for now, use CSV format as placeholder
       const csvData = generateCSV(expenses, incomes);
       fileContent = Buffer.from(csvData, 'utf-8');
-      fileName = `transactions_${formatDate(startDate)}_${formatDate(endDate)}.xlsx`;
+      fileName = `${filePrefix}_${formatDate(startDate)}_${formatDate(endDate)}.xlsx`;
       mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
-    
+
     // Send file
     await bot.sendDocument(chatId, fileContent, {}, {
       filename: fileName,
       contentType: mimeType
     });
-    
+
     // Update message
     const totalRecords = expenses.length + incomes.length;
-    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${totalRecords} записей (${expenses.length} расходов, ${incomes.length} доходов)\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
+    const successText = projectId
+      ? `✅ Экспорт проекта "${projectName}" готов!\n\n📊 Экспортировано: ${totalRecords} записей (${expenses.length} расходов, ${incomes.length} доходов)\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`
+      : `✅ Экспорт готов!\n\n📊 Экспортировано: ${totalRecords} записей (${expenses.length} расходов, ${incomes.length} доходов)\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`;
+
+    await bot.editMessageText(successText, {
       chat_id: chatId,
       message_id: messageId
     });
-    
+
   } catch (error) {
     logger.error('Export generation error:', error);
     await bot.editMessageText('❌ Ошибка генерации файла экспорта.', {
@@ -4210,6 +4264,250 @@ async function handleProjectInfo(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error showing project info:', error);
     await bot.editMessageText('❌ Ошибка загрузки информации о проекте.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleExportProject(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const projectId = data.split(':')[1];
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if user has access to this project
+    if (project.owner_id !== user.id) {
+      const isMember = await projectMemberService.findByProjectAndUser(projectId, user.id);
+      if (!isMember) {
+        await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+    }
+
+    // Show export format selection
+    const keyboard = [
+      [
+        { text: '📊 Excel (.xlsx)', callback_data: `export_format:xlsx:${projectId}` },
+        { text: '📄 CSV', callback_data: `export_format:csv:${projectId}` }
+      ],
+      [
+        { text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }
+      ]
+    ];
+
+    await bot.editMessageText(
+      `📤 Экспорт данных проекта "${project.name}"\n\nВыберите формат файла:`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleExportProject:', error);
+    await bot.editMessageText('❌ Ошибка при экспорте данных.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleProjectTransactions(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const projectId = data.split(':')[1];
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if user has access to this project
+    if (project.owner_id !== user.id) {
+      const isMember = await projectMemberService.findByProjectAndUser(projectId, user.id);
+      if (!isMember) {
+        await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+    }
+
+    // Get recent transactions for this project
+    const [expenses, incomes] = await Promise.all([
+      expenseService.findByProject(projectId, 10, 0),
+      incomeService.findByProject(projectId, 10, 0)
+    ]);
+
+    // Combine and sort by date
+    const allTransactions = [
+      ...expenses.map(e => ({ ...e, type: 'expense', date: e.expense_date })),
+      ...incomes.map(i => ({ ...i, type: 'income', date: i.income_date }))
+    ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
+
+    if (allTransactions.length === 0) {
+      await bot.editMessageText(
+        `📝 Последние записи проекта "${project.name}"\n\n❌ Записи не найдены.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [[{ text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }]]
+          }
+        }
+      );
+      return;
+    }
+
+    let message = `📝 Последние записи проекта "${project.name}":\n\n`;
+
+    allTransactions.forEach((transaction, index) => {
+      const emoji = transaction.type === 'expense' ? '📤' : '📥';
+      const date = new Date(transaction.date).toLocaleDateString('ru-RU');
+      message += `${index + 1}. ${emoji} ${transaction.description}\n`;
+      message += `   💰 ${transaction.amount} ${transaction.currency}\n`;
+      message += `   📅 ${date}\n\n`;
+    });
+
+    const keyboard = [
+      [{ text: '✏️ Редактировать записи', callback_data: `edit_project_transactions:${projectId}` }],
+      [{ text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }]
+    ];
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+  } catch (error) {
+    logger.error('Error in handleProjectTransactions:', error);
+    await bot.editMessageText('❌ Ошибка загрузки записей проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleProjectSettings(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const projectId = data.split(':')[1];
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if user is owner
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Только владелец проекта может изменять настройки.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const settingsText = `⚙️ Настройки проекта "${project.name}"\n\nВыберите действие:`;
+
+    const keyboard = [
+      [{ text: '✏️ Изменить название', callback_data: `edit_project_name:${projectId}` }],
+      [{ text: '🔍 Ключевые слова', callback_data: `edit_project_keywords:${projectId}` }],
+      [{ text: '👥 Управление командой', callback_data: `manage_team:${projectId}` }],
+      [{ text: '🔗 Google Sheets', callback_data: `connect_sheet_to_project:${projectId}` }],
+      [{ text: '🗑️ Удалить проект', callback_data: `delete_project:${projectId}` }],
+      [{ text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }]
+    ];
+
+    await bot.editMessageText(settingsText, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+
+  } catch (error) {
+    logger.error('Error in handleProjectSettings:', error);
+    await bot.editMessageText('❌ Ошибка загрузки настроек проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleExportFormat(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const [, format, projectId] = data.split(':');
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    // Check if user has access to this project
+    if (project.owner_id !== user.id) {
+      const isMember = await projectMemberService.findByProjectAndUser(projectId, user.id);
+      if (!isMember) {
+        await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+    }
+
+    // Show period selection
+    const keyboard = [
+      [{ text: '📅 Сегодня', callback_data: `export_period:${format}:${projectId}:today` }],
+      [{ text: '📅 Последние 7 дней', callback_data: `export_period:${format}:${projectId}:week` }],
+      [{ text: '📅 Последние 30 дней', callback_data: `export_period:${format}:${projectId}:month` }],
+      [{ text: '📅 Указать период', callback_data: `export_period:${format}:${projectId}:custom` }],
+      [{ text: '🔙 Назад к экспорту', callback_data: `export_project:${projectId}` }]
+    ];
+
+    const formatName = format === 'xlsx' ? 'Excel (.xlsx)' : 'CSV';
+    await bot.editMessageText(
+      `📊 Экспорт в формате ${formatName}\n\nВыберите период для экспорта:`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: keyboard }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error in handleExportFormat:', error);
+    await bot.editMessageText('❌ Ошибка при выборе формата экспорта.', {
       chat_id: chatId,
       message_id: messageId
     });

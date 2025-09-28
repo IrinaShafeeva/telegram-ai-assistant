@@ -676,9 +676,30 @@ const expenseService = {
       .gte('expense_date', startDate.toISOString().split('T')[0])
       .lte('expense_date', endDate.toISOString().split('T')[0])
       .order('expense_date', { ascending: false });
-    
+
     if (error) throw error;
-    
+
+    // Transform data for export
+    return data.map(expense => ({
+      ...expense,
+      project_name: expense.projects?.name
+    }));
+  },
+
+  async getExpensesForExportByProject(projectId, startDate, endDate) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select(`
+        *,
+        projects!inner(name)
+      `)
+      .eq('project_id', projectId)
+      .gte('expense_date', startDate.toISOString().split('T')[0])
+      .lte('expense_date', endDate.toISOString().split('T')[0])
+      .order('expense_date', { ascending: false });
+
+    if (error) throw error;
+
     // Transform data for export
     return data.map(expense => ({
       ...expense,
@@ -794,9 +815,30 @@ const incomeService = {
       .gte('income_date', startDate.toISOString().split('T')[0])
       .lte('income_date', endDate.toISOString().split('T')[0])
       .order('income_date', { ascending: false });
-    
+
     if (error) throw error;
-    
+
+    // Transform data for export
+    return data.map(income => ({
+      ...income,
+      project_name: income.projects?.name
+    }));
+  },
+
+  async getIncomesForExportByProject(projectId, startDate, endDate) {
+    const { data, error } = await supabase
+      .from('incomes')
+      .select(`
+        *,
+        projects!inner(name)
+      `)
+      .eq('project_id', projectId)
+      .gte('income_date', startDate.toISOString().split('T')[0])
+      .lte('income_date', endDate.toISOString().split('T')[0])
+      .order('income_date', { ascending: false });
+
+    if (error) throw error;
+
     // Transform data for export
     return data.map(income => ({
       ...income,
