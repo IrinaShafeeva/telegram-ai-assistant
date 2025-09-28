@@ -10,12 +10,36 @@ async function handleTributeWebhook(payload) {
     logger.info('Payload keys:', Object.keys(payload || {}));
     logger.info('Payload type:', typeof payload);
 
-    // Extract data from @tribute webhook
-    const { event, user_id, amount, currency, status, subscription_id } = payload;
+    // Handle test webhooks from @tribute
+    if (payload.test_event) {
+      logger.info('Received test webhook from @tribute - webhook endpoint working correctly');
+      return;
+    }
 
-    if (!event || !user_id) {
-      logger.warn('Invalid Tribute webhook payload - missing required fields');
-      logger.warn('Expected: event, user_id. Got:', { event, user_id, keys: Object.keys(payload || {}) });
+    // Extract data from @tribute webhook (adjust field names as needed)
+    const {
+      event,
+      user_id,
+      userId,           // alternative field name
+      telegram_user_id, // another alternative
+      amount,
+      currency,
+      status,
+      subscription_id
+    } = payload;
+
+    // Try different possible user ID field names
+    const actualUserId = user_id || userId || telegram_user_id;
+
+    if (!event && !payload.type && !payload.event_type) {
+      logger.warn('Invalid Tribute webhook payload - missing event type');
+      logger.warn('Available fields:', Object.keys(payload || {}));
+      return;
+    }
+
+    if (!actualUserId) {
+      logger.warn('Invalid Tribute webhook payload - missing user ID');
+      logger.warn('Expected: user_id, userId, or telegram_user_id. Available fields:', Object.keys(payload || {}));
       return;
     }
 
@@ -27,20 +51,29 @@ async function handleTributeWebhook(payload) {
       return;
     }
 
-    switch (event) {
+    // Determine event type (try different field names)
+    const eventType = event || payload.type || payload.event_type;
+
+    switch (eventType) {
       case 'payment_successful':
       case 'subscription_activated':
-        await handlePaymentSuccess(user_id, amount, currency, subscription_id);
+      case 'payment':
+      case 'paid':
+        await handlePaymentSuccess(actualUserId, amount, currency, subscription_id);
         break;
 
       case 'subscription_cancelled':
       case 'subscription_expired':
       case 'payment_failed':
-        await handlePaymentFailure(user_id, subscription_id);
+      case 'cancelled':
+      case 'expired':
+      case 'failed':
+        await handlePaymentFailure(actualUserId, subscription_id);
         break;
 
       default:
-        logger.info(`Unhandled Tribute event: ${event}`);
+        logger.info(`Unhandled Tribute event: ${eventType}`);
+        logger.info('Full payload for debugging:', payload);
     }
 
   } catch (error) {
