@@ -23,61 +23,58 @@ async function setupBot(bot) {
         return null;
       }
 
-      if (msg.from) {
-        try {
-          let user = await userService.findById(msg.from.id);
-          if (!user) {
-            // Create new user
-            user = await userService.create({
-              id: msg.from.id,
-              username: msg.from.username,
-              first_name: msg.from.first_name,
-              language_code: msg.from.language_code || 'en'
+      try {
+        let user = await userService.findById(msg.from.id);
+        if (!user) {
+          // Create new user
+          user = await userService.create({
+            id: msg.from.id,
+            username: msg.from.username,
+            first_name: msg.from.first_name,
+            language_code: msg.from.language_code || 'en'
+          });
+          logger.info(`New user registered: ${msg.from.id}`);
+        }
+
+        // Check PRO subscription expiry
+        if (user.is_premium && user.pro_expires_at) {
+          const now = new Date();
+          const expiryDate = new Date(user.pro_expires_at);
+
+          if (now > expiryDate) {
+            // PRO subscription expired, deactivate
+            user = await userService.update(user.id, {
+              is_premium: false,
+              pro_expires_at: null,
+              pro_plan_type: null
             });
-            logger.info(`New user registered: ${msg.from.id}`);
-          }
-          
-          // Check PRO subscription expiry
-          if (user.is_premium && user.pro_expires_at) {
-            const now = new Date();
-            const expiryDate = new Date(user.pro_expires_at);
-            
-            if (now > expiryDate) {
-              // PRO subscription expired, deactivate
-              user = await userService.update(user.id, {
-                is_premium: false,
-                pro_expires_at: null,
-                pro_plan_type: null
-              });
-              
-              logger.info(`PRO subscription expired for user ${user.id}`);
-              
-              // Notify user about expiry (only once)
-              if (msg.chat) {
-                try {
-                  await bot.sendMessage(msg.chat.id, 
-                    `⏰ Ваша PRO подписка истекла\n\n💎 Чтобы продолжить пользоваться расширенными функциями, продлите подписку в разделе "⚙️ Настройки"`
-                  );
-                } catch (notifyError) {
-                  logger.error('Error notifying about PRO expiry:', notifyError);
-                }
+
+            logger.info(`PRO subscription expired for user ${user.id}`);
+
+            // Notify user about expiry (only once)
+            if (msg.chat) {
+              try {
+                await bot.sendMessage(msg.chat.id,
+                  `⏰ Ваша PRO подписка истекла\n\n💎 Чтобы продолжить пользоваться расширенными функциями, продлите подписку в разделе "⚙️ Настройки"`
+                );
+              } catch (notifyError) {
+                logger.error('Error notifying about PRO expiry:', notifyError);
               }
             }
           }
-          
-          // Attach user to message for handlers
-          msg.user = user;
-          return user;
-        } catch (error) {
-          logger.error('User middleware error:', error, {
-            userId: msg.from?.id,
-            username: msg.from?.username,
-            chatId: msg.chat?.id
-          });
-          return null;
         }
+
+        // Attach user to message for handlers
+        msg.user = user;
+        return user;
+      } catch (error) {
+        logger.error('User middleware error:', error, {
+          userId: msg.from?.id,
+          username: msg.from?.username,
+          chatId: msg.chat?.id
+        });
+        return null;
       }
-      return null;
     };
 
     // Wrapper function to ensure user exists before calling handler
