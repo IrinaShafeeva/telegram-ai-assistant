@@ -57,10 +57,21 @@ async function handleVoice(msg) {
       return;
     }
 
-    await bot.editMessageText(`🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю транзакцию...`, {
+    await bot.editMessageText(`🎯 Распознано: "${transcription}"\n\n🤖 Обрабатываю...`, {
       chat_id: chatId,
       message_id: processingMessage.message_id
     });
+
+    // Check if this is a question/command rather than a transaction
+    const isQuestion = await isAnalyticsOrCommand(transcription);
+    if (isQuestion) {
+      // This is a question/command - redirect to analytics or command handling
+      await bot.editMessageText(`🎯 Распознано: "${transcription}"\n\n💡 Для вопросов и команд используйте текстовые сообщения или кнопки меню.`, {
+        chat_id: chatId,
+        message_id: processingMessage.message_id
+      });
+      return;
+    }
 
     // Get user context for AI transaction parsing
     const userContext = await userContextService.getUserContext(user.id);
@@ -321,6 +332,46 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
   } catch (error) {
     logger.error('Error handling multiple voice transactions:', error);
     await bot.sendMessage(chatId, '❌ Ошибка обработки голосовых транзакций. Попробуйте по одной.');
+  }
+}
+
+// Check if transcription is a question/command rather than a transaction
+async function isAnalyticsOrCommand(text) {
+  try {
+    // Quick check for obvious transactions with amounts
+    const hasAmount = /\d+\s*(рубл|руб|долл|евро|доллар|гривен|гривн|\$|€|₽|₴)/i.test(text);
+    if (hasAmount) {
+      return false; // Definitely a transaction
+    }
+
+    // Quick check for obvious questions/commands
+    const questionPatterns = [
+      /покажи?.*последние/i,
+      /хочу.*отредактировать/i,
+      /редактировать.*запис/i,
+      /список.*транзакций/i,
+      /последние.*\d+.*запис/i,
+      /последние.*\d+.*транзакц/i,
+      /сколько.*потратил/i,
+      /на что.*трачу/i,
+      /баланс/i,
+      /статистик/i,
+      /аналитик/i,
+      /^что /i,
+      /^как /i,
+      /^покажи /i
+    ];
+
+    const isObviousQuestion = questionPatterns.some(pattern => pattern.test(text));
+    if (isObviousQuestion) {
+      logger.info(`🎯 Voice message detected as question/command: "${text}"`);
+      return true; // Definitely a question/command
+    }
+
+    return false; // Default to transaction
+  } catch (error) {
+    logger.error('Error checking if analytics/command:', error);
+    return false; // Default to transaction on error
   }
 }
 
