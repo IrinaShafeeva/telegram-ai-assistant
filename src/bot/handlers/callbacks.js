@@ -4531,11 +4531,22 @@ async function handleAnalyticsProject(chatId, messageId, data, user) {
   const bot = getBot();
 
   try {
-    // Parse callback data: analytics_project:projectId|all:base64Question
+    // Parse callback data: analytics_project:projectId|all:questionId
     const parts = data.split(':');
     const projectId = parts[1]; // 'all' or actual project ID
-    const questionBase64 = parts[2];
-    const question = Buffer.from(questionBase64, 'base64').toString('utf-8');
+    const questionId = parts[2];
+
+    // Get question from cache
+    const { analyticsQuestionsCache } = require('./messages');
+    const question = analyticsQuestionsCache.get(questionId);
+
+    if (!question) {
+      await bot.editMessageText('❌ Сессия истекла. Пожалуйста, задайте вопрос снова.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
 
     // Delete the project selection message
     await bot.deleteMessage(chatId, messageId);
@@ -4564,6 +4575,9 @@ async function handleAnalyticsProject(chatId, messageId, data, user) {
     } else {
       await bot.sendMessage(chatId, analysis);
     }
+
+    // Clean up cache after successful use
+    analyticsQuestionsCache.delete(questionId);
 
   } catch (error) {
     logger.error('Analytics project selection error:', error);

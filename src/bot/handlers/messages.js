@@ -35,6 +35,8 @@ function detectCurrencyByLanguage(text, languageCode) {
 const tempExpenses = new Map();
 // Store temporary income data
 const tempIncomes = new Map();
+// Store analytics questions cache (question by ID)
+const analyticsQuestionsCache = new Map();
 
 async function handleText(msg) {
   const chatId = msg.chat.id;
@@ -368,9 +370,18 @@ async function handleAnalyticsQuestion(msg) {
       return;
     }
 
+    // Generate short ID for the question and cache it
+    const questionId = generateShortId();
+    analyticsQuestionsCache.set(questionId, question);
+
+    // Clean up cache after 5 minutes
+    setTimeout(() => {
+      analyticsQuestionsCache.delete(questionId);
+    }, 5 * 60 * 1000);
+
     // Show project selection keyboard
     const { getAnalyticsProjectSelectionKeyboard } = require('../keyboards/inline');
-    const keyboard = getAnalyticsProjectSelectionKeyboard(projects, question);
+    const keyboard = getAnalyticsProjectSelectionKeyboard(projects, questionId);
 
     await bot.sendMessage(chatId, '📊 Выберите проект для аналитики:', { reply_markup: keyboard });
 
@@ -2227,6 +2238,7 @@ module.exports = {
   handleText,
   tempExpenses,
   tempIncomes,
+  analyticsQuestionsCache,
   handleCurrencySelection,
   createFirstProject,
   handleExpenseText,
