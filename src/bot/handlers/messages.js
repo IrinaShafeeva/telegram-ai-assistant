@@ -2299,5 +2299,6 @@ module.exports = {
   handleCurrencySelection,
   createFirstProject,
   handleExpenseText,
-  handleGoogleSheetsConnected
+  handleGoogleSheetsConnected,
+  handleAnalyticsQuestion
 };

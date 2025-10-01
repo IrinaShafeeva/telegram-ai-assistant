@@ -62,11 +62,28 @@ async function handleVoice(msg) {
       message_id: processingMessage.message_id
     });
 
-    // Check if this is a question/command rather than a transaction
-    const isQuestion = await isAnalyticsOrCommand(transcription);
-    if (isQuestion) {
-      // This is a question/command - redirect to analytics or command handling
-      await bot.editMessageText(`🎯 Распознано: "${transcription}"\n\n💡 Для вопросов и команд используйте текстовые сообщения или кнопки меню.`, {
+    // Classify intent: transaction, analytics, or command
+    const intentType = await classifyIntent(transcription);
+
+    if (intentType === 'analytics') {
+      // Handle analytics question via voice
+      await bot.deleteMessage(chatId, processingMessage.message_id);
+
+      // Create fake message object for handleAnalyticsQuestion
+      const analyticsMsg = {
+        chat: msg.chat,
+        user: user,
+        text: transcription
+      };
+
+      const { handleAnalyticsQuestion } = require('./messages');
+      await handleAnalyticsQuestion(analyticsMsg);
+      return;
+    }
+
+    if (intentType === 'command') {
+      // This is a command - redirect to text interface
+      await bot.editMessageText(`🎯 Распознано: "${transcription}"\n\n💡 Для команд редактирования используйте текстовые сообщения или кнопки меню.`, {
         chat_id: chatId,
         message_id: processingMessage.message_id
       });
@@ -335,43 +352,78 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
   }
 }
 
-// Check if transcription is a question/command rather than a transaction
-async function isAnalyticsOrCommand(text) {
+// Classify voice message intent: transaction, analytics, or command
+async function classifyIntent(text) {
   try {
     // Quick check for obvious transactions with amounts
     const hasAmount = /\d+\s*(рубл|руб|долл|евро|доллар|гривен|гривн|\$|€|₽|₴)/i.test(text);
     if (hasAmount) {
-      return false; // Definitely a transaction
+      logger.info(`🎯 Voice classified as TRANSACTION (has amount): "${text}"`);
+      return 'transaction';
     }
 
-    // Quick check for obvious questions/commands
-    const questionPatterns = [
-      /покажи?.*последние/i,
-      /хочу.*отредактировать/i,
-      /редактировать.*запис/i,
-      /список.*транзакций/i,
-      /последние.*\d+.*запис/i,
-      /последние.*\d+.*транзакц/i,
+    // Quick check for obvious analytics questions
+    const analyticsPatterns = [
       /сколько.*потратил/i,
+      /сколько.*трат/i,
+      /на что.*потратил/i,
       /на что.*трачу/i,
       /баланс/i,
       /статистик/i,
       /аналитик/i,
-      /^что /i,
-      /^как /i,
-      /^покажи /i
+      /в.*августе/i,
+      /в.*сентябре/i,
+      /в.*октябре/i,
+      /за.*месяц/i,
+      /за.*неделю/i,
+      /покажи.*расход/i,
+      /покажи.*доход/i
     ];
 
-    const isObviousQuestion = questionPatterns.some(pattern => pattern.test(text));
-    if (isObviousQuestion) {
-      logger.info(`🎯 Voice message detected as question/command: "${text}"`);
-      return true; // Definitely a question/command
+    const isAnalytics = analyticsPatterns.some(pattern => pattern.test(text));
+    if (isAnalytics) {
+      logger.info(`🎯 Voice classified as ANALYTICS (pattern match): "${text}"`);
+      return 'analytics';
     }
 
-    return false; // Default to transaction
+    // Quick check for obvious commands
+    const commandPatterns = [
+      /хочу.*отредактировать/i,
+      /редактировать.*запис/i,
+      /удалить.*запис/i,
+      /изменить.*запис/i
+    ];
+
+    const isCommand = commandPatterns.some(pattern => pattern.test(text));
+    if (isCommand) {
+      logger.info(`🎯 Voice classified as COMMAND (pattern match): "${text}"`);
+      return 'command';
+    }
+
+    // Use AI for ambiguous cases
+    const prompt = `Определи тип запроса пользователя.
+
+ТЕКСТ: "${text}"
+
+Типы запросов:
+1. TRANSACTION - запись о трате или доходе (примеры: "25 продукты", "купил кофе", "потратил на такси")
+2. ANALYTICS - вопрос о статистике/анализе финансов (примеры: "сколько потратил на еду", "баланс за август", "статистика трат")
+3. COMMAND - команда редактирования (примеры: "хочу отредактировать", "удалить запись")
+
+Ответь ТОЛЬКО одним словом: TRANSACTION, ANALYTICS или COMMAND`;
+
+    const response = await openaiService.generateResponse(prompt);
+    const result = response.trim().toLowerCase();
+
+    logger.info(`🤖 AI classified voice as: ${result.toUpperCase()} for text: "${text}"`);
+
+    if (result === 'analytics') return 'analytics';
+    if (result === 'command') return 'command';
+    return 'transaction'; // Default
+
   } catch (error) {
-    logger.error('Error checking if analytics/command:', error);
-    return false; // Default to transaction on error
+    logger.error('Error classifying intent:', error);
+    return 'transaction'; // Default to transaction on error
   }
 }
 
