@@ -98,7 +98,7 @@ class AnalyticsService {
     }
   }
 
-  async askAIAnalytics(userId, question) {
+  async askAIAnalytics(userId, question, projectId = null) {
     try {
       // Check AI limits
       const canUseAI = await userService.checkDailyLimits(userId, 'ai_question');
@@ -117,7 +117,7 @@ class AnalyticsService {
       const futureEndDate = new Date(endDate);
       futureEndDate.setFullYear(futureEndDate.getFullYear() + 2);
       endDate.setTime(futureEndDate.getTime());
-      
+
       // Get both expenses and incomes in parallel
       const [expensesResult, incomes] = await Promise.all([
         supabase.rpc('get_user_expenses_for_period', {
@@ -128,7 +128,16 @@ class AnalyticsService {
         incomeService.getIncomesForExport(userId, startDate, endDate)
       ]);
 
-      const expenses = expensesResult.data || [];
+      let expenses = expensesResult.data || [];
+
+      // Filter by project if specified
+      if (projectId) {
+        expenses = expenses.filter(exp => exp.project_id === projectId);
+        // Also filter incomes by project
+        const filteredIncomes = incomes.filter(inc => inc.project_id === projectId);
+        incomes.length = 0;
+        incomes.push(...filteredIncomes);
+      }
 
       // If no data at all, return appropriate message
       if ((!expenses || expenses.length === 0) && (!incomes || incomes.length === 0)) {

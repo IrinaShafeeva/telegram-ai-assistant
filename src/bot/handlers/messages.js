@@ -360,29 +360,19 @@ async function handleAnalyticsQuestion(msg) {
   const bot = getBot();
 
   try {
-    await bot.sendMessage(chatId, '🧠 Анализирую ваши расходы...');
+    // Get user's projects
+    const projects = await projectService.findByUserId(user.id);
 
-    const analysis = await analyticsService.askAIAnalytics(user.id, question);
-
-    // Check if this looks like a request for recent transactions list
-    const lowerQuestion = question.toLowerCase();
-    const isTransactionListRequest = /последние\s+\d+|показать?.*последние|список.*транзакций|все.*транзакции/i.test(question);
-
-    if (isTransactionListRequest) {
-      // Extract number from question for edit button
-      const numberMatch = question.match(/(\d+)/);
-      const limit = numberMatch ? Math.min(parseInt(numberMatch[1]), 20) : 3;
-
-      const keyboard = {
-        inline_keyboard: [[
-          { text: '✏️ Редактировать эти записи', callback_data: `edit_from_analytics:${limit}` }
-        ]]
-      };
-
-      await bot.sendMessage(chatId, analysis, { reply_markup: keyboard });
-    } else {
-      await bot.sendMessage(chatId, analysis);
+    if (!projects || projects.length === 0) {
+      await bot.sendMessage(chatId, '❌ У вас нет проектов. Создайте проект для начала работы с аналитикой.');
+      return;
     }
+
+    // Show project selection keyboard
+    const { getAnalyticsProjectSelectionKeyboard } = require('../keyboards/inline');
+    const keyboard = getAnalyticsProjectSelectionKeyboard(projects, question);
+
+    await bot.sendMessage(chatId, '📊 Выберите проект для аналитики:', { reply_markup: keyboard });
 
   } catch (error) {
     logger.error('Analytics question error:', error);

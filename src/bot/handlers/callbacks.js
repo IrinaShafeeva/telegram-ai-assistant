@@ -55,7 +55,9 @@ async function handleCallback(callbackQuery) {
     await bot.answerCallbackQuery(callbackQuery.id);
 
     // Route callback to appropriate handler
-    if (data.startsWith('set_currency_')) {
+    if (data.startsWith('analytics_project:')) {
+      await handleAnalyticsProject(chatId, messageId, data, user);
+    } else if (data.startsWith('set_currency_')) {
       await handleSetCurrency(chatId, messageId, data, callbackQuery.user);
     } else if (data.startsWith('change_currency_')) {
       await handleChangeCurrency(chatId, messageId, data, callbackQuery.user);
@@ -4522,6 +4524,50 @@ async function handleExportFormat(chatId, messageId, data, user) {
       chat_id: chatId,
       message_id: messageId
     });
+  }
+}
+
+async function handleAnalyticsProject(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    // Parse callback data: analytics_project:projectId|all:base64Question
+    const parts = data.split(':');
+    const projectId = parts[1]; // 'all' or actual project ID
+    const questionBase64 = parts[2];
+    const question = Buffer.from(questionBase64, 'base64').toString('utf-8');
+
+    // Delete the project selection message
+    await bot.deleteMessage(chatId, messageId);
+
+    // Show processing message
+    await bot.sendMessage(chatId, '🧠 Анализирую ваши расходы...');
+
+    // Call analytics service with project filter
+    const analysis = await analyticsService.askAIAnalytics(user.id, question, projectId === 'all' ? null : parseInt(projectId));
+
+    // Check if this looks like a request for recent transactions list
+    const isTransactionListRequest = /последние\s+\d+|показать?.*последние|список.*транзакций|все.*транзакции/i.test(question);
+
+    if (isTransactionListRequest) {
+      // Extract number from question for edit button
+      const numberMatch = question.match(/(\d+)/);
+      const limit = numberMatch ? Math.min(parseInt(numberMatch[1]), 20) : 3;
+
+      const keyboard = {
+        inline_keyboard: [[
+          { text: '✏️ Редактировать эти записи', callback_data: `edit_from_analytics:${limit}` }
+        ]]
+      };
+
+      await bot.sendMessage(chatId, analysis, { reply_markup: keyboard });
+    } else {
+      await bot.sendMessage(chatId, analysis);
+    }
+
+  } catch (error) {
+    logger.error('Analytics project selection error:', error);
+    await bot.sendMessage(chatId, `❌ ${error.message || 'Не удалось проанализировать расходы.'}`);
   }
 }
 

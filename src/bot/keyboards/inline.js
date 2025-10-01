@@ -480,5 +480,33 @@ module.exports = {
   getExportPeriodKeyboard,
   getCurrencySelectionKeyboard,
   getRecentTransactionsKeyboard,
-  getTransactionEditKeyboard
+  getTransactionEditKeyboard,
+  getAnalyticsProjectSelectionKeyboard
 };
+
+function getAnalyticsProjectSelectionKeyboard(projects, question) {
+  const keyboard = [];
+
+  // Add "All projects" button first
+  keyboard.push([{ text: '📊 Все проекты', callback_data: `analytics_project:all:${Buffer.from(question).toString('base64')}` }]);
+
+  // Add individual project buttons (max 2 per row)
+  for (let i = 0; i < projects.length; i += 2) {
+    const row = [];
+    row.push({
+      text: `📋 ${projects[i].name}`,
+      callback_data: `analytics_project:${projects[i].id}:${Buffer.from(question).toString('base64')}`
+    });
+
+    if (i + 1 < projects.length) {
+      row.push({
+        text: `📋 ${projects[i + 1].name}`,
+        callback_data: `analytics_project:${projects[i + 1].id}:${Buffer.from(question).toString('base64')}`
+      });
+    }
+
+    keyboard.push(row);
+  }
+
+  return { inline_keyboard: keyboard };
+}
