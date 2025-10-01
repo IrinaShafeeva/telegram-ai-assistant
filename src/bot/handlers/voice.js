@@ -7,6 +7,7 @@ const { tempExpenses, tempIncomes } = require('./messages');
 const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
+const { classifyIntent } = require('../../utils/intentClassifier');
 
 async function handleVoice(msg) {
   const chatId = msg.chat.id;
@@ -352,80 +353,6 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
   }
 }
 
-// Classify voice message intent: transaction, analytics, or command
-async function classifyIntent(text) {
-  try {
-    // Quick check for obvious transactions with amounts
-    const hasAmount = /\d+\s*(рубл|руб|долл|евро|доллар|гривен|гривн|\$|€|₽|₴)/i.test(text);
-    if (hasAmount) {
-      logger.info(`🎯 Voice classified as TRANSACTION (has amount): "${text}"`);
-      return 'transaction';
-    }
-
-    // Quick check for obvious analytics questions
-    const analyticsPatterns = [
-      /сколько.*потратил/i,
-      /сколько.*трат/i,
-      /на что.*потратил/i,
-      /на что.*трачу/i,
-      /баланс/i,
-      /статистик/i,
-      /аналитик/i,
-      /в.*августе/i,
-      /в.*сентябре/i,
-      /в.*октябре/i,
-      /за.*месяц/i,
-      /за.*неделю/i,
-      /покажи.*расход/i,
-      /покажи.*доход/i
-    ];
-
-    const isAnalytics = analyticsPatterns.some(pattern => pattern.test(text));
-    if (isAnalytics) {
-      logger.info(`🎯 Voice classified as ANALYTICS (pattern match): "${text}"`);
-      return 'analytics';
-    }
-
-    // Quick check for obvious commands
-    const commandPatterns = [
-      /хочу.*отредактировать/i,
-      /редактировать.*запис/i,
-      /удалить.*запис/i,
-      /изменить.*запис/i
-    ];
-
-    const isCommand = commandPatterns.some(pattern => pattern.test(text));
-    if (isCommand) {
-      logger.info(`🎯 Voice classified as COMMAND (pattern match): "${text}"`);
-      return 'command';
-    }
-
-    // Use AI for ambiguous cases
-    const prompt = `Определи тип запроса пользователя.
-
-ТЕКСТ: "${text}"
-
-Типы запросов:
-1. TRANSACTION - запись о трате или доходе (примеры: "25 продукты", "купил кофе", "потратил на такси")
-2. ANALYTICS - вопрос о статистике/анализе финансов (примеры: "сколько потратил на еду", "баланс за август", "статистика трат")
-3. COMMAND - команда редактирования (примеры: "хочу отредактировать", "удалить запись")
-
-Ответь ТОЛЬКО одним словом: TRANSACTION, ANALYTICS или COMMAND`;
-
-    const response = await openaiService.generateResponse(prompt);
-    const result = response.trim().toLowerCase();
-
-    logger.info(`🤖 AI classified voice as: ${result.toUpperCase()} for text: "${text}"`);
-
-    if (result === 'analytics') return 'analytics';
-    if (result === 'command') return 'command';
-    return 'transaction'; // Default
-
-  } catch (error) {
-    logger.error('Error classifying intent:', error);
-    return 'transaction'; // Default to transaction on error
-  }
-}
 
 module.exports = {
   handleVoice

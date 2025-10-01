@@ -11,6 +11,7 @@ const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const { shortTransactionMap } = require('../../utils/transactionMap');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
+const { isAnalyticsQuestion } = require('../../utils/intentClassifier');
 
 // Function to detect currency based on language and text content
 function detectCurrencyByLanguage(text, languageCode) {
@@ -350,66 +351,6 @@ function isEditRequest(text) {
   const limit = numberMatch ? Math.min(parseInt(numberMatch[1]), 20) : 3; // Max 20 records
 
   return { limit };
-}
-
-async function isAnalyticsQuestion(text) {
-  try {
-    // Quick check for obvious transactions with amounts
-    const hasAmount = /\d+\s*(рубл|руб|долл|евро|доллар|\$|€|₽)/i.test(text);
-    if (hasAmount) {
-      return false; // Definitely a transaction
-    }
-
-    // Quick check for obvious analytics patterns
-    const analyticsPatterns = [
-      /покажи?.*последние/i,
-      /список.*транзакций/i,
-      /последние.*\d+.*запис/i,
-      /последние.*\d+.*транзакц/i,
-      /последние.*\d+.*расход/i,
-      /последние.*\d+.*доход/i,
-      /сколько.*потратил/i,
-      /на что.*трачу/i,
-      /баланс/i,
-      /статистик/i,
-      /аналитик/i
-    ];
-
-    const isObviousAnalytics = analyticsPatterns.some(pattern => pattern.test(text));
-    if (isObviousAnalytics) {
-      return true; // Definitely analytics
-    }
-
-    // Use AI to determine if this is an analytics question
-    const prompt = `Определи тип запроса пользователя:
-
-ЗАПРОС: "${text}"
-
-Ответь только "ANALYTICS" если это:
-- Вопрос о тратах/доходах (сколько, на что, где потратил)
-- Запрос статистики/аналитики финансов
-- Просьба показать расходы/доходы
-
-Ответь только "TRANSACTION" если это:
-- Запись траты/дохода с суммой
-- Описание покупки/оплаты
-- Любое действие с деньгами
-
-Ответь только одним словом: ANALYTICS или TRANSACTION`;
-
-    const response = await openaiService.generateResponse(prompt);
-    const result = response.trim().toUpperCase();
-
-    return result === 'ANALYTICS';
-
-  } catch (error) {
-    logger.error('Error in AI analytics detection:', error);
-
-    // Fallback to simple rules if AI fails
-    const lowerText = text.toLowerCase().trim();
-    const questionWords = ['сколько', 'на что', 'где', 'покажи', 'анализ', 'статистика', 'больше всего'];
-    return questionWords.some(word => lowerText.includes(word));
-  }
 }
 
 async function handleAnalyticsQuestion(msg) {
