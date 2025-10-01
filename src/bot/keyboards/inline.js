@@ -490,18 +490,18 @@ function getAnalyticsProjectSelectionKeyboard(projects, questionId) {
   // Add "All projects" button first
   keyboard.push([{ text: '📊 Все проекты', callback_data: `analytics_project:all:${questionId}` }]);
 
-  // Add individual project buttons (max 2 per row)
+  // Add individual project buttons (max 2 per row) - use index instead of UUID
   for (let i = 0; i < projects.length; i += 2) {
     const row = [];
     row.push({
       text: `📋 ${projects[i].name}`,
-      callback_data: `analytics_project:${projects[i].id}:${questionId}`
+      callback_data: `analytics_project:${i}:${questionId}`
     });
 
     if (i + 1 < projects.length) {
       row.push({
         text: `📋 ${projects[i + 1].name}`,
-        callback_data: `analytics_project:${projects[i + 1].id}:${questionId}`
+        callback_data: `analytics_project:${i + 1}:${questionId}`
       });
     }
 

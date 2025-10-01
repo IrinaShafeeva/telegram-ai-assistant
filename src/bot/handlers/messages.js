@@ -370,9 +370,9 @@ async function handleAnalyticsQuestion(msg) {
       return;
     }
 
-    // Generate short ID for the question and cache it
+    // Generate short ID for the question and cache it with projects
     const questionId = generateShortId();
-    analyticsQuestionsCache.set(questionId, question);
+    analyticsQuestionsCache.set(questionId, { question, projects });
 
     // Clean up cache after 5 minutes
     setTimeout(() => {

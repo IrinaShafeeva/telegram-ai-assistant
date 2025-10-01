@@ -4531,21 +4531,32 @@ async function handleAnalyticsProject(chatId, messageId, data, user) {
   const bot = getBot();
 
   try {
-    // Parse callback data: analytics_project:projectId|all:questionId
+    // Parse callback data: analytics_project:projectIndex|all:questionId
     const parts = data.split(':');
-    const projectId = parts[1]; // 'all' or actual project ID
+    const projectIndex = parts[1]; // 'all' or project index
     const questionId = parts[2];
 
-    // Get question from cache
+    // Get cached data
     const { analyticsQuestionsCache } = require('./messages');
-    const question = analyticsQuestionsCache.get(questionId);
+    const cachedData = analyticsQuestionsCache.get(questionId);
 
-    if (!question) {
+    if (!cachedData) {
       await bot.editMessageText('❌ Сессия истекла. Пожалуйста, задайте вопрос снова.', {
         chat_id: chatId,
         message_id: messageId
       });
       return;
+    }
+
+    const { question, projects } = cachedData;
+
+    // Get actual project ID from cached projects array
+    let projectId = null;
+    if (projectIndex !== 'all') {
+      const index = parseInt(projectIndex);
+      if (projects[index]) {
+        projectId = projects[index].id;
+      }
     }
 
     // Delete the project selection message
@@ -4555,7 +4566,7 @@ async function handleAnalyticsProject(chatId, messageId, data, user) {
     await bot.sendMessage(chatId, '🧠 Анализирую ваши расходы...');
 
     // Call analytics service with project filter
-    const analysis = await analyticsService.askAIAnalytics(user.id, question, projectId === 'all' ? null : parseInt(projectId));
+    const analysis = await analyticsService.askAIAnalytics(user.id, question, projectId);
 
     // Check if this looks like a request for recent transactions list
     const isTransactionListRequest = /последние\s+\d+|показать?.*последние|список.*транзакций|все.*транзакции/i.test(question);
