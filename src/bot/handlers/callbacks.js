@@ -1,5 +1,6 @@
 const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService, transactionService, supabase } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
+const analyticsService = require('../../services/analytics');
 // Import temp storage from messages handler
 const messagesHandler = require('./messages');
 // Access temp storage
