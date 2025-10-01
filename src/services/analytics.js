@@ -172,7 +172,7 @@ class AnalyticsService {
         detailedExpenses: convertedExpenses.map(exp => ({
           date: exp.expense_date,
           description: exp.description,
-          amount: exp.amount,
+          amount: Math.abs(parseFloat(exp.amount)),
           category: exp.category,
           currency: primaryCurrency,
           type: 'expense'
@@ -203,9 +203,9 @@ class AnalyticsService {
   }
 
   calculateExpenseAnalytics(expenses, currency) {
-    const totalAmount = expenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0);
+    const totalAmount = expenses.reduce((sum, exp) => sum + Math.abs(parseFloat(exp.amount)), 0);
     const totalExpenses = expenses.length;
-    
+
     // Group by category with correct math
     const categoryTotals = {};
     expenses.forEach(exp => {
@@ -213,7 +213,7 @@ class AnalyticsService {
       if (!categoryTotals[category]) {
         categoryTotals[category] = { amount: 0, count: 0 };
       }
-      categoryTotals[category].amount += parseFloat(exp.amount);
+      categoryTotals[category].amount += Math.abs(parseFloat(exp.amount));
       categoryTotals[category].count += 1;
     });
     
@@ -235,7 +235,7 @@ class AnalyticsService {
       if (!monthlyTotals[month]) {
         monthlyTotals[month] = { amount: 0, count: 0 };
       }
-      monthlyTotals[month].amount += parseFloat(exp.amount);
+      monthlyTotals[month].amount += Math.abs(parseFloat(exp.amount));
       monthlyTotals[month].count += 1;
     });
     
@@ -252,7 +252,7 @@ class AnalyticsService {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const recentExpenses = expenses.filter(exp => new Date(exp.expense_date) >= thirtyDaysAgo);
-    const recentTotal = recentExpenses.reduce((sum, exp) => sum + parseFloat(exp.amount), 0);
+    const recentTotal = recentExpenses.reduce((sum, exp) => sum + Math.abs(parseFloat(exp.amount)), 0);
     const averagePerDay = recentTotal / 30;
     
     return {
