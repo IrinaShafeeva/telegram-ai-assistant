@@ -189,6 +189,15 @@ class AnalyticsService {
         question: question
       };
 
+      // Log analytics data being sent to AI for debugging
+      logger.info(`📊 Analytics data sent to AI: ${JSON.stringify({
+        totalExpenses: analyticsData.totalExpenses,
+        totalIncome: analyticsData.totalIncome,
+        expenseCategoriesCount: analyticsData.expenseCategories?.length,
+        expenseCategories: analyticsData.expenseCategories,
+        detailedExpensesCount: analyticsData.detailedExpenses?.length
+      })}`);
+
       // Use AI to analyze complete financial data
       const analysis = await openaiService.analyzeFinancialData(question, analyticsData, userId);
 

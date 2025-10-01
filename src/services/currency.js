@@ -81,23 +81,26 @@ class CurrencyService {
   }
 
   async convertAmount(amount, fromCurrency, toCurrency) {
+    // Always work with positive amounts (for backwards compatibility with negative expenses in DB)
+    const absoluteAmount = Math.abs(parseFloat(amount));
+
     if (fromCurrency === toCurrency) {
-      return parseFloat(amount);
+      return absoluteAmount;
     }
 
     try {
       const rates = await this.getExchangeRates(fromCurrency);
       const rate = rates[toCurrency];
-      
+
       if (!rate) {
         throw new Error(`No exchange rate found for ${fromCurrency} -> ${toCurrency}`);
       }
-      
-      return parseFloat(amount) * rate;
-      
+
+      return absoluteAmount * rate;
+
     } catch (error) {
       logger.error(`Currency conversion error: ${fromCurrency} -> ${toCurrency}`, error);
-      return parseFloat(amount); // Return original amount if conversion fails
+      return absoluteAmount; // Return original amount if conversion fails
     }
   }
 
