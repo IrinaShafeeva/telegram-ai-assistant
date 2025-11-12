@@ -933,8 +933,13 @@ async function handleEdit(msg, match, limit = 3) {
     // Clear any active states
     stateManager.clearState(chatId);
 
+    // Определяем лимит редактирования по подписке
+    const editLimit = user.is_premium ? 20 : 1;
+    const requestedLimit = limit || editLimit;
+    const actualLimit = Math.min(requestedLimit, editLimit);
+
     // Get recent transactions
-    const recentTransactions = await transactionService.getRecentTransactions(user.id, limit);
+    const recentTransactions = await transactionService.getRecentTransactions(user.id, actualLimit);
 
     if (recentTransactions.length === 0) {
       await bot.sendMessage(chatId,
@@ -945,13 +950,19 @@ async function handleEdit(msg, match, limit = 3) {
 
     const keyboard = getRecentTransactionsKeyboard(recentTransactions);
 
-    await bot.sendMessage(chatId,
-      `✏️ Редактирование транзакций\n\nПоказано последних записей: ${recentTransactions.length}\nВыберите транзакцию для редактирования:`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: keyboard
-      }
-    );
+    let message = `✏️ Редактирование транзакций\n\nПоказано последних записей: ${recentTransactions.length}`;
+
+    // Предупреждение для FREE пользователей
+    if (!user.is_premium && requestedLimit > 1) {
+      message += `\n\n⚠️ В FREE версии доступно редактирование только последней записи.\n💎 Обновитесь до PRO для редактирования до 20 последних записей.`;
+    }
+
+    message += '\n\nВыберите транзакцию для редактирования:';
+
+    await bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    });
 
   } catch (error) {
     logger.error('Edit command error:', error);

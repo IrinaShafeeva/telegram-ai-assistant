@@ -3749,6 +3749,34 @@ async function handleEditTransaction(chatId, messageId, data, user) {
       return;
     }
 
+    // Проверка прав на редактирование для FREE пользователей
+    if (!user.is_premium) {
+      // Получаем последнюю транзакцию пользователя
+      const recentTransactions = await transactionService.getRecentTransactions(user.id, 1);
+      const lastTransaction = recentTransactions[0];
+
+      // Проверяем, является ли текущая транзакция последней
+      const isLastTransaction = lastTransaction &&
+        lastTransaction.id === transaction.id &&
+        lastTransaction.type === transactionType;
+
+      if (!isLastTransaction) {
+        await bot.editMessageText(
+          '⚠️ В FREE версии доступно редактирование только последней записи.\n\n💎 Обновитесь до PRO для редактирования до 20 последних записей.',
+          {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '💎 Перейти на PRO', callback_data: 'upgrade' }
+              ]]
+            }
+          }
+        );
+        return;
+      }
+    }
+
     // Get project name
     const project = await projectService.findById(transaction.project_id);
 

@@ -306,6 +306,8 @@ class GoogleSheetsService {
             });
             logger.info(`🔧 [${type.toUpperCase()}] Sheet creation result:`, batchResult.status);
 
+            const newSheetId = batchResult.data.replies[0].addSheet.properties.sheetId;
+
             // Add headers to the new sheet
             logger.info(`🔧 [${type.toUpperCase()}] Adding headers to new sheet "${project.name}"...`);
             await this.sheets.spreadsheets.values.update({
@@ -316,9 +318,12 @@ class GoogleSheetsService {
                 values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип']]
               }
             });
-            
+
+            // Protect sheet name from manual renaming
+            await this.protectSheetName(project.google_sheet_id, newSheetId, project.name);
+
             sheetName = project.name;
-            logger.info(`✅ [EXPENSE] Created new sheet "${project.name}" in Google Sheets`);
+            logger.info(`✅ [${type.toUpperCase()}] Created new sheet "${project.name}" in Google Sheets`);
           } catch (createError) {
             logger.error('❌ [EXPENSE] Could not create project sheet:', createError.message);
             logger.error('❌ [EXPENSE] Create error details:', createError);
@@ -651,12 +656,50 @@ class GoogleSheetsService {
         }
       });
 
+      // Protect sheet name from being renamed
+      await this.protectSheetName(spreadsheetId, newSheetId, sheetTitle);
+
       logger.info(`Created new sheet "${sheetTitle}" with ID: ${newSheetId}`);
       return newSheetId;
 
     } catch (error) {
       logger.error(`Failed to create worksheet "${sheetTitle}":`, error);
       throw error;
+    }
+  }
+
+  async protectSheetName(spreadsheetId, sheetId, sheetTitle) {
+    try {
+      if (!this.sheets) {
+        logger.warn('Google Sheets not available - skipping sheet name protection');
+        return;
+      }
+
+      // Add protected range for sheet properties (prevents renaming)
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: {
+          requests: [{
+            addProtectedRange: {
+              protectedRange: {
+                range: {
+                  sheetId: sheetId
+                },
+                description: `⚠️ Не переименовывайте лист "${sheetTitle}" вручную! Используйте настройки проекта в боте.`,
+                warningOnly: true,
+                editors: {
+                  users: []
+                }
+              }
+            }
+          }]
+        }
+      });
+
+      logger.info(`Protected sheet name for "${sheetTitle}" (ID: ${sheetId})`);
+    } catch (error) {
+      logger.warn(`Could not protect sheet name for "${sheetTitle}":`, error.message);
+      // Don't throw - this is not critical
     }
   }
 
