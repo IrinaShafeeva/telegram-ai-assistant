@@ -632,6 +632,27 @@ const expenseService = {
       .single();
 
     if (error) throw error;
+
+    // Notify team members if collaborative project
+    try {
+      const project = await projectService.findById(expenseData.project_id);
+      if (project && project.is_collaborative) {
+        const user = await userService.findById(expenseData.user_id);
+        const userName = user?.first_name || user?.username || 'Участник';
+
+        await projectMemberService.notifyProjectMembers(
+          expenseData.project_id,
+          `💸 Новый расход в проекте "${project.name}"\n\n` +
+          `👤 ${userName}\n` +
+          `📝 ${expenseData.description}\n` +
+          `💰 ${expenseData.amount} ${expenseData.currency}`,
+          expenseData.user_id
+        );
+      }
+    } catch (notifyError) {
+      logger.warn('Could not notify team about new expense:', notifyError.message);
+    }
+
     return data;
   },
 
@@ -781,8 +802,29 @@ const incomeService = {
       .insert(incomeData)
       .select()
       .single();
-    
+
     if (error) throw error;
+
+    // Notify team members if collaborative project
+    try {
+      const project = await projectService.findById(incomeData.project_id);
+      if (project && project.is_collaborative) {
+        const user = await userService.findById(incomeData.user_id);
+        const userName = user?.first_name || user?.username || 'Участник';
+
+        await projectMemberService.notifyProjectMembers(
+          incomeData.project_id,
+          `💰 Новый доход в проекте "${project.name}"\n\n` +
+          `👤 ${userName}\n` +
+          `📝 ${incomeData.description}\n` +
+          `💵 ${incomeData.amount} ${incomeData.currency}`,
+          incomeData.user_id
+        );
+      }
+    } catch (notifyError) {
+      logger.warn('Could not notify team about new income:', notifyError.message);
+    }
+
     return data;
   },
 
@@ -1064,7 +1106,23 @@ const projectMemberService = {
       }
 
       // Add user as member
-      const member = await projectService.addMember(projectId, targetUser.id, 'member');
+      const member = await projectService.addMember(projectId, targetUser.id, 'editor');
+
+      // Send notification to new member
+      try {
+        const { getBot } = require('../utils/bot');
+        const bot = getBot();
+        const inviter = await userService.findById(invitedByUserId);
+
+        await bot.sendMessage(targetUser.id,
+          `👥 Вас добавили в командный проект!\n\n` +
+          `📁 Проект: ${project.name}\n` +
+          `👤 Пригласил: ${inviter.first_name || inviter.username}\n\n` +
+          `Теперь вы можете добавлять траты и доходы в этот проект.`
+        );
+      } catch (notifyError) {
+        logger.warn('Could not send member notification:', notifyError.message);
+      }
 
       return {
         success: true,
@@ -1099,7 +1157,23 @@ const projectMemberService = {
       }
 
       // Add user as member
-      const member = await projectService.addMember(projectId, targetUser.id, 'member');
+      const member = await projectService.addMember(projectId, targetUser.id, 'editor');
+
+      // Send notification to new member
+      try {
+        const { getBot } = require('../utils/bot');
+        const bot = getBot();
+        const inviter = await userService.findById(invitedByUserId);
+
+        await bot.sendMessage(targetUser.id,
+          `👥 Вас добавили в командный проект!\n\n` +
+          `📁 Проект: ${project.name}\n` +
+          `👤 Пригласил: ${inviter.first_name || inviter.username}\n\n` +
+          `Теперь вы можете добавлять траты и доходы в этот проект.`
+        );
+      } catch (notifyError) {
+        logger.warn('Could not send member notification:', notifyError.message);
+      }
 
       return {
         success: true,
@@ -1198,7 +1272,53 @@ const projectMemberService = {
     // Add member
     await projectService.addMember(invite.project_id, userId, 'editor');
 
+    // Notify project owner about new member
+    try {
+      const { getBot } = require('../utils/bot');
+      const bot = getBot();
+      const newMember = await userService.findById(userId);
+
+      await bot.sendMessage(invite.project.owner_id,
+        `👥 Новый участник присоединился к проекту!\n\n` +
+        `📁 Проект: ${invite.project.name}\n` +
+        `👤 Участник: ${newMember.first_name || newMember.username || 'Пользователь'}`
+      );
+    } catch (notifyError) {
+      logger.warn('Could not send owner notification:', notifyError.message);
+    }
+
     return invite.project;
+  },
+
+  async notifyProjectMembers(projectId, message, excludeUserId = null) {
+    try {
+      const { getBot } = require('../utils/bot');
+      const bot = getBot();
+
+      // Get project info
+      const project = await projectService.findById(projectId);
+      if (!project) return;
+
+      // Get all members
+      const members = await projectService.getMembers(projectId);
+
+      // Add project owner to recipients
+      const recipients = [project.owner_id, ...members.map(m => m.user_id)];
+
+      // Remove excluded user and duplicates
+      const uniqueRecipients = [...new Set(recipients)].filter(id => id !== excludeUserId);
+
+      // Send notifications
+      for (const userId of uniqueRecipients) {
+        try {
+          await bot.sendMessage(userId, message);
+        } catch (sendError) {
+          logger.warn(`Could not send notification to user ${userId}:`, sendError.message);
+        }
+      }
+    } catch (error) {
+      logger.error('Error notifying project members:', error);
+    }
   }
 };
 
