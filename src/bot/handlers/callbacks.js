@@ -245,6 +245,8 @@ async function handleCallback(callbackQuery) {
       await handleMakeProjectCollaborative(chatId, messageId, data, user);
     } else if (data.startsWith('invite_to:')) {
       await handleInviteToProject(chatId, messageId, data, user);
+    } else if (data.startsWith('generate_invite:')) {
+      await handleGenerateInvite(chatId, messageId, data, user);
     } else if (data.startsWith('show_members:')) {
       await handleShowMembers(chatId, messageId, data, user);
     } else if (data.startsWith('kick_member:')) {
@@ -3501,7 +3503,10 @@ async function handleInviteToProject(chatId, messageId, data, user) {
         chat_id: chatId,
         message_id: messageId,
         reply_markup: {
-          inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'invite_member' }]]
+          inline_keyboard: [
+            [{ text: '🔗 Создать ссылку-приглашение', callback_data: `generate_invite:${projectId}` }],
+            [{ text: '❌ Отмена', callback_data: 'invite_member' }]
+          ]
         }
       }
     );
@@ -3511,6 +3516,37 @@ async function handleInviteToProject(chatId, messageId, data, user) {
 
   } catch (error) {
     logger.error('Error in handleInviteToProject:', error);
+    await bot.editMessageText(`❌ ${error.message}`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleGenerateInvite(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const { projectMemberService } = require('../../services/supabase');
+    const token = await projectMemberService.generateInviteLink(projectId, user.id);
+    const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${token}`;
+
+    await bot.editMessageText(
+      `🔗 Ссылка-приглашение создана!\n\n` +
+      `Отправьте эту ссылку участнику:\n${inviteLink}\n\n` +
+      `⏳ Ссылка действительна 7 дней.`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'invite_member' }]]
+        }
+      }
+    );
+
+  } catch (error) {
+    logger.error('Error generating invite:', error);
     await bot.editMessageText(`❌ ${error.message}`, {
       chat_id: chatId,
       message_id: messageId

@@ -34,6 +34,24 @@ async function handleStart(msg, match) {
 
     logger.info(`Start command called by user ${user.id} (${user.first_name || 'unknown'})`);
 
+    // Check for invite token parameter: /start TOKEN
+    const inviteToken = match && match[1];
+    if (inviteToken) {
+      try {
+        const { projectMemberService } = require('../../services/supabase');
+        const project = await projectMemberService.joinByInvite(inviteToken, user.id);
+
+        await bot.sendMessage(chatId,
+          `✅ Вы успешно присоединились к проекту "${project.name}"!\n\n` +
+          `Теперь вы можете добавлять траты и доходы в этот проект.`
+        );
+        return;
+      } catch (error) {
+        logger.error('Invite join error:', error);
+        await bot.sendMessage(chatId, `❌ ${error.message}`);
+        return;
+      }
+    }
 
     // Check if user already has projects
     const userProjects = await projectService.findByUserId(user.id);

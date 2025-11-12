@@ -105,12 +105,23 @@ async function createTables() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
       user_id BIGINT REFERENCES users(id),
-      role VARCHAR(20) DEFAULT 'member',
+      role VARCHAR(20) DEFAULT 'editor',
       joined_at TIMESTAMP DEFAULT NOW(),
       UNIQUE(project_id, user_id)
     );
     `,
-    
+
+    // Project invites table
+    `
+    CREATE TABLE IF NOT EXISTS project_invites (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+      token VARCHAR(64) UNIQUE NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    `,
+
     // Expenses table
     `
     CREATE TABLE IF NOT EXISTS expenses (
@@ -411,14 +422,33 @@ const projectService = {
     return data;
   },
 
-  async addMember(projectId, userId, role = 'member') {
+  async addMember(projectId, userId, role = 'editor') {
+    // Check member count limit
+    const memberCount = await projectMemberService.getMemberCount(projectId);
+    const project = await this.findById(projectId);
+    const owner = await userService.findById(project.owner_id);
+
+    // FREE: max 3 members total (owner + 2 members)
+    // PRO: max 30 members total (owner + 29 members)
+    const maxMembers = owner.is_premium ? 30 : 3;
+
+    if (memberCount >= maxMembers) {
+      const limit = owner.is_premium ? '30' : '3';
+      throw new Error(`Достигнут лимит участников проекта (${limit} ${owner.is_premium ? 'человек' : 'человека'}). ${!owner.is_premium ? 'Обновитесь до PRO для увеличения лимита до 30.' : ''}`);
+    }
+
     const { data, error } = await supabase
       .from('project_members')
       .insert({ project_id: projectId, user_id: userId, role })
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') { // Unique constraint violation
+        throw new Error('Пользователь уже является участником проекта');
+      }
+      throw error;
+    }
     return data;
   },
 
@@ -1116,6 +1146,59 @@ const projectMemberService = {
 
     // Add 1 for project owner
     return (data?.length || 0) + 1;
+  },
+
+  async generateInviteLink(projectId, ownerId) {
+    const project = await projectService.findById(projectId);
+    if (!project || project.owner_id !== ownerId) {
+      throw new Error('Only project owner can generate invite links');
+    }
+
+    // Generate unique token
+    const crypto = require('crypto');
+    const token = crypto.randomBytes(16).toString('hex');
+
+    // Store token with 7 days expiration
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    await supabase
+      .from('project_invites')
+      .insert({
+        project_id: projectId,
+        token,
+        expires_at: expiresAt.toISOString()
+      });
+
+    return token;
+  },
+
+  async joinByInvite(token, userId) {
+    // Find invite
+    const { data: invite, error: inviteError } = await supabase
+      .from('project_invites')
+      .select('*, project:projects(*)')
+      .eq('token', token)
+      .single();
+
+    if (inviteError || !invite) {
+      throw new Error('Неверная или устаревшая ссылка-приглашение');
+    }
+
+    // Check if expired
+    if (new Date(invite.expires_at) < new Date()) {
+      throw new Error('Ссылка-приглашение истекла');
+    }
+
+    // Check if user is already owner
+    if (invite.project.owner_id === userId) {
+      throw new Error('Вы уже владелец этого проекта');
+    }
+
+    // Add member
+    await projectService.addMember(invite.project_id, userId, 'editor');
+
+    return invite.project;
   }
 };
 
