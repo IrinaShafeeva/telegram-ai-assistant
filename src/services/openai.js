@@ -50,7 +50,7 @@ class OpenAIService {
           }
         ],
         temperature: 0.1,
-        max_tokens: 200
+        max_tokens: 1000
       });
 
       const result = completion.choices[0].message.content.trim();
@@ -194,7 +194,7 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
           }
         ],
         temperature: 0.1,
-        max_tokens: 200
+        max_tokens: 1000
       });
 
       const result = completion.choices[0].message.content.trim();
