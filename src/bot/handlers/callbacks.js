@@ -188,6 +188,8 @@ async function handleCallback(callbackQuery) {
       await handleExportProject(chatId, messageId, data, user);
     } else if (data.startsWith('project_transactions:')) {
       await handleProjectTransactions(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_project_transactions:')) {
+      await handleEditProjectTransactions(chatId, messageId, data, user);
     } else if (data.startsWith('project_settings:')) {
       await handleProjectSettings(chatId, messageId, data, user);
     } else if (data.startsWith('export_format:')) {
@@ -4455,6 +4457,66 @@ async function handleProjectTransactions(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error in handleProjectTransactions:', error);
     await bot.editMessageText('❌ Ошибка загрузки записей проекта.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
+async function handleEditProjectTransactions(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const projectId = data.split(':')[1];
+
+    // Get project transactions
+    const expenses = await expenseService.findByProject(projectId, 100, 0);
+    const incomes = await incomeService.findByProject(projectId, 100, 0);
+
+    // Combine and sort by date
+    const allTransactions = [
+      ...expenses.map(e => ({ ...e, type: 'expense', date: e.expense_date })),
+      ...incomes.map(i => ({ ...i, type: 'income', date: i.income_date }))
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Определяем лимит редактирования по подписке
+    const editLimit = user.is_premium ? 20 : 1;
+    const limitedTransactions = allTransactions.slice(0, editLimit);
+
+    if (limitedTransactions.length === 0) {
+      await bot.editMessageText('📝 В этом проекте пока нет записей.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }
+          ]]
+        }
+      });
+      return;
+    }
+
+    const keyboard = getRecentTransactionsKeyboard(limitedTransactions);
+
+    let message = `✏️ Редактирование записей проекта\n\nПоказано последних записей: ${limitedTransactions.length}`;
+
+    // Предупреждение для FREE пользователей
+    if (!user.is_premium && allTransactions.length > 1) {
+      message += `\n\n⚠️ В FREE версии доступно редактирование только последней записи.\n💎 Обновитесь до PRO для редактирования до 20 последних записей.`;
+    }
+
+    message += '\n\nВыберите транзакцию для редактирования:';
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    });
+
+  } catch (error) {
+    logger.error('Error in handleEditProjectTransactions:', error);
+    await bot.editMessageText('❌ Ошибка загрузки записей для редактирования.', {
       chat_id: chatId,
       message_id: messageId
     });

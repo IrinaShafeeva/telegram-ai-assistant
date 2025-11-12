@@ -430,16 +430,15 @@ class GoogleSheetsService {
         const rowNumber = i + 2; // Account for header and 0-based index
 
         try {
-          // Skip bot-created entries
-          if (row[6] === 'bot') continue;
-
           // Skip rows without essential data
           if (!row[0] || !row[2]) continue;
+
+          const transactionType = row[6]; // 'expense', 'income', or 'bot'
 
           let expenseData = {
             user_id: userId,
             project_id: projectId,
-            amount: parseFloat(row[2]) || 0,
+            amount: Math.abs(parseFloat(row[2])) || 0, // Use absolute value
             currency: row[3] || defaultCurrency,
             category: row[4] || 'Прочее',
             description: row[1] || 'Manual entry',
@@ -451,7 +450,23 @@ class GoogleSheetsService {
 
           // Check if already imported
           const existing = await this.findExpenseBySheetRow(projectId, rowNumber);
-          if (existing) continue;
+
+          if (existing) {
+            // Update existing entry if data changed in Google Sheets
+            const hasChanges =
+              existing.amount !== expenseData.amount ||
+              existing.currency !== expenseData.currency ||
+              existing.category !== expenseData.category ||
+              existing.description !== expenseData.description ||
+              existing.expense_date !== expenseData.expense_date;
+
+            if (hasChanges) {
+              await expenseService.update(existing.id, expenseData);
+              imported++;
+              logger.info(`Updated expense from sheet row ${rowNumber}`);
+            }
+            continue;
+          }
 
           // Apply AI categorization if needed
           try {
