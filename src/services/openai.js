@@ -38,7 +38,7 @@ class OpenAIService {
       let prompt = EXPENSE_PARSING_PROMPT.replace('{{userInput}}', userInput);
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -182,7 +182,7 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
 `;
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -258,7 +258,7 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
         .replace('{{expenseData}}', expenseContext || 'Нет данных о расходах');
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -313,7 +313,7 @@ ${monthlyList}
 Дай краткий полезный ответ с конкретными цифрами. Используй эмодзи для категорий.`;
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -378,7 +378,7 @@ ${expensesList}
 Дай точный ответ с конкретными цифрами. Используй эмодзи для категорий.`;
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
@@ -520,7 +520,7 @@ ${transactionsList}
 Дай точный ответ с конкретными цифрами. Используй эмодзи для категорий.`;
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
