@@ -67,6 +67,7 @@ async function startBot() {
       
       // Start web server with webhook endpoint
       app.post(`/webhook/${botToken}`, (req, res) => {
+        logger.info('Received webhook request from Telegram');
         bot.processUpdate(req.body);
         res.sendStatus(200);
       });
