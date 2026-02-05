@@ -56,21 +56,22 @@ async function startBot() {
     const useWebhook = process.env.USE_WEBHOOK === 'true';
     
     if (useWebhook && webhookUrl) {
-      // Use webhook mode for production
-      bot = new TelegramBot(botToken, { webHook: true });
+      // Use webhook mode for production (no built-in server, we use Express)
+      bot = new TelegramBot(botToken, { webHook: false });
       global.bot = bot; // Make bot globally available
       await setupBot(bot);
-      
-      // Set webhook
-      await bot.setWebHook(`${webhookUrl}/webhook/${botToken}`);
-      logger.info(`🏦 Expense Tracker Bot started successfully in webhook mode: ${webhookUrl}/webhook`);
-      
-      // Start web server with webhook endpoint
-      app.post(`/webhook/${botToken}`, (req, res) => {
+
+      // Register webhook endpoint BEFORE setting webhook
+      const webhookPath = `/webhook/${botToken}`;
+      app.post(webhookPath, (req, res) => {
         logger.info('Received webhook request from Telegram');
         bot.processUpdate(req.body);
         res.sendStatus(200);
       });
+
+      // Set webhook after endpoint is registered
+      await bot.setWebHook(`${webhookUrl}${webhookPath}`);
+      logger.info(`🏦 Expense Tracker Bot started successfully in webhook mode: ${webhookUrl}${webhookPath}`);
 
       // Tribute webhook endpoint
       app.post('/webhook/tribute', async (req, res) => {
