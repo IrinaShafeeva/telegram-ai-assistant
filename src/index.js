@@ -73,19 +73,6 @@ async function startBot() {
       await bot.setWebHook(`${webhookUrl}${webhookPath}`);
       logger.info(`🏦 Expense Tracker Bot started successfully in webhook mode: ${webhookUrl}${webhookPath}`);
 
-      // Tribute webhook endpoint
-      app.post('/webhook/tribute', async (req, res) => {
-        try {
-          const { handleTributeWebhook } = require('./services/tributeWebhook');
-          await handleTributeWebhook(req.body);
-          res.sendStatus(200);
-        } catch (error) {
-          logger.error('Tribute webhook error:', error);
-          res.sendStatus(500);
-        }
-      });
-
-
     } else {
       // Use polling mode for development
       bot = new TelegramBot(botToken, { polling: true });

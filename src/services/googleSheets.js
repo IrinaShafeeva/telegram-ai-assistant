@@ -396,16 +396,21 @@ class GoogleSheetsService {
         return { imported: 0, errors: ['No Google Sheet linked to project'] };
       }
 
-      // Get the first sheet name dynamically
-      let sheetName = 'Sheet1';
+      // Get the sheet tab name matching the project name
+      let sheetName = project.name;
       try {
         const spreadsheet = await this.sheets.spreadsheets.get({
           spreadsheetId: project.google_sheet_id,
           fields: 'sheets.properties.title'
         });
-        
+
         if (spreadsheet.data.sheets && spreadsheet.data.sheets.length > 0) {
-          sheetName = spreadsheet.data.sheets[0].properties.title;
+          const matchingSheet = spreadsheet.data.sheets.find(
+            s => s.properties.title === project.name
+          );
+          sheetName = matchingSheet
+            ? matchingSheet.properties.title
+            : spreadsheet.data.sheets[0].properties.title;
         }
       } catch (error) {
         logger.warn('Could not get sheet name for sync, using default:', error.message);
@@ -434,36 +439,44 @@ class GoogleSheetsService {
           if (!row[0] || !row[2]) continue;
 
           const transactionType = row[6]; // 'expense', 'income', or 'bot'
+          const isIncome = transactionType === 'income';
 
-          let expenseData = {
+          let transactionData = {
             user_id: userId,
             project_id: projectId,
-            amount: Math.abs(parseFloat(row[2])) || 0, // Use absolute value
+            amount: Math.abs(parseFloat(row[2])) || 0,
             currency: row[3] || defaultCurrency,
             category: row[4] || 'Прочее',
             description: row[1] || 'Manual entry',
-            expense_date: this.parseDate(row[0]),
-            source_text: 'sheets',
+            source: 'sheets',
             sheets_row_id: rowNumber,
             synced_to_sheets: true
           };
 
+          if (isIncome) {
+            transactionData.income_date = this.parseDate(row[0]);
+          } else {
+            transactionData.expense_date = this.parseDate(row[0]);
+          }
+
           // Check if already imported
-          const existing = await this.findExpenseBySheetRow(projectId, rowNumber);
+          const existing = await this.findTransactionBySheetRow(projectId, rowNumber, isIncome);
 
           if (existing) {
             // Update existing entry if data changed in Google Sheets
+            const dateField = isIncome ? 'income_date' : 'expense_date';
             const hasChanges =
-              existing.amount !== expenseData.amount ||
-              existing.currency !== expenseData.currency ||
-              existing.category !== expenseData.category ||
-              existing.description !== expenseData.description ||
-              existing.expense_date !== expenseData.expense_date;
+              existing.amount !== transactionData.amount ||
+              existing.currency !== transactionData.currency ||
+              existing.category !== transactionData.category ||
+              existing.description !== transactionData.description ||
+              existing[dateField] !== transactionData[dateField];
 
             if (hasChanges) {
-              await expenseService.update(existing.id, expenseData);
+              const service = isIncome ? incomeService : expenseService;
+              await service.update(existing.id, transactionData);
               imported++;
-              logger.info(`Updated expense from sheet row ${rowNumber}`);
+              logger.info(`Updated ${isIncome ? 'income' : 'expense'} from sheet row ${rowNumber}`);
             }
             continue;
           }
@@ -472,22 +485,22 @@ class GoogleSheetsService {
           try {
             const { DEFAULT_CATEGORIES } = require('../config/constants');
             const validCategories = DEFAULT_CATEGORIES.map(cat => cat.replace(/^[^\s]+ /, '')); // Remove emojis
-            
+
             // Check if category needs AI processing
-            const needsAIProcessing = !expenseData.category || 
-                                    expenseData.category === 'Прочее' || 
-                                    !validCategories.includes(expenseData.category);
-            
-            if (needsAIProcessing && expenseData.description && expenseData.description !== 'Manual entry') {
+            const needsAIProcessing = !transactionData.category ||
+                                    transactionData.category === 'Прочее' ||
+                                    !validCategories.includes(transactionData.category);
+
+            if (needsAIProcessing && transactionData.description && transactionData.description !== 'Manual entry') {
               const openaiService = require('./openai');
-              const userInput = `${expenseData.description} ${expenseData.amount} ${expenseData.currency}`;
-              
+              const userInput = `${transactionData.description} ${transactionData.amount} ${transactionData.currency}`;
+
               const aiResult = await openaiService.parseExpense(userInput);
               if (aiResult && aiResult.category) {
-                expenseData.category = aiResult.category;
+                transactionData.category = aiResult.category;
               }
-              if (aiResult && aiResult.description && aiResult.description !== expenseData.description) {
-                expenseData.description = aiResult.description;
+              if (aiResult && aiResult.description && aiResult.description !== transactionData.description) {
+                transactionData.description = aiResult.description;
               }
             }
           } catch (aiError) {
@@ -495,8 +508,10 @@ class GoogleSheetsService {
             logger.warn(`AI processing failed for row ${rowNumber}:`, aiError.message);
           }
 
-          await expenseService.create(expenseData);
+          const service = isIncome ? incomeService : expenseService;
+          await service.create(transactionData);
           imported++;
+          logger.info(`Imported ${isIncome ? 'income' : 'expense'} from sheet row ${rowNumber}`);
         } catch (error) {
           errors.push(`Row ${rowNumber}: ${error.message}`);
           logger.error(`Failed to import row ${rowNumber}:`, error);
@@ -519,12 +534,13 @@ class GoogleSheetsService {
     }
   }
 
-  async findExpenseBySheetRow(projectId, rowNumber) {
+  async findTransactionBySheetRow(projectId, rowNumber, isIncome = false) {
     try {
-      const expenses = await expenseService.findByProject(projectId, 1000, 0);
-      return expenses.find(exp => exp.sheets_row_id === rowNumber && exp.source_text === 'sheets');
+      const service = isIncome ? incomeService : expenseService;
+      const transactions = await service.findByProject(projectId, 1000, 0);
+      return transactions.find(t => t.sheets_row_id === rowNumber && t.source === 'sheets');
     } catch (error) {
-      logger.error('Failed to find expense by sheet row:', error);
+      logger.error(`Failed to find ${isIncome ? 'income' : 'expense'} by sheet row:`, error);
       return null;
     }
   }
