@@ -378,22 +378,53 @@ const projectService = {
 
     if (ownedError) throw ownedError;
 
-    // Get projects where user is a member
-    const { data: memberProjects, error: memberError } = await supabase
-      .from('projects')
-      .select(`
-        *,
-        project_members!inner(user_id, role)
-      `)
-      .eq('project_members.user_id', userId)
-      .neq('owner_id', userId); // Exclude owned projects to avoid duplicates
+    // Get projects where user is a member (alternative query - more reliable)
+    let memberProjects = [];
+    const { data: memberRows, error: memberError } = await supabase
+      .from('project_members')
+      .select('project_id, role')
+      .eq('user_id', userId);
 
-    if (memberError) throw memberError;
+    if (memberError) {
+      logger.warn('findByUserId: project_members query failed, trying embedded:', memberError);
+    } else if (memberRows?.length > 0) {
+      const projectIds = memberRows.map(r => r.project_id).filter(Boolean);
+      const roleByProject = Object.fromEntries(memberRows.map(r => [r.project_id, r.role]));
+      const { data: projects, error: projError } = await supabase
+        .from('projects')
+        .select('*')
+        .in('id', projectIds)
+        .neq('owner_id', userId); // Exclude owned (already in ownedProjects)
 
-    // Combine and add role information
+      if (!projError && projects?.length > 0) {
+        memberProjects = projects.map(p => ({
+          ...p,
+          user_role: roleByProject[p.id] || 'member'
+        }));
+      }
+    }
+
+    // Fallback: try embedded query if memberProjects still empty (for backwards compatibility)
+    if (memberProjects.length === 0 && !memberError) {
+      const { data: embeddedMember, error: embErr } = await supabase
+        .from('projects')
+        .select('*, project_members!inner(user_id, role)')
+        .eq('project_members.user_id', userId)
+        .neq('owner_id', userId);
+      if (!embErr && embeddedMember?.length > 0) {
+        memberProjects = (embeddedMember || []).map(p => ({
+          ...p,
+          user_role: p.project_members?.[0]?.role || 'member'
+        }));
+      }
+    }
+
+    // Combine and deduplicate (owner takes precedence)
+    const ownedIds = new Set((ownedProjects || []).map(p => p.id));
+    const memberOnly = (memberProjects || []).filter(p => !ownedIds.has(p.id));
     const allProjects = [
       ...(ownedProjects || []).map(p => ({ ...p, user_role: 'owner' })),
-      ...(memberProjects || []).map(p => ({ ...p, user_role: p.project_members[0]?.role || 'member' }))
+      ...memberOnly
     ];
 
     return allProjects;

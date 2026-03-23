@@ -6,7 +6,12 @@ class GoogleSheetsService {
   constructor() {
     this.auth = null;
     this.sheets = null;
+    this.credentials = null;
     this.initAuth();
+  }
+
+  getServiceAccountEmail() {
+    return this.credentials?.client_email || null;
   }
 
   initAuth() {
@@ -45,9 +50,11 @@ class GoogleSheetsService {
         logger.warn('Google Sheets credentials not provided - Google Sheets integration disabled');
         this.auth = null;
         this.sheets = null;
+        this.credentials = null;
         return;
       }
 
+      this.credentials = credentials;
       this.auth = new google.auth.JWT(
         credentials.client_email,
         null,
@@ -61,6 +68,7 @@ class GoogleSheetsService {
       logger.error('Failed to initialize Google Sheets API:', error);
       this.auth = null;
       this.sheets = null;
+      this.credentials = null;
     }
   }
 
@@ -376,7 +384,8 @@ class GoogleSheetsService {
       if (error.message.includes('404')) {
         logger.error('💡 Hint: Google Sheet not found. Check if sheet ID is correct and service account has access.');
       } else if (error.message.includes('403')) {
-        logger.error('💡 Hint: Permission denied. Make sure exp-trck@ai-assistant-sheets.iam.gserviceaccount.com is added as Editor to the Google Sheet.');
+        const email = this.getServiceAccountEmail();
+        logger.error(`💡 Hint: Permission denied. Make sure ${email || 'service account'} is added as Editor to the Google Sheet.`);
       }
     }
   }

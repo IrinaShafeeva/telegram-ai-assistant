@@ -348,21 +348,24 @@ async function handleSaveExpense(chatId, messageId, data, user) {
 📋 Проект: ${project.name}
 ${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}`;
 
+    const successKeyboard = { inline_keyboard: [[{ text: '📋 Проекты', callback_data: 'back_to_projects' }]] };
+
     try {
       await bot.editMessageText(successText, {
         chat_id: chatId,
-        message_id: messageId
+        message_id: messageId,
+        reply_markup: successKeyboard
       });
+      logger.info('✅ Success message sent to user');
     } catch (telegramError) {
-      // Ignore "message not modified" errors - data is already saved
-      if (telegramError.code === 'ETELEGRAM' &&
-          telegramError.response?.body?.description?.includes('message is not modified')) {
-        logger.info('Message not modified (Telegram API) - expense already saved successfully');
+      const errDesc = telegramError.response?.body?.description || '';
+      if (errDesc.includes('message is not modified')) {
+        logger.info('Message not modified (Telegram API) - expense already saved');
       } else {
-        logger.error('Telegram API error while updating message:', telegramError);
-        // Try to send new message as fallback
+        logger.warn('editMessageText failed, sending new message:', errDesc || telegramError.message);
         try {
-          await bot.sendMessage(chatId, successText);
+          await bot.sendMessage(chatId, successText, { reply_markup: successKeyboard });
+          logger.info('✅ Fallback success message sent');
         } catch (fallbackError) {
           logger.error('Failed to send fallback message:', fallbackError);
         }
@@ -3184,12 +3187,17 @@ async function handleSelectProjectForConnect(chatId, messageId, data, user) {
     const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
     stateManager.setState(chatId, STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK, { selectedProjectId: projectId });
 
+    const serviceEmail = googleSheetsService.getServiceAccountEmail();
+    const emailInstruction = serviceEmail
+      ? `3️⃣ Добавьте email: ${serviceEmail}\n`
+      : `3️⃣ Добавьте email сервисного аккаунта (см. настройки бота)\n`;
+
     await bot.editMessageText(
       `🔗 Подключение к проекту "${project.name}"\n\n` +
       `Пошаговая инструкция:\n\n` +
       `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
       `2️⃣ Нажмите "Настроить доступ" → "Предоставить доступ"\n` +
-      `3️⃣ Добавьте email: exp-trck@ai-assistant-sheets.iam.gserviceaccount.com\n` +
+      emailInstruction +
       `4️⃣ Установите права: "Редактор"\n` +
       `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
       `📝 Пример ссылки:\n` +
