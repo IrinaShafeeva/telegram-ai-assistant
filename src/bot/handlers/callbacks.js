@@ -208,6 +208,14 @@ async function handleCallback(callbackQuery) {
       await handleSelectProjectForConnect(chatId, messageId, data, user);
     } else if (data === 'cancel_connect') {
       await handleCancelConnect(chatId, messageId);
+    } else if (data.startsWith('sync_sheets_yes:')) {
+      const projectId = data.split(':')[1];
+      const { handleSheetsSyncChoice } = require('./messages');
+      await handleSheetsSyncChoice(chatId, messageId, projectId, user.id, true);
+    } else if (data.startsWith('sync_sheets_skip:')) {
+      const projectId = data.split(':')[1];
+      const { handleSheetsSyncChoice } = require('./messages');
+      await handleSheetsSyncChoice(chatId, messageId, projectId, user.id, false);
     } else if (data === 'noop') {
       // Pagination placeholder - answer callback query to remove loading state
       await bot.answerCallbackQuery(callbackQuery.id, { text: '' });
@@ -3195,14 +3203,15 @@ async function handleSelectProjectForConnect(chatId, messageId, data, user) {
     await bot.editMessageText(
       `🔗 Подключение к проекту "${project.name}"\n\n` +
       `Пошаговая инструкция:\n\n` +
-      `1️⃣ Откройте Google Sheets и создайте новую таблицу\n` +
+      `1️⃣ Создайте свою таблицу в Google Sheets (или откройте существующую)\n` +
       `2️⃣ Нажмите "Настроить доступ" → "Предоставить доступ"\n` +
       emailInstruction +
       `4️⃣ Установите права: "Редактор"\n` +
-      `5️⃣ Скопируйте ссылку на таблицу и отправьте мне\n\n` +
-      `📝 Пример ссылки:\n` +
-      `https://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\n` +
-      `✨ Просто отправьте ссылку следующим сообщением!`,
+      `5️⃣ Скопируйте ссылку или ID таблицы и отправьте мне\n\n` +
+      `⚠️ Каждый пользователь подключает свою таблицу — в каждой нужно добавить email выше.\n\n` +
+      `📝 Можно отправить ссылку или только ID (часть после /d/ в ссылке)\n` +
+      `Пример: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms\n\n` +
+      `✨ Отправьте ссылку или ID следующим сообщением!`,
       {
         chat_id: chatId,
         message_id: messageId,

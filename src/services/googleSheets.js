@@ -104,7 +104,14 @@ class GoogleSheetsService {
       };
     } catch (error) {
       logger.error('Failed to connect to user sheet:', error);
-      return { success: false, error: 'Ошибка подключения к таблице' };
+      const msg = error.message || '';
+      if (msg.includes('403') || msg.includes('Permission')) {
+        return { success: false, error: 'Нет доступа к таблице. Добавьте сервисный аккаунт как редактора.' };
+      }
+      if (msg.includes('404') || msg.includes('Not Found')) {
+        return { success: false, error: 'Таблица не найдена. Проверьте ID или ссылку.' };
+      }
+      return { success: false, error: `Ошибка подключения: ${msg.slice(0, 80)}` };
     }
   }
 

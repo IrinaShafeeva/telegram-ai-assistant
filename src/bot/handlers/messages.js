@@ -816,18 +816,21 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
   const user = msg.user;
   
   try {
-    // Extract Google Sheets ID from URL
+    let sheetId;
     const urlRegex = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
-    const match = text.match(urlRegex);
-    
-    if (!match) {
-      await bot.sendMessage(chatId, 
-        '❌ Неверный формат ссылки!\n\n✅ Пример правильной ссылки:\nhttps://docs.google.com/spreadsheets/d/1A2B3C.../edit\n\nПожалуйста, отправьте правильную ссылку на таблицу.'
+    const urlMatch = text.match(urlRegex);
+    const plainIdMatch = text.trim().match(/^([a-zA-Z0-9-_]{20,60})$/);
+
+    if (urlMatch) {
+      sheetId = urlMatch[1];
+    } else if (plainIdMatch) {
+      sheetId = plainIdMatch[1];
+    } else {
+      await bot.sendMessage(chatId,
+        '❌ Неверный формат.\n\n✅ Принимаю:\n• Ссылку: https://docs.google.com/spreadsheets/d/1A2B3C.../edit\n• Или только ID таблицы (из ссылки, часть после /d/)'
       );
       return;
     }
-    
-    const sheetId = match[1];
 
     // Get the selected project from state
     const selectedProjectId = userState.data?.selectedProjectId;
@@ -842,6 +845,21 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
     const project = await projectService.findById(selectedProjectId);
     if (!project) {
       await bot.sendMessage(chatId, '❌ Выбранный проект не найден.');
+      stateManager.clearState(chatId);
+      return;
+    }
+
+    // Validate access to the sheet BEFORE saving
+    const connectResult = await googleSheetsService.connectToUserSheet(sheetId, user.email);
+    if (!connectResult.success) {
+      const serviceEmail = googleSheetsService.getServiceAccountEmail();
+      const hint = serviceEmail
+        ? `\n\n📋 Добавьте ${serviceEmail} как «Редактор» в настройках доступа к ВАШЕЙ таблице.\n\n⚠️ У каждого пользователя своя таблица — в каждой нужно добавить этот email.`
+        : '';
+      logger.warn(`Google Sheets connect failed for user ${user.id}, sheet ${sheetId}: ${connectResult.error}`);
+      await bot.sendMessage(chatId,
+        `❌ ${connectResult.error}${hint}\n\nПроверьте:\n1. Ссылка ведёт на вашу таблицу (не чужую)\n2. В настройках доступа таблицы добавлен email выше как «Редактор»`
+      );
       stateManager.clearState(chatId);
       return;
     }
@@ -1735,36 +1753,63 @@ async function handleGoogleSheetsConnected(chatId, userId, project, sheetId) {
   const bot = getBot();
 
   try {
-    // Send processing message
-    const processingMsg = await bot.sendMessage(chatId,
-      `✅ Google таблица подключена к проекту "${project.name}"!\n\n⏳ Загружаю существующие транзакции в таблицу...`
+    await bot.sendMessage(chatId,
+      `✅ Google таблица подключена к проекту "${project.name}"!\n\n📥 Загрузить существующие транзакции в таблицу?`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Да', callback_data: `sync_sheets_yes:${project.id}` },
+              { text: '⏭️ Пропустить', callback_data: `sync_sheets_skip:${project.id}` }
+            ]
+          ]
+        }
+      }
     );
+  } catch (error) {
+    logger.error('Error in handleGoogleSheetsConnected:', error);
+    await bot.sendMessage(chatId, '❌ Ошибка при подключении таблицы.');
+  }
+}
 
-    // Sync all existing expenses and incomes to Google Sheets
+async function handleSheetsSyncChoice(chatId, messageId, projectId, userId, doSync) {
+  const bot = getBot();
+  const project = await projectService.findById(projectId);
+  if (!project) {
+    await bot.editMessageText('❌ Проект не найден.', { chat_id: chatId, message_id: messageId });
+    return;
+  }
+
+  const sheetId = project.google_sheet_id;
+  if (!sheetId) {
+    await bot.editMessageText('❌ Таблица не подключена.', { chat_id: chatId, message_id: messageId });
+    return;
+  }
+
+  if (doSync) {
     try {
-      await syncExistingExpensesToSheets(userId, project.id, sheetId);
-      await syncExistingIncomesToSheets(userId, project.id, sheetId);
-
+      await bot.editMessageText(
+        `⏳ Загружаю существующие транзакции в таблицу...`,
+        { chat_id: chatId, message_id: messageId }
+      );
+      await syncExistingExpensesToSheets(userId, projectId, sheetId);
+      await syncExistingIncomesToSheets(userId, projectId, sheetId);
       await bot.editMessageText(
         `✅ Google таблица подключена к проекту "${project.name}"!\n\n📊 Все существующие расходы и доходы синхронизированы с таблицей.\n\n💡 Новые транзакции будут автоматически добавляться в таблицу.`,
-        {
-          chat_id: chatId,
-          message_id: processingMsg.message_id
-        }
+        { chat_id: chatId, message_id: messageId }
       );
     } catch (syncError) {
       logger.error('Error syncing existing transactions:', syncError);
       await bot.editMessageText(
-        `✅ Google таблица подключена к проекту "${project.name}"!\n\n⚠️ Таблица подключена, но не удалось синхронизировать существующие данные.\n\n💡 Используйте "📊 Экспорт данных" в настройках для ручной синхронизации.`,
-        {
-          chat_id: chatId,
-          message_id: processingMsg.message_id
-        }
+        `✅ Google таблица подключена к проекту "${project.name}"!\n\n⚠️ Не удалось синхронизировать данные.\n\n💡 Используйте "📊 Экспорт данных" в настройках для ручной синхронизации.`,
+        { chat_id: chatId, message_id: messageId }
       );
     }
-  } catch (error) {
-    logger.error('Error in handleGoogleSheetsConnected:', error);
-    await bot.sendMessage(chatId, '❌ Ошибка при подключении таблицы.');
+  } else {
+    await bot.editMessageText(
+      `✅ Google таблица подключена к проекту "${project.name}"!\n\n💡 Новые транзакции будут автоматически добавляться в таблицу.`,
+      { chat_id: chatId, message_id: messageId }
+    );
   }
 }
 
@@ -2243,5 +2288,6 @@ module.exports = {
   createFirstProject,
   handleExpenseText,
   handleGoogleSheetsConnected,
+  handleSheetsSyncChoice,
   handleAnalyticsQuestion
 };
