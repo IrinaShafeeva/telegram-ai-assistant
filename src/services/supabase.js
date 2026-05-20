@@ -34,7 +34,13 @@ async function runMigrations() {
     { table: 'projects', column: 'keywords', type: 'TEXT' },
     { table: 'users', column: 'pro_expires_at', type: 'TIMESTAMP' },
     { table: 'users', column: 'pro_plan_type', type: 'VARCHAR(20)' },
-    { table: 'projects', column: 'is_collaborative', type: 'BOOLEAN DEFAULT FALSE' }
+    { table: 'projects', column: 'is_collaborative', type: 'BOOLEAN DEFAULT FALSE' },
+    { table: 'projects', column: 'is_family_budget', type: 'BOOLEAN DEFAULT FALSE' },
+    { table: 'projects', column: 'budget_currency', type: 'VARCHAR(3)' },
+    { table: 'projects', column: 'onboarding_completed', type: 'BOOLEAN DEFAULT FALSE' },
+    { table: 'users', column: 'lumik_update_seen', type: 'BOOLEAN DEFAULT FALSE' },
+    { table: 'users', column: 'last_morning_sent_date', type: 'DATE' },
+    { table: 'users', column: 'last_insight_sent_date', type: 'DATE' }
   ];
 
   for (const { table, column, type } of columnsToCheck) {
@@ -461,7 +467,7 @@ const projectService = {
 
     // FREE: max 3 members total (owner + 2 members)
     // PRO: max 30 members total (owner + 29 members)
-    const maxMembers = owner.is_premium ? 30 : 3;
+    const maxMembers = project.is_family_budget ? 2 : (owner.is_premium ? 30 : 3);
 
     if (memberCount >= maxMembers) {
       const limit = owner.is_premium ? '30' : '3';

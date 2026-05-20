@@ -12,6 +12,11 @@ const { shortTransactionMap } = require('../../utils/transactionMap');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
 const { isAnalyticsQuestion } = require('../../utils/intentClassifier');
+const {
+  handleFamilyText,
+  handleFamilyMenuText,
+  userHasFamilyMenu
+} = require('./familyBudget');
 
 // Function to detect currency based on language and text content
 function detectCurrencyByLanguage(text, languageCode) {
@@ -61,6 +66,10 @@ async function handleText(msg) {
     const userState = stateManager.getState(chatId);
     logger.info(`🔍 Checking user state for ${chatId}: ${userState ? userState.type : 'NO_STATE'}`);
     if (userState) {
+      if (userState.type.startsWith('FB_')) {
+        await handleFamilyText(msg, userState);
+        return;
+      }
       // Special case: if user is editing project name but input looks like a transaction, clear state and process as transaction
       if (userState.type === 'WAITING_PROJECT_NAME_EDIT' && /\d/.test(text)) {
         logger.info(`🔄 User in project edit state but input "${text}" looks like transaction, clearing state`);
@@ -81,6 +90,11 @@ async function handleText(msg) {
     }
 
     // Handle main menu buttons - clear any existing state first
+    if (await handleFamilyMenuText(msg)) {
+      stateManager.clearState(chatId);
+      return;
+    }
+
     if (text === '📋 Проекты') {
       stateManager.clearState(chatId);
       return require('./commands').handleProjects(msg);
@@ -174,7 +188,7 @@ async function createFirstProject(chatId, user, currency) {
 • Текстом: "кофе 15€"
 
 Бот автоматически определит категорию и предложит сохранить.`,
-      { reply_markup: getMainMenuKeyboard() }
+      { reply_markup: getMainMenuKeyboard(false) }
     );
 
   } catch (error) {

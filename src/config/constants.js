@@ -75,6 +75,25 @@ const ANALYTICS_PROMPT = `
 🥪 Больше всего: рестораны (890€), продукты (650€)"
 `;
 
+const LUMIK_UPDATE_MESSAGE = `🎉 Loomiq обновился — вести семейный бюджет стало проще!
+
+Что нового:
+1. «Реальность месяца» — сходится ли месяц: доходы, расходы и итог.
+2. Опросник при старте — несколько вопросов, и бот соберёт картину.
+3. Стабильный и плавающий доход разделены.
+4. Счётчик долга — пополнение и общая сумма.
+
+Бюджет удобно вести вдвоём. Создать семейный бюджет?`;
+
+const PLANNED_PAYMENT_CATEGORIES = [
+  'Жильё', 'Коммуналка', 'Связь и интернет', 'Кредиты', 'Налоги',
+  'Страховки', 'Транспорт', 'Подписки', 'Другое'
+];
+
+const PLANNED_INCOME_CATEGORIES = [
+  'Зарплата', 'Аренда', 'Пенсия/пособия', 'Договор', 'Другое'
+];
+
 const BOT_COMMANDS = [
   { command: 'start', description: 'Начать работу с ботом' },
   { command: 'help', description: 'Справка по командам' },
@@ -92,5 +111,8 @@ module.exports = {
   SUBSCRIPTION_LIMITS,
   EXPENSE_PARSING_PROMPT,
   ANALYTICS_PROMPT,
-  BOT_COMMANDS
+  BOT_COMMANDS,
+  LUMIK_UPDATE_MESSAGE,
+  PLANNED_PAYMENT_CATEGORIES,
+  PLANNED_INCOME_CATEGORIES
 };

@@ -6,6 +6,8 @@ const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/cons
 const { getBot } = require('../../utils/bot');
 const { stateManager } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
+const { showLumikUpdateIfNeeded, userHasFamilyMenu } = require('./familyBudget');
+const { formatMonthRealityMessage, getMonthReality } = require('../../services/monthReality');
 
 // Admin user IDs
 const ADMIN_IDS = [
@@ -41,10 +43,21 @@ async function handleStart(msg, match) {
         const { projectMemberService } = require('../../services/supabase');
         const project = await projectMemberService.joinByInvite(inviteToken, user.id);
 
-        await bot.sendMessage(chatId,
-          `✅ Вы успешно присоединились к проекту "${project.name}"!\n\n` +
-          `Теперь вы можете добавлять траты и доходы в этот проект.`
-        );
+        if (project.is_family_budget) {
+          const full = await projectService.findById(project.id);
+          const reality = await getMonthReality(full);
+          const hasFamily = true;
+          await bot.sendMessage(chatId,
+            `✅ Вы в семейном бюджете «${project.name}»!\n\n` +
+            formatMonthRealityMessage(reality),
+            { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(hasFamily) }
+          );
+        } else {
+          await bot.sendMessage(chatId,
+            `✅ Вы успешно присоединились к проекту "${project.name}"!\n\n` +
+            `Теперь вы можете добавлять траты и доходы в этот проект.`
+          );
+        }
         return;
       } catch (error) {
         logger.error('Invite join error:', error);
@@ -67,7 +80,7 @@ async function handleStart(msg, match) {
         { reply_markup: getCurrencySelectionKeyboard('initial', 'onboarding') }
       );
     } else {
-      // Existing user - show main menu
+      const hasFamily = await userHasFamilyMenu(user.id);
       await bot.sendMessage(chatId, 
         `👋 С возвращением, ${user.first_name || 'друг'}!
 
@@ -77,8 +90,9 @@ async function handleStart(msg, match) {
 • "кофе 15 евро"
 • "такси 15 долларов"
 • "продукты 3500"`, 
-        { reply_markup: getMainMenuKeyboard() }
+        { reply_markup: getMainMenuKeyboard(hasFamily) }
       );
+      await showLumikUpdateIfNeeded(chatId, user);
     }
   } catch (error) {
     logger.error('Start command error:', error);

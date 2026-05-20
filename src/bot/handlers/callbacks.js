@@ -26,6 +26,7 @@ const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 const channelCheckService = require('../../services/channelCheck');
+const { handleFamilyCallback } = require('./familyBudget');
 
 async function handleCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
@@ -37,6 +38,11 @@ async function handleCallback(callbackQuery) {
   // Debug logging
   logger.info(`🔘 Callback received: ${data} from user ${user?.id}`);
   logger.info(`🔘 DEBUG: Starting callback processing for: ${data}`);
+
+  if (data.startsWith('fb:')) {
+    await handleFamilyCallback(callbackQuery);
+    return;
+  }
 
   // Debug user data
   if (!user || !user.id) {

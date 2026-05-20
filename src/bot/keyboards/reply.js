@@ -1,4 +1,15 @@
-function getMainMenuKeyboard() {
+function getMainMenuKeyboard(hasFamilyBudget = false) {
+  if (hasFamilyBudget) {
+    return {
+      keyboard: [
+        ['📋 Проекты'],
+        ['📊 Реальность месяца', '📝 Мои списки'],
+        ['⚙️ Настройки', 'ℹ️ Помощь']
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false
+    };
+  }
   return {
     keyboard: [
       ['📋 Проекты'],

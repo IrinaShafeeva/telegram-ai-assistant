@@ -60,6 +60,8 @@ async function startBot() {
       bot = new TelegramBot(botToken, { webHook: false });
       global.bot = bot; // Make bot globally available
       await setupBot(bot);
+      const { startScheduler } = require('./services/scheduler');
+      startScheduler(bot);
 
       // Register webhook endpoint BEFORE setting webhook
       const webhookPath = `/webhook/${botToken}`;
@@ -78,6 +80,8 @@ async function startBot() {
       bot = new TelegramBot(botToken, { polling: true });
       global.bot = bot; // Make bot globally available
       await setupBot(bot);
+      const { startScheduler } = require('./services/scheduler');
+      startScheduler(bot);
 
       logger.info('🏦 Expense Tracker Bot started successfully in polling mode');
     }

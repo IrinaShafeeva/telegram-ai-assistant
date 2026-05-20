@@ -68,3 +68,6 @@ Thumbs.db
 !vercel.json
 
 .env.production
+
+# Internal product spec (not for repo)
+lumik-update.md
