@@ -2,7 +2,7 @@ function listRowKeyboard(listType, itemId) {
   return {
     inline_keyboard: [
       [
-        { text: '✏️', callback_data: `fb:edit:${listType}:${itemId}` },
+        { text: '✏️', callback_data: `fb:editpick:${listType}:${itemId}` },
         { text: '🗑', callback_data: `fb:del:${listType}:${itemId}` }
       ]
     ]
@@ -65,7 +65,43 @@ function onboardingSkipKeyboard(step) {
     inline_keyboard: [
       [{ text: '⏭ Пропустить шаг', callback_data: `fb:onb:skip:${step}` }],
       [{ text: '➕ Добавить ещё', callback_data: `fb:onb:more:${step}` }],
-      [{ text: 'Дальше →', callback_data: `fb:onb:next:${step}` }]
+      [{ text: 'Дальше →', callback_data: `fb:onb:next:${step}` }],
+      [{ text: '👫 Пригласить партнёра', callback_data: 'fb:invite' }]
+    ]
+  };
+}
+
+function partnerPlanReviewKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '✏️ Редактировать план', callback_data: 'fb:lists' }],
+      [{ text: '📝 Заполнить / дополнить опросник', callback_data: 'fb:onb:start' }],
+      [{ text: '👫 Пригласить партнёра', callback_data: 'fb:invite' }],
+      [{ text: '📊 Реальность месяца', callback_data: 'fb:reality' }]
+    ]
+  };
+}
+
+function editFieldKeyboard(listType, itemId) {
+  const rows = [
+    [
+      { text: '💰 Сумма', callback_data: `fb:editf:${listType}:${itemId}:amount` },
+      { text: '📝 Название', callback_data: `fb:editf:${listType}:${itemId}:title` }
+    ]
+  ];
+  if (listType !== 'debts') {
+    rows.push([{ text: '📅 День месяца', callback_data: `fb:editf:${listType}:${itemId}:day` }]);
+  }
+  rows.push([{ text: '🔙 Назад', callback_data: `fb:list:${listType}` }]);
+  return { inline_keyboard: rows };
+}
+
+function monthlyReviewKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📋 Простроить план на месяц', callback_data: 'fb:onb:start' }],
+      [{ text: '✏️ Редактировать план', callback_data: 'fb:lists' }],
+      [{ text: '✅ План на месяц готов', callback_data: 'fb:month:done' }]
     ]
   };
 }
@@ -77,5 +113,8 @@ module.exports = {
   realityActionsKeyboard,
   updateBroadcastKeyboard,
   confirmDeleteKeyboard,
-  onboardingSkipKeyboard
+  onboardingSkipKeyboard,
+  partnerPlanReviewKeyboard,
+  editFieldKeyboard,
+  monthlyReviewKeyboard
 };

@@ -1,8 +1,73 @@
-const { supabase, projectService, projectMemberService } = require('./supabase');
+const { supabase, projectService, projectMemberService, userService } = require('./supabase');
 const logger = require('../utils/logger');
 
 const FAMILY_KEYWORDS = 'семья, семейный, общак';
 const FAMILY_PROJECT_NAME = 'Семейный бюджет';
+
+function currentPlanMonth(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+const familyMemberStateService = {
+  async get(projectId, userId) {
+    const { data, error } = await supabase
+      .from('family_budget_member_state')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
+
+  async markOnboardingDone(projectId, userId) {
+    const month = currentPlanMonth();
+    const { data, error } = await supabase
+      .from('family_budget_member_state')
+      .upsert(
+        {
+          project_id: projectId,
+          user_id: userId,
+          last_onboarding_month: month,
+          last_monthly_prompt_month: month,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'project_id,user_id' }
+      )
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  },
+
+  async needsPlanReviewThisMonth(projectId, userId) {
+    const state = await this.get(projectId, userId);
+    const month = currentPlanMonth();
+    return !state || state.last_onboarding_month !== month;
+  },
+
+  async shouldSendMonthlyPrompt(projectId, userId) {
+    const state = await this.get(projectId, userId);
+    const month = currentPlanMonth();
+    if (!state) return true;
+    return state.last_monthly_prompt_month !== month;
+  },
+
+  async markMonthlyPromptSent(projectId, userId) {
+    const month = currentPlanMonth();
+    const existing = await this.get(projectId, userId);
+    await supabase.from('family_budget_member_state').upsert(
+      {
+        project_id: projectId,
+        user_id: userId,
+        last_onboarding_month: existing?.last_onboarding_month || null,
+        last_monthly_prompt_month: month,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'project_id,user_id' }
+    );
+  }
+};
 
 async function logChangelog({ projectId, userId, entityType, entityId, action, summary, oldValue, newValue }) {
   const { error } = await supabase.from('budget_changelog').insert({
@@ -31,7 +96,45 @@ const familyProjectService = {
     return data;
   },
 
+  /**
+   * Единственный «победивший» семейный проект — кто первым завершил опросник.
+   */
+  async findCanonicalFamilyProject() {
+    let { data, error } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('is_family_budget', true)
+      .eq('is_active', true)
+      .not('family_established_at', 'is', null)
+      .order('family_established_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    if (data) return data;
+
+    ({ data, error } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('is_family_budget', true)
+      .eq('onboarding_completed', true)
+      .eq('is_active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle());
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
+
   async findFamilyProjectForUser(userId) {
+    const canonical = await this.findCanonicalFamilyProject();
+    if (canonical) {
+      const access = await projectService.hasAccess(canonical.id, userId);
+      if (access.access) {
+        const role = canonical.owner_id === userId ? 'owner' : (access.role || 'editor');
+        return { ...canonical, user_role: role };
+      }
+    }
+
     const owned = await this.findOwnedFamilyProject(userId);
     if (owned) return { ...owned, user_role: 'owner' };
 
@@ -46,8 +149,100 @@ const familyProjectService = {
   },
 
   async canCreateFamilyProject(userId) {
-    const existing = await this.findOwnedFamilyProject(userId);
-    return !existing;
+    const canonical = await this.findCanonicalFamilyProject();
+    if (canonical) {
+      const access = await projectService.hasAccess(canonical.id, userId);
+      if (access.access) return false;
+    }
+    const owned = await this.findOwnedFamilyProject(userId);
+    return !owned;
+  },
+
+  async collectPlanSnapshot(projectId) {
+    const [payments, incomes, debts] = await Promise.all([
+      plannedPaymentService.list(projectId),
+      plannedIncomeService.list(projectId),
+      debtService.list(projectId)
+    ]);
+    return { payments, incomes, debts };
+  },
+
+  async establishAsCanonical(projectId, userId) {
+    return projectService.update(projectId, {
+      onboarding_completed: true,
+      family_established_at: new Date().toISOString(),
+      family_established_by: userId
+    });
+  },
+
+  async resolveLoserToWinner(loserUserId, loserProjectId, winnerProject) {
+    const snapshot = await this.collectPlanSnapshot(loserProjectId);
+    const loserOwned = await this.findOwnedFamilyProject(loserUserId);
+
+    if (loserOwned?.id === loserProjectId && loserProjectId !== winnerProject.id) {
+      await this.deleteFamilyProjectPlanData(loserProjectId);
+      await projectService.delete(loserProjectId);
+      logger.info(`Removed duplicate family project ${loserProjectId} for user ${loserUserId}`);
+    }
+
+    if (loserUserId !== winnerProject.owner_id) {
+      try {
+        await projectService.addMember(winnerProject.id, loserUserId, 'editor');
+      } catch (e) {
+        if (!e.message?.includes('уже является')) {
+          logger.warn('addMember on merge:', e.message);
+        }
+      }
+    }
+
+    await familyMemberStateService.markOnboardingDone(winnerProject.id, loserUserId);
+
+    const winnerOwner = await userService.findById(winnerProject.family_established_by || winnerProject.owner_id);
+    return { snapshot, winnerProject, winnerOwner };
+  },
+
+  async deleteFamilyProjectPlanData(projectId) {
+    await Promise.all([
+      supabase.from('planned_payments').delete().eq('project_id', projectId),
+      supabase.from('planned_incomes').delete().eq('project_id', projectId),
+      supabase.from('debts').delete().eq('project_id', projectId),
+      supabase.from('debt_adjustments').delete().eq('project_id', projectId),
+      supabase.from('floating_incomes').delete().eq('project_id', projectId),
+      supabase.from('budget_changelog').delete().eq('project_id', projectId),
+      supabase.from('family_budget_member_state').delete().eq('project_id', projectId)
+    ]);
+  },
+
+  async warnOtherFamilyProjectOwners(winnerProjectId, winnerUserId) {
+    const { data: others, error } = await supabase
+      .from('projects')
+      .select('id, owner_id, onboarding_completed')
+      .eq('is_family_budget', true)
+      .eq('is_active', true)
+      .neq('id', winnerProjectId);
+    if (error) return;
+
+    const winner = await projectService.findById(winnerProjectId);
+    const { getBot } = require('../utils/bot');
+    const bot = getBot();
+    if (!bot) return;
+
+    for (const p of others || []) {
+      if (p.owner_id === winnerUserId) continue;
+      try {
+        const token = await projectMemberService.generateInviteLink(winnerProjectId, winner.owner_id);
+        const me = await bot.getMe();
+        const link = `https://t.me/${me.username}?start=${token}`;
+        await bot.sendMessage(
+          p.owner_id,
+          '👫 Ваш партнёр уже первым заполнил общий семейный бюджет.\n\n' +
+            'Если вы тоже начинали опросник — после завершения покажем ваши строки для правок, отдельный проект закроем.\n\n' +
+            `Или присоединитесь к общему плану: ${link}`
+        );
+      } catch (e) {
+        logger.warn('warnOtherFamilyProjectOwners:', e.message);
+      }
+    }
   },
 
   async createFamilyProject(userId, currency) {
@@ -77,19 +272,27 @@ const familyProjectService = {
   }
 };
 
-async function notifyPartners(bot, projectId, actorUserId, message) {
+async function getFamilyParticipantIds(projectId) {
+  const project = await projectService.findById(projectId);
+  const members = await projectService.getMembers(projectId);
+  const ids = new Set();
+  if (project?.owner_id) ids.add(project.owner_id);
+  for (const m of members || []) {
+    if (m.user_id) ids.add(m.user_id);
+  }
+  return { project, ids: Array.from(ids) };
+}
+
+async function notifyPartners(bot, projectId, actorUserId, message, replyMarkup = null, useMarkdown = false) {
   if (!bot) return;
   try {
-    const members = await projectService.getMembers(projectId);
-    const project = await projectService.findById(projectId);
-    const targets = new Set();
-    if (project?.owner_id) targets.add(project.owner_id);
-    for (const m of members || []) {
-      if (m.user_id) targets.add(m.user_id);
-    }
-    targets.delete(actorUserId);
-    for (const uid of targets) {
-      await bot.sendMessage(uid, message);
+    const { ids } = await getFamilyParticipantIds(projectId);
+    const opts = {};
+    if (useMarkdown) opts.parse_mode = 'Markdown';
+    if (replyMarkup) opts.reply_markup = replyMarkup;
+    for (const uid of ids) {
+      if (uid === actorUserId) continue;
+      await bot.sendMessage(uid, message, opts);
     }
   } catch (e) {
     logger.warn('notifyPartners failed:', e);
@@ -383,7 +586,10 @@ const changelogService = {
 module.exports = {
   FAMILY_KEYWORDS,
   FAMILY_PROJECT_NAME,
+  currentPlanMonth,
+  familyMemberStateService,
   familyProjectService,
+  getFamilyParticipantIds,
   plannedPaymentService,
   plannedIncomeService,
   debtService,

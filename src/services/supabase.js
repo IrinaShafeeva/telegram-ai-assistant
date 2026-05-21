@@ -40,7 +40,9 @@ async function runMigrations() {
     { table: 'projects', column: 'onboarding_completed', type: 'BOOLEAN DEFAULT FALSE' },
     { table: 'users', column: 'lumik_update_seen', type: 'BOOLEAN DEFAULT FALSE' },
     { table: 'users', column: 'last_morning_sent_date', type: 'DATE' },
-    { table: 'users', column: 'last_insight_sent_date', type: 'DATE' }
+    { table: 'users', column: 'last_insight_sent_date', type: 'DATE' },
+    { table: 'projects', column: 'family_established_at', type: 'TIMESTAMP' },
+    { table: 'projects', column: 'family_established_by', type: 'BIGINT' }
   ];
 
   for (const { table, column, type } of columnsToCheck) {

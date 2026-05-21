@@ -1,12 +1,14 @@
 const { userService, projectService, projectMemberService } = require('../../services/supabase');
 const {
   familyProjectService,
+  familyMemberStateService,
   plannedPaymentService,
   plannedIncomeService,
   debtService,
   floatingIncomeService,
   notifyPartners,
-  partnerLabel
+  partnerLabel,
+  currentPlanMonth
 } = require('../../services/familyBudget');
 const { getMonthReality, formatMonthRealityMessage } = require('../../services/monthReality');
 const { formatDaysLeft, formatDateRu, sortByUpcoming } = require('../../utils/budgetDates');
@@ -19,7 +21,10 @@ const {
   realityActionsKeyboard,
   updateBroadcastKeyboard,
   confirmDeleteKeyboard,
-  onboardingSkipKeyboard
+  onboardingSkipKeyboard,
+  partnerPlanReviewKeyboard,
+  editFieldKeyboard,
+  monthlyReviewKeyboard
 } = require('../keyboards/familyBudget');
 const { LUMIK_UPDATE_MESSAGE } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
@@ -42,20 +47,180 @@ async function userHasFamilyMenu(userId) {
   return p && p.onboarding_completed;
 }
 
+function formatPlanSnapshot(snapshot, currency) {
+  const lines = [];
+  if (snapshot.payments?.length) {
+    lines.push('📤 *Ваши платежи:*');
+    for (const p of snapshot.payments) {
+      lines.push(`• ${p.title} — ${p.amount} ${currency}, день ${p.day_of_month}`);
+    }
+  }
+  if (snapshot.incomes?.length) {
+    lines.push('\n📥 *Ваши доходы:*');
+    for (const p of snapshot.incomes) {
+      lines.push(`• ${p.title} — ${p.amount} ${currency}, день ${p.day_of_month}`);
+    }
+  }
+  if (snapshot.debts?.length) {
+    lines.push('\n🏦 *Ваши долги:*');
+    for (const d of snapshot.debts) {
+      lines.push(`• ${d.description} — ${d.amount} ${currency}`);
+    }
+  }
+  return lines.length ? lines.join('\n') : '';
+}
+
+async function sendLoserMergedMessage(chatId, user, mergeResult) {
+  const bot = getBot();
+  const { snapshot, winnerProject, winnerOwner } = mergeResult;
+  const currency = winnerProject.budget_currency || 'RUB';
+  const reality = await getMonthReality(winnerProject);
+  const partnerName = partnerLabel(winnerOwner);
+
+  let text =
+    `👫 Ваш партнёр (${partnerName}) уже заполнил семейный бюджет первым.\n\n` +
+    `*Общий план:*\n\n${formatMonthRealityMessage(reality)}\n\n`;
+
+  const ownLines = formatPlanSnapshot(snapshot, currency);
+  if (ownLines) {
+    text +=
+      `*Ваши данные из опросника* (отдельный проект закрыт, строки только для ориентира):\n\n${ownLines}\n\n` +
+      '_Скорректируйте общий план под своё видение — добавьте или измените позиции в «Редактировать план»._';
+  } else {
+    text += '_Дополните общий план со своей стороны — «Редактировать план»._';
+  }
+
+  await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: partnerPlanReviewKeyboard()
+  });
+  await bot.sendMessage(chatId, '✅ Вы в общем семейном бюджете.', {
+    reply_markup: getMainMenuKeyboard(true)
+  });
+}
+
+function buildPartnerPlanMessage(finisherUser, reality, isMonthly = false) {
+  const who = partnerLabel(finisherUser);
+  const header = isMonthly
+    ? `📅 *Начало месяца* — ${who} обновил(а) семейный план:\n\n`
+    : `👫 ${who} заполнил(а) опросник семейного бюджета:\n\n`;
+  return (
+    header +
+    formatMonthRealityMessage(reality) +
+    '\n\n_Проверьте цифры, добавьте свои платежи и доходы — кнопка «Редактировать план»._'
+  );
+}
+
+async function sendFamilyInviteLink(chatId, user, project) {
+  const bot = getBot();
+  const full = await projectService.findById(project.id);
+  const access = await projectService.hasAccess(project.id, user.id);
+  if (!access.access) {
+    await bot.sendMessage(chatId, '❌ Нет доступа к этому проекту.');
+    return;
+  }
+  const token = await projectMemberService.generateInviteLink(project.id, full.owner_id);
+  const me = await bot.getMe();
+  const link = `https://t.me/${me.username}?start=${token}`;
+  await bot.sendMessage(
+    chatId,
+    `👫 Ссылка для партнёра (7 дней):\n${link}\n\nОба можете приглашать и заполнять опросник.`
+  );
+}
+
+async function promptMonthlyReviewIfNeeded(chatId, userId, project) {
+  const needs = await familyMemberStateService.needsPlanReviewThisMonth(project.id, userId);
+  if (!needs || !(project.onboarding_completed || project.family_established_at)) return;
+
+  const state = await familyMemberStateService.get(project.id, userId);
+  const month = currentPlanMonth();
+  if (state?.last_monthly_prompt_month === month) return;
+
+  const bot = getBot();
+  const { formatPlanMonthLabel } = require('../../utils/budgetDates');
+  await bot.sendMessage(
+    chatId,
+    `📅 *${formatPlanMonthLabel(month)}* — простройте план на месяц вместе с партнёром.`,
+    { parse_mode: 'Markdown', reply_markup: monthlyReviewKeyboard() }
+  );
+  await familyMemberStateService.markMonthlyPromptSent(project.id, userId);
+}
+
 async function getFamilyProjectOrReply(chatId, userId) {
+  const canonical = await familyProjectService.findCanonicalFamilyProject();
+  const ownedDup = await familyProjectService.findOwnedFamilyProject(userId);
+  if (canonical && ownedDup && ownedDup.id !== canonical.id) {
+    const user = await userService.findById(userId);
+    const mergeResult = await familyProjectService.resolveLoserToWinner(userId, ownedDup.id, canonical);
+    await sendLoserMergedMessage(chatId, user, mergeResult);
+    return null;
+  }
+
   const project = await familyProjectService.findFamilyProjectForUser(userId);
   if (!project) {
     const bot = getBot();
     await bot.sendMessage(chatId, 'Семейный бюджет не создан. Нажмите /start и выберите «Создать семейный бюджет».');
     return null;
   }
-  if (!project.onboarding_completed && project.user_role === 'owner') {
-    const bot = getBot();
-    await bot.sendMessage(chatId, 'Сначала завершите опросник семейного бюджета.');
-    await startOnboarding(chatId, userId, project);
-    return null;
+  if (!project.onboarding_completed) {
+    const needs = await familyMemberStateService.needsPlanReviewThisMonth(project.id, userId);
+    if (needs) {
+      const bot = getBot();
+      await bot.sendMessage(
+        chatId,
+        'Заполните опросник или дождитесь партнёра. Можно пригласить его сейчас — кнопка ниже.',
+        { reply_markup: onboardingSkipKeyboard('payments') }
+      );
+      await startOnboarding(chatId, userId, project);
+      return null;
+    }
   }
   return project;
+}
+
+async function sendPartnerWelcomeAfterJoin(chatId, user, project) {
+  const bot = getBot();
+  const full = await projectService.findById(project.id);
+  const hasFamily = true;
+
+  const ownedDuplicate = await familyProjectService.findOwnedFamilyProject(user.id);
+  if (ownedDuplicate && ownedDuplicate.id !== full.id) {
+    const mergeResult = await familyProjectService.resolveLoserToWinner(
+      user.id,
+      ownedDuplicate.id,
+      full
+    );
+    await sendLoserMergedMessage(chatId, user, mergeResult);
+    return;
+  }
+
+  await bot.sendMessage(
+    chatId,
+    `✅ Вы в общем семейном бюджете «${project.name}»!\n\n` +
+      'Один общий план на пару. Можете редактировать все поля и дополнять свои строки.',
+    { reply_markup: getMainMenuKeyboard(hasFamily) }
+  );
+
+  if (full.onboarding_completed || full.family_established_at) {
+    const reality = await getMonthReality(full);
+    const owner = await userService.findById(full.family_established_by || full.owner_id);
+    await bot.sendMessage(
+      chatId,
+      `👫 ${partnerLabel(owner)} уже заполнил(а) план первым:\n\n${formatMonthRealityMessage(reality)}`,
+      { parse_mode: 'Markdown', reply_markup: partnerPlanReviewKeyboard() }
+    );
+    await familyMemberStateService.markOnboardingDone(full.id, user.id);
+    const needs = await familyMemberStateService.needsPlanReviewThisMonth(project.id, user.id);
+    if (needs) {
+      await bot.sendMessage(chatId, '📝 При необходимости обновите план на этот месяц:', {
+        reply_markup: monthlyReviewKeyboard()
+      });
+    }
+  } else {
+    await bot.sendMessage(chatId, 'Партнёр ещё заполняет опросник — вы сможете дополнить план после него.', {
+      reply_markup: partnerPlanReviewKeyboard()
+    });
+  }
 }
 
 async function showLumikUpdateIfNeeded(chatId, user) {
@@ -70,16 +235,37 @@ async function showLumikUpdateIfNeeded(chatId, user) {
 
 async function startCreateFamilyBudget(chatId, user) {
   const bot = getBot();
-  const can = await familyProjectService.canCreateFamilyProject(user.id);
-  if (!can) {
-    const existing = await familyProjectService.findOwnedFamilyProject(user.id);
-    if (existing?.onboarding_completed) {
+
+  const canonical = await familyProjectService.findCanonicalFamilyProject();
+  if (canonical) {
+    const access = await projectService.hasAccess(canonical.id, user.id);
+    if (access.access) {
       await showMonthReality(chatId, user.id);
-    } else if (existing) {
-      await startOnboarding(chatId, user.id, existing);
+      return;
+    }
+    await bot.sendMessage(
+      chatId,
+      '👫 Семейный бюджет уже создан вашим партнёром.\n\nПопросите ссылку «Пригласить партнёра» или откройте приглашение /start …'
+    );
+    return;
+  }
+
+  const owned = await familyProjectService.findOwnedFamilyProject(user.id);
+  if (owned) {
+    if (owned.onboarding_completed) {
+      await showMonthReality(chatId, user.id);
+    } else {
+      await startOnboarding(chatId, user.id, owned);
     }
     return;
   }
+
+  const can = await familyProjectService.canCreateFamilyProject(user.id);
+  if (!can) {
+    await bot.sendMessage(chatId, 'Семейный бюджет уже есть — откройте «Реальность месяца».');
+    return;
+  }
+
   const currency = user.primary_currency || 'RUB';
   const project = await familyProjectService.createFamilyProject(user.id, currency);
   await bot.sendMessage(
@@ -90,41 +276,92 @@ async function startCreateFamilyBudget(chatId, user) {
   await startOnboarding(chatId, user.id, project);
 }
 
-async function startOnboarding(chatId, userId, project) {
+async function startOnboarding(chatId, userId, project, isMonthly = false) {
+  if (!isMonthly) {
+    const canonical = await familyProjectService.findCanonicalFamilyProject();
+    if (canonical && canonical.id !== project.id) {
+      const mergeResult = await familyProjectService.resolveLoserToWinner(userId, project.id, canonical);
+      stateManager.clearState(chatId);
+      const loser = await userService.findById(userId);
+      await sendLoserMergedMessage(chatId, loser, mergeResult);
+      return;
+    }
+  }
+
   stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, {
     projectId: project.id,
     step: 'payment_title',
-    draft: {}
+    draft: {},
+    isMonthly
   }, 60);
   const bot = getBot();
+  const intro = isMonthly
+    ? `📅 План на ${currentPlanMonth()} — обновите платежи и доходы (можно только добавить новые или пропустить шаги).\n\n`
+    : '';
   await bot.sendMessage(
     chatId,
-    '💳 Шаг 1. Обязательные платежи\n\nЗа что платите каждый месяц? (например: аренда, коммуналка)\n\nИли используйте кнопки ниже.',
+    `${intro}💳 Шаг 1. Обязательные платежи\n\nЗа что платите каждый месяц? (например: аренда, коммуналка)\n\nМожно пригласить партнёра в любой момент.`,
     { reply_markup: onboardingSkipKeyboard('payments') }
   );
 }
 
-async function finishOnboarding(chatId, userId, projectId) {
-  await familyProjectService.completeOnboarding(projectId);
-  stateManager.clearState(chatId);
+async function finishOnboarding(chatId, userId, projectId, isMonthly = false) {
   const bot = getBot();
+
+  if (!isMonthly) {
+    const canonical = await familyProjectService.findCanonicalFamilyProject();
+    if (canonical && canonical.id !== projectId) {
+      const mergeResult = await familyProjectService.resolveLoserToWinner(userId, projectId, canonical);
+      stateManager.clearState(chatId);
+      const loser = await userService.findById(userId);
+      await sendLoserMergedMessage(chatId, loser, mergeResult);
+      return;
+    }
+
+    if (!canonical) {
+      await familyProjectService.establishAsCanonical(projectId, userId);
+      await familyProjectService.warnOtherFamilyProjectOwners(projectId, userId);
+    }
+    await familyMemberStateService.markOnboardingDone(projectId, userId);
+  } else {
+    await familyMemberStateService.markOnboardingDone(projectId, userId);
+  }
+
   const project = await projectService.findById(projectId);
+  stateManager.clearState(chatId);
+  const finisher = await userService.findById(userId);
   const reality = await getMonthReality(project);
+  const doneText = isMonthly
+    ? `✅ Ваш план на ${currentPlanMonth()} сохранён. Партнёр получит уведомление с цифрами.`
+    : '✅ Опросник готов! Партнёр увидит ваши данные и сможет всё отредактировать.';
+
+  await bot.sendMessage(chatId, doneText);
   await bot.sendMessage(chatId, formatMonthRealityMessage(reality), {
     parse_mode: 'Markdown',
     reply_markup: realityActionsKeyboard()
   });
   await bot.sendMessage(
     chatId,
-    'Готово! Операционные траты и доходы по-прежнему записывайте голосом или текстом — с словами «семья», «семейный», «общак» они попадут в этот проект.\n\nПригласить партнёра?',
+    'Голосом/текстом: «семья», «семейный», «общак» — операционные траты в этот проект.',
     { reply_markup: realityActionsKeyboard() }
   );
+
+  const partnerMsg = buildPartnerPlanMessage(finisher, reality, isMonthly);
+  await notifyPartners(bot, projectId, userId, partnerMsg, partnerPlanReviewKeyboard(), true);
 }
 
 async function showMonthReality(chatId, userId) {
-  const project = await getFamilyProjectOrReply(chatId, userId);
-  if (!project) return;
+  const project = await familyProjectService.findFamilyProjectForUser(userId);
   const bot = getBot();
+  if (!project) {
+    await bot.sendMessage(chatId, 'Семейный бюджет не создан.');
+    return;
+  }
+  if (!project.onboarding_completed) {
+    await bot.sendMessage(chatId, 'Сначала кто-то из пары должен завершить опросник.');
+    await startOnboarding(chatId, userId, project);
+    return;
+  }
   const reality = await getMonthReality(project);
   await bot.sendMessage(chatId, formatMonthRealityMessage(reality), {
     parse_mode: 'Markdown',
@@ -140,9 +377,16 @@ async function showListsMenu(chatId) {
 }
 
 async function showList(chatId, userId, listType) {
-  const project = await getFamilyProjectOrReply(chatId, userId);
-  if (!project) return;
+  const project = await familyProjectService.findFamilyProjectForUser(userId);
   const bot = getBot();
+  if (!project) {
+    await bot.sendMessage(chatId, 'Семейный бюджет не создан.');
+    return;
+  }
+  if (!project.onboarding_completed) {
+    await bot.sendMessage(chatId, 'Списки появятся после первого заполненного опросника.');
+    return;
+  }
   const currency = project.budget_currency || 'RUB';
   const now = new Date();
   let lines = [];
@@ -299,7 +543,7 @@ async function handleOnboardingInput(msg, data) {
   }
   if (step === 'debt_ask') {
     if (/нет|no|-/i.test(text)) {
-      return finishOnboarding(chatId, user.id, projectId);
+      return finishOnboarding(chatId, user.id, projectId, data.isMonthly);
     }
     data.step = 'debt_amount';
     data.draft = { description: text };
@@ -313,7 +557,7 @@ async function handleOnboardingInput(msg, data) {
       { project_id: projectId, description: data.draft.description, amount },
       user.id
     );
-    return finishOnboarding(chatId, user.id, projectId);
+    return finishOnboarding(chatId, user.id, projectId, data.isMonthly);
   }
 }
 
@@ -363,16 +607,29 @@ async function handleListInput(msg, data) {
     return showList(chatId, user.id, listType);
   }
 
-  if (data.editField === 'amount') {
+  const field = data.editField;
+  if (field === 'amount') {
     const amount = parseAmount(text);
-    const updates = listType === 'debts' ? { amount } : { amount };
-    if (listType === 'debts') {
-      await debtService.update(itemId, updates, user.id, projectId);
-    } else {
-      await svc.update(itemId, updates, user.id, projectId);
-    }
+    if (!amount) return bot.sendMessage(chatId, 'Введите сумму.');
+    const updates = { amount };
+    await svc.update(itemId, updates, user.id, projectId);
     stateManager.clearState(chatId);
-    await notifyPartners(bot, projectId, user.id, `✏️ ${partnerLabel(user)} изменил(а) запись в списке`);
+    await notifyPartners(bot, projectId, user.id, `✏️ ${partnerLabel(user)} изменил(а) сумму в плане`);
+    return showList(chatId, user.id, listType);
+  }
+  if (field === 'title') {
+    const updates = listType === 'debts' ? { description: text } : { title: text };
+    await svc.update(itemId, updates, user.id, projectId);
+    stateManager.clearState(chatId);
+    await notifyPartners(bot, projectId, user.id, `✏️ ${partnerLabel(user)} изменил(а) название в плане`);
+    return showList(chatId, user.id, listType);
+  }
+  if (field === 'day') {
+    const day = parseDay(text);
+    if (!day) return bot.sendMessage(chatId, 'День 1–31.');
+    await svc.update(itemId, { day_of_month: day }, user.id, projectId);
+    stateManager.clearState(chatId);
+    await notifyPartners(bot, projectId, user.id, `✏️ ${partnerLabel(user)} изменил(а) дату в плане`);
     return showList(chatId, user.id, listType);
   }
 }
@@ -423,8 +680,11 @@ async function handleFamilyCallback(callbackQuery) {
 
   if (data.startsWith('fb:add:')) {
     const listType = data.split(':')[2];
-    const project = await getFamilyProjectOrReply(chatId, user.id);
-    if (!project) return true;
+    const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project?.onboarding_completed) {
+      await bot.sendMessage(chatId, 'Сначала кто-то из пары должен заполнить опросник.');
+      return true;
+    }
     stateManager.setState(chatId, STATE_TYPES.FB_LIST_ADD, {
       listType,
       projectId: project.id,
@@ -469,31 +729,57 @@ async function handleFamilyCallback(callbackQuery) {
   }
 
   if (data === 'fb:float:add') {
-    const project = await getFamilyProjectOrReply(chatId, user.id);
-    if (!project) return true;
+    const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project?.onboarding_completed) {
+      await bot.sendMessage(chatId, 'Сначала заполните семейный план.');
+      return true;
+    }
     stateManager.setState(chatId, STATE_TYPES.FB_FLOATING_AMOUNT, { projectId: project.id }, 15);
     await bot.sendMessage(chatId, 'Сумма плавающего дохода (разовый, за этот месяц):');
     return true;
   }
 
   if (data === 'fb:debt:topup') {
-    const project = await getFamilyProjectOrReply(chatId, user.id);
-    if (!project) return true;
+    const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project?.onboarding_completed) {
+      await bot.sendMessage(chatId, 'Сначала заполните семейный план.');
+      return true;
+    }
     stateManager.setState(chatId, STATE_TYPES.FB_DEBT_TOPUP, { projectId: project.id }, 15);
     await bot.sendMessage(chatId, 'На сколько пополнить счётчик долга?');
     return true;
   }
 
   if (data === 'fb:invite') {
-    const project = await getFamilyProjectOrReply(chatId, user.id);
-    if (!project || project.user_role !== 'owner') {
-      await bot.sendMessage(chatId, 'Пригласить может владелец проекта через /team или ссылку.');
+    const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project) {
+      await bot.sendMessage(chatId, 'Сначала создайте семейный бюджет.');
       return true;
     }
-    const token = await projectMemberService.generateInviteLink(project.id, user.id);
-    const me = await bot.getMe();
-    const link = `https://t.me/${me.username}?start=${token}`;
-    await bot.sendMessage(chatId, `👫 Ссылка для партнёра (7 дней):\n${link}`);
+    await sendFamilyInviteLink(chatId, user, project);
+    return true;
+  }
+
+  if (data === 'fb:onb:start') {
+    const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project) {
+      await bot.sendMessage(chatId, 'Семейный бюджет не найден.');
+      return true;
+    }
+    const isMonthly = project.onboarding_completed;
+    await startOnboarding(chatId, user.id, project, isMonthly);
+    return true;
+  }
+
+  if (data === 'fb:month:done') {
+    const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project) return true;
+    await familyMemberStateService.markOnboardingDone(project.id, user.id);
+    const finisher = user;
+    const reality = await getMonthReality(project);
+    await bot.sendMessage(chatId, `✅ План на ${currentPlanMonth()} отмечен как готовый.`);
+    const partnerMsg = buildPartnerPlanMessage(finisher, reality, true);
+    await notifyPartners(bot, project.id, user.id, partnerMsg, partnerPlanReviewKeyboard(), true);
     return true;
   }
 
@@ -525,7 +811,7 @@ async function handleFamilyCallback(callbackQuery) {
           reply_markup: onboardingSkipKeyboard('debts')
         });
       } else if (section === 'debts') {
-        await finishOnboarding(chatId, user.id, projectId);
+        await finishOnboarding(chatId, user.id, projectId, st.data.isMonthly);
       }
     }
     if (action === 'more' && section === 'payments') {
@@ -536,16 +822,30 @@ async function handleFamilyCallback(callbackQuery) {
     return true;
   }
 
-  if (data.startsWith('fb:edit:')) {
+  if (data.startsWith('fb:editpick:')) {
     const [, , listType, itemId] = data.split(':');
+    await bot.sendMessage(chatId, 'Что изменить?', {
+      reply_markup: editFieldKeyboard(listType, itemId)
+    });
+    return true;
+  }
+
+  if (data.startsWith('fb:editf:')) {
+    const [, , listType, itemId, field] = data.split(':');
     const project = await familyProjectService.findFamilyProjectForUser(user.id);
+    if (!project) return true;
+    const prompts = {
+      amount: 'Новая сумма?',
+      title: listType === 'debts' ? 'Новое описание долга?' : 'Новое название?',
+      day: 'Новый день месяца (1–31)?'
+    };
     stateManager.setState(chatId, STATE_TYPES.FB_LIST_EDIT, {
       listType,
       projectId: project.id,
       itemId,
-      editField: 'amount'
+      editField: field
     }, 20);
-    await bot.sendMessage(chatId, 'Новая сумма?');
+    await bot.sendMessage(chatId, prompts[field] || 'Введите значение:');
     return true;
   }
 
@@ -573,6 +873,9 @@ module.exports = {
   showLumikUpdateIfNeeded,
   startCreateFamilyBudget,
   showMonthReality,
+  sendPartnerWelcomeAfterJoin,
+  sendFamilyInviteLink,
+  promptMonthlyReviewIfNeeded,
   handleFamilyText,
   handleFamilyCallback,
   handleFamilyMenuText,

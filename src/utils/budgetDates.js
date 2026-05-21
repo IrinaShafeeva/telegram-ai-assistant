@@ -2,6 +2,21 @@
  * Calendar helpers for family budget (local dates, day-of-month rules).
  */
 
+const MONTH_NAMES_RU = [
+  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'
+];
+
+function currentPlanMonth(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatPlanMonthLabel(planMonth) {
+  const [year, mm] = (planMonth || currentPlanMonth()).split('-');
+  const name = MONTH_NAMES_RU[parseInt(mm, 10) - 1] || mm;
+  return `${name} ${year}`;
+}
+
 function clampDayOfMonth(year, month, day) {
   const lastDay = new Date(year, month, 0).getDate();
   return Math.min(day, lastDay);
@@ -108,6 +123,8 @@ function getLocalDateString(date, timezone) {
 }
 
 module.exports = {
+  currentPlanMonth,
+  formatPlanMonthLabel,
   clampDayOfMonth,
   nextOccurrence,
   daysBetween,

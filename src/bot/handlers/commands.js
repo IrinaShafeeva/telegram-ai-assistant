@@ -6,8 +6,7 @@ const { SUPPORTED_CURRENCIES, SUBSCRIPTION_LIMITS } = require('../../config/cons
 const { getBot } = require('../../utils/bot');
 const { stateManager } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
-const { showLumikUpdateIfNeeded, userHasFamilyMenu } = require('./familyBudget');
-const { formatMonthRealityMessage, getMonthReality } = require('../../services/monthReality');
+const { showLumikUpdateIfNeeded, userHasFamilyMenu, sendPartnerWelcomeAfterJoin } = require('./familyBudget');
 
 // Admin user IDs
 const ADMIN_IDS = [
@@ -44,14 +43,7 @@ async function handleStart(msg, match) {
         const project = await projectMemberService.joinByInvite(inviteToken, user.id);
 
         if (project.is_family_budget) {
-          const full = await projectService.findById(project.id);
-          const reality = await getMonthReality(full);
-          const hasFamily = true;
-          await bot.sendMessage(chatId,
-            `✅ Вы в семейном бюджете «${project.name}»!\n\n` +
-            formatMonthRealityMessage(reality),
-            { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard(hasFamily) }
-          );
+          await sendPartnerWelcomeAfterJoin(chatId, user, project);
         } else {
           await bot.sendMessage(chatId,
             `✅ Вы успешно присоединились к проекту "${project.name}"!\n\n` +
