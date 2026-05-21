@@ -74,14 +74,16 @@ class UserContextService {
 
       // Возвращаем все проекты с подготовленными keywords (ИИ сам выберет нужный)
       return (projects || [])
-        .map(proj => ({
-          id: proj.id,
-          name: proj.name,
-          keywords:
+        .map(proj => {
+          let keywords =
             proj.keywords && typeof proj.keywords === 'string' && proj.keywords.trim().length > 0
               ? proj.keywords
-              : (proj.name || '').toLowerCase()
-        }));
+              : (proj.name || '').toLowerCase();
+          if (proj.is_family_budget) {
+            keywords += ', продукты, еда, магазин, покупки, хозяйство, коммуналка, квартира, аренда, транспорт, дети, бытовые';
+          }
+          return { id: proj.id, name: proj.name, keywords };
+        });
     } catch (error) {
       logger.error('Error in getUserProjects:', error);
       return [];

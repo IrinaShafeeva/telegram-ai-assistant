@@ -865,6 +865,10 @@ async function handleFamilyMenuText(msg) {
     await showListsMenu(chatId);
     return true;
   }
+  if (text === '👨‍👩‍👧 Семейный бюджет') {
+    await startCreateFamilyBudget(chatId, user);
+    return true;
+  }
   return false;
 }
 

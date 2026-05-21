@@ -27,6 +27,7 @@ const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 const channelCheckService = require('../../services/channelCheck');
 const { handleFamilyCallback } = require('./familyBudget');
+const { notifyPartners, partnerLabel } = require('../../services/familyBudget');
 
 async function handleCallback(callbackQuery) {
   const chatId = callbackQuery.message.chat.id;
@@ -340,6 +341,14 @@ async function handleSaveExpense(chatId, messageId, data, user) {
 
     // Get project name for confirmation
     const project = await projectService.findById(expenseData.project_id);
+
+    // Notify family budget partner about the expense
+    if (project.is_family_budget) {
+      await notifyPartners(
+        bot, project.id, user.id,
+        `💸 ${partnerLabel(user)} записал(а) расход: ${expenseData.description} — ${expenseData.amount} ${expenseData.currency}`
+      );
+    }
 
     // Try to add to Google Sheets only if project has google_sheet_id
     let sheetsSuccess = false;
@@ -2139,6 +2148,14 @@ async function handleSaveIncome(chatId, messageId, data, user) {
 
     // Get project name for confirmation
     const project = await projectService.findById(incomeData.project_id);
+
+    // Notify family budget partner about the income
+    if (project.is_family_budget) {
+      await notifyPartners(
+        bot, project.id, user.id,
+        `💰 ${partnerLabel(user)} записал(а) доход: ${incomeData.description} — +${incomeData.amount} ${incomeData.currency}`
+      );
+    }
 
     // Try to add to Google Sheets only if project has google_sheet_id
     let sheetsSuccess = false;
