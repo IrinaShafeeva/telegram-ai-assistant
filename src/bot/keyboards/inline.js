@@ -1,16 +1,12 @@
 const { DEFAULT_CATEGORIES, INCOME_CATEGORIES } = require('../../config/constants');
 
-function getExpenseConfirmationKeyboard(expenseId, isPremium = false) {
+function getExpenseConfirmationKeyboard(expenseId) {
   const keyboard = [
     [
-      { text: '✏️ Категория', callback_data: `edit_category:${expenseId}` }
+      { text: '✏️ Категория', callback_data: `edit_category:${expenseId}` },
+      { text: '📋 Проект', callback_data: `edit_project:${expenseId}` }
     ]
   ];
-
-  // Add project editing for PRO users on the same row as category
-  if (isPremium) {
-    keyboard[0].push({ text: '📋 Проект', callback_data: `edit_project:${expenseId}` });
-  }
 
   // Add amount, currency, description row
   keyboard.push([
@@ -28,17 +24,13 @@ function getExpenseConfirmationKeyboard(expenseId, isPremium = false) {
   return { inline_keyboard: keyboard };
 }
 
-function getIncomeConfirmationKeyboard(incomeId, isPremium = false) {
+function getIncomeConfirmationKeyboard(incomeId) {
   const keyboard = [
     [
-      { text: '✏️ Категория', callback_data: `edit_income_category:${incomeId}` }
+      { text: '✏️ Категория', callback_data: `edit_income_category:${incomeId}` },
+      { text: '📋 Проект', callback_data: `edit_income_project:${incomeId}` }
     ]
   ];
-
-  // Add project editing for PRO users on the same row as category
-  if (isPremium) {
-    keyboard[0].push({ text: '📋 Проект', callback_data: `edit_income_project:${incomeId}` });
-  }
 
   // Add amount, currency, description row
   keyboard.push([
@@ -77,7 +69,6 @@ function getCategorySelectionKeyboard(expenseId, customCategories = []) {
     keyboard.push(row);
   }
   
-  // Add "Custom category" button for PRO users
   keyboard.push([{ 
     text: '➕ Своя категория', 
     callback_data: `custom_category:${expenseId}` 
@@ -172,7 +163,7 @@ function getAmountSelectionKeyboard(expenseId) {
   };
 }
 
-function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = false) {
+function getProjectSelectionKeyboard(projects, action = 'switch') {
   const keyboard = [];
   
   if (action === 'manage') {
@@ -218,8 +209,7 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
     });
   }
   
-  // Add "New project" button for PRO users or if no projects exist
-  if ((action === 'switch' || action === 'manage') && (isPremium || projects.length === 0)) {
+  if (action === 'switch' || action === 'manage') {
     keyboard.push([{ 
       text: '➕ Новый проект', 
       callback_data: 'create_project' 
@@ -230,37 +220,15 @@ function getProjectSelectionKeyboard(projects, action = 'switch', isPremium = fa
 }
 
 
-function getSettingsKeyboard(isPremium = false) {
+function getSettingsKeyboard() {
   const keyboard = [
-    [{ text: '💱 Валюта', callback_data: 'settings:currency' }]
+    [{ text: '💱 Валюта', callback_data: 'settings:currency' }],
+    [{ text: '📂 Мои категории', callback_data: 'settings:categories' }]
   ];
-  
-  if (isPremium) {
-    keyboard.push([{ text: '📂 Мои категории', callback_data: 'settings:categories' }]);
-  } else {
-    keyboard.push([{ text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }]);
-  }
-  
-  // Add clear data button for all users
+
   keyboard.push([{ text: '🗑️ Очистить все данные', callback_data: 'settings:clear_data' }]);
   
   return { inline_keyboard: keyboard };
-}
-
-function getUpgradeKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: '💎 Подписаться через Tribute', callback_data: 'upgrade:tribute' }
-      ],
-      [
-        { text: '📋 Сравнить планы', callback_data: 'upgrade:compare' }
-      ],
-      [
-        { text: '❓ Вопросы', callback_data: 'upgrade:faq' }
-      ]
-    ]
-  };
 }
 
 function getConfirmationKeyboard(action, itemId) {
@@ -473,7 +441,6 @@ module.exports = {
   getProjectSelectionKeyboardForExpense,
   getProjectSelectionForTransactionKeyboard,
   getSettingsKeyboard,
-  getUpgradeKeyboard,
   getConfirmationKeyboard,
   getPaginationKeyboard,
   getExportFormatKeyboard,

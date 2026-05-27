@@ -20,25 +20,6 @@ const INCOME_CATEGORIES = [
 
 const SUPPORTED_CURRENCIES = ['RUB', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'KZT', 'UAH'];
 
-const SUBSCRIPTION_LIMITS = {
-  FREE: {
-    projects: 1,
-    expenses_per_month: 100,
-    ai_questions_per_day: 5,
-    syncs_per_day: 1,
-    custom_categories: false,
-    collaborative_projects: false
-  },
-  PRO: {
-    projects: -1, // unlimited
-    expenses_per_month: -1, // unlimited
-    ai_questions_per_day: 20,
-    syncs_per_day: 10,
-    custom_categories: true,
-    collaborative_projects: true
-  }
-};
-
 const EXPENSE_PARSING_PROMPT = `
 Проанализируй сообщение пользователя о трате и извлеки информацию.
 
@@ -96,19 +77,13 @@ const PLANNED_INCOME_CATEGORIES = [
 
 const BOT_COMMANDS = [
   { command: 'start', description: 'Начать работу с ботом' },
-  { command: 'help', description: 'Справка по командам' },
-  { command: 'connect', description: 'Подключить Google таблицу' },
-  { command: 'sync', description: 'Синхронизация с Google Sheets' },
-  { command: 'categories', description: 'Свои категории (PRO)' },
-  { command: 'team', description: 'Командная работа (PRO)' },
-  { command: 'upgrade', description: 'Информация о PRO плане' }
+  { command: 'help', description: 'Справка по возможностям' }
 ];
 
 module.exports = {
   DEFAULT_CATEGORIES,
   INCOME_CATEGORIES,
   SUPPORTED_CURRENCIES,
-  SUBSCRIPTION_LIMITS,
   EXPENSE_PARSING_PROMPT,
   ANALYTICS_PROMPT,
   BOT_COMMANDS,

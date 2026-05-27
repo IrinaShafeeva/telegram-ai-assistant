@@ -1,5 +1,5 @@
 const { supabase, userService } = require('./supabase');
-const { familyProjectService, familyMemberStateService, currentPlanMonth } = require('./familyBudget');
+const { familyProjectService, familyMemberStateService } = require('./familyBudget');
 const { generateDailyInsightText } = require('./dailyInsight');
 const { getLocalHour, getLocalDateString, currentPlanMonth, formatPlanMonthLabel } = require('../utils/budgetDates');
 const { monthlyReviewKeyboard } = require('../bot/keyboards/familyBudget');

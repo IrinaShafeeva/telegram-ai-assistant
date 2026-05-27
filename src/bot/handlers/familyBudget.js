@@ -645,9 +645,12 @@ async function handleFamilyCallback(callbackQuery) {
   await bot.answerCallbackQuery(callbackQuery.id);
 
   if (data === 'fb:update:later') {
-    await bot.editMessageText('Хорошо! Всё работает как раньше. Семейный бюджет можно создать в любой момент через /start.', {
+    await bot.editMessageText('Хорошо! Всё работает как раньше. Когда будете готовы, нажмите кнопку «Семейный бюджет» в меню ниже.', {
       chat_id: chatId,
       message_id: callbackQuery.message.message_id
+    });
+    await bot.sendMessage(chatId, 'Кнопка для создания семейного бюджета теперь в главном меню.', {
+      reply_markup: getMainMenuKeyboard(false)
     });
     return true;
   }

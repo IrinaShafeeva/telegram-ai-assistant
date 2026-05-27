@@ -1,9 +1,9 @@
-const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService } = require('../../services/supabase');
+const { userService, projectService, projectSheetService, projectMemberService, expenseService, customCategoryService, incomeService } = require('../../services/supabase');
 const openaiService = require('../../services/openai');
 const googleSheetsService = require('../../services/googleSheets');
 const analyticsService = require('../../services/analytics');
 const userContextService = require('../../services/userContext');
-const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard, getUpgradeKeyboard } = require('../keyboards/inline');
+const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
 const { getMainMenuKeyboard, getCurrencyKeyboard } = require('../keyboards/reply');
 const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
@@ -102,10 +102,6 @@ async function handleText(msg) {
     if (text === '⚙️ Настройки') {
       stateManager.clearState(chatId);
       return require('./commands').handleSettings(msg);
-    }
-    if (text === '💎 PRO план') {
-      stateManager.clearState(chatId);
-      return require('./commands').handleUpgrade(msg);
     }
     if (text === 'ℹ️ Помощь') {
       stateManager.clearState(chatId);
@@ -292,7 +288,7 @@ async function handleExpenseText(msg) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: processingMessage.message_id,
-        reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+        reply_markup: getIncomeConfirmationKeyboard(tempId)
       });
 
       // Auto-expire temp income after 5 minutes
@@ -330,7 +326,7 @@ async function handleExpenseText(msg) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: processingMessage.message_id,
-        reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+        reply_markup: getExpenseConfirmationKeyboard(tempId)
       });
 
       // Auto-expire temp expense after 5 minutes
@@ -498,6 +494,10 @@ async function handleStateInput(msg, userState) {
         await handleInviteUsernameInput(msg, userState);
         break;
 
+      case STATE_TYPES.WAITING_MEMBER_GOOGLE_EMAIL:
+        await handleMemberGoogleEmailInput(msg, userState);
+        break;
+
       case STATE_TYPES.WAITING_MEMBER_PROJECT_KEYWORDS:
         await handleMemberProjectKeywordsInput(msg, userState);
         break;
@@ -556,7 +556,7 @@ async function handleDescriptionInput(msg, userState) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getExpenseConfirmationKeyboard(tempId, msg.user.is_premium)
+      reply_markup: getExpenseConfirmationKeyboard(tempId)
     });
   } else {
     await bot.sendMessage(chatId, '❌ Данные расхода устарели.');
@@ -603,7 +603,7 @@ async function handleCustomAmountInput(msg, userState) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getExpenseConfirmationKeyboard(tempId, msg.user.is_premium)
+      reply_markup: getExpenseConfirmationKeyboard(tempId)
     });
   } else {
     await bot.sendMessage(chatId, '❌ Данные расхода устарели.');
@@ -673,7 +673,7 @@ async function handleCustomCategoryInput(msg, userState) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+        reply_markup: getExpenseConfirmationKeyboard(tempId)
       });
     } else {
       await bot.sendMessage(chatId, `✅ Категория "${emoji} ${name}" создана!\n\n❌ Данные расхода устарели.`);
@@ -863,12 +863,18 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
       return;
     }
 
+    if (project.owner_id !== user.id) {
+      await bot.sendMessage(chatId, '❌ Только владелец проекта может подключать Google таблицу.');
+      stateManager.clearState(chatId);
+      return;
+    }
+
     // Validate access to the sheet BEFORE saving
     const connectResult = await googleSheetsService.connectToUserSheet(sheetId, user.email);
     if (!connectResult.success) {
       const serviceEmail = googleSheetsService.getServiceAccountEmail();
       const hint = serviceEmail
-        ? `\n\n📋 Добавьте ${serviceEmail} как «Редактор» в настройках доступа к ВАШЕЙ таблице.\n\n⚠️ У каждого пользователя своя таблица — в каждой нужно добавить этот email.`
+        ? `\n\n📋 Добавьте ${serviceEmail} как «Редактор» в настройках доступа к таблице проекта.`
         : '';
       logger.warn(`Google Sheets connect failed for user ${user.id}, sheet ${sheetId}: ${connectResult.error}`);
       await bot.sendMessage(chatId,
@@ -878,9 +884,19 @@ async function handleGoogleSheetsLinkInput(msg, userState) {
       return;
     }
 
-    // Update project with Google Sheets ID
-    await projectService.update(selectedProjectId, {
-      google_sheet_id: sheetId
+    const healthResult = await googleSheetsService.checkProjectSheet(sheetId, project.name);
+    if (!healthResult.success) {
+      await bot.sendMessage(chatId, `❌ Таблица открывается, но её не удалось подготовить для проекта: ${healthResult.error}`);
+      stateManager.clearState(chatId);
+      return;
+    }
+
+    // Save the connection in the new project_sheets model and keep legacy project fields in sync.
+    await projectSheetService.upsertConnection(selectedProjectId, {
+      google_sheet_id: sheetId,
+      google_sheet_url: connectResult.sheetUrl,
+      connected_by_user_id: user.id,
+      status: 'active'
     });
 
     // Connect to the selected project
@@ -903,12 +919,6 @@ async function handleCategoryNameInput(msg, userState) {
   const bot = getBot();
   const user = msg.user;
   const { messageId } = userState.data;
-
-  if (!user.is_premium) {
-    await bot.sendMessage(chatId, '💎 Создание кастомных категорий доступно только в PRO плане!');
-    stateManager.clearState(chatId);
-    return;
-  }
 
   if (text.length > 50) {
     await bot.sendMessage(chatId, '❌ Название категории слишком длинное (максимум 50 символов).');
@@ -967,12 +977,6 @@ async function handleCategoryEmojiInput(msg, userState) {
   const user = msg.user;
   const { messageId, categoryName } = userState.data;
 
-  if (!user.is_premium) {
-    await bot.sendMessage(chatId, '💎 Создание кастомных категорий доступно только в PRO плане!');
-    stateManager.clearState(chatId);
-    return;
-  }
-
   // Validate emoji (allow skipping with "-" or default emoji for long text)
   let emoji = text;
   if (text === '-' || text.length > 2) {
@@ -1010,12 +1014,6 @@ async function handleCategoryNameEditInput(msg, userState) {
   const bot = getBot();
   const user = msg.user;
   const { messageId, categoryId, currentName } = userState.data;
-
-  if (!user.is_premium) {
-    await bot.sendMessage(chatId, '💎 Редактирование кастомных категорий доступно только в PRO плане!');
-    stateManager.clearState(chatId);
-    return;
-  }
 
   if (text.length > 50) {
     await bot.sendMessage(chatId, '❌ Название категории слишком длинное (максимум 50 символов).');
@@ -1068,12 +1066,6 @@ async function handleCategoryEmojiEditInput(msg, userState) {
   const bot = getBot();
   const user = msg.user;
   const { messageId, categoryId, currentEmoji } = userState.data;
-
-  if (!user.is_premium) {
-    await bot.sendMessage(chatId, '💎 Редактирование кастомных категорий доступно только в PRO плане!');
-    stateManager.clearState(chatId);
-    return;
-  }
 
   // Validate emoji (should be 1-2 characters for emoji)
   if (text.length > 2) {
@@ -1363,7 +1355,7 @@ async function handleIncomeAmountEdit(msg, userState) {
 Всё верно?`;
 
     await bot.sendMessage(chatId, confirmationText, {
-      reply_markup: getIncomeConfirmationKeyboard(tempId, msg.user.is_premium)
+      reply_markup: getIncomeConfirmationKeyboard(tempId)
     });
 
   } catch (error) {
@@ -1408,7 +1400,7 @@ async function handleIncomeDescriptionEdit(msg, userState) {
 Всё верно?`;
 
     await bot.sendMessage(chatId, confirmationText, {
-      reply_markup: getIncomeConfirmationKeyboard(tempId, msg.user.is_premium)
+      reply_markup: getIncomeConfirmationKeyboard(tempId)
     });
 
   } catch (error) {
@@ -1724,18 +1716,6 @@ async function handleSyncCommand(msg) {
       return;
     }
 
-    // Check daily sync limit for users without unlimited access
-    const hasUnlimited = await userService.hasUnlimitedAccess(user.id);
-    if (!hasUnlimited) {
-      const syncLimit = 3; // Free users get 3 syncs per day
-      if (user.daily_syncs_used >= syncLimit) {
-        await bot.sendMessage(chatId,
-          `📊 Лимит синхронизаций исчерпан (${syncLimit}/день)\n\n💎 PRO план: неограниченные синхронизации`
-        );
-        return;
-      }
-    }
-
     // Create keyboard with projects
     const keyboard = projectsWithSheets.map(project => ([{
       text: `📊 ${project.name}${project.is_active ? ' ✅' : ''}`,
@@ -1750,8 +1730,7 @@ async function handleSyncCommand(msg) {
     await bot.sendMessage(chatId,
       `📊 Синхронизация с Google Sheets\n\n` +
       `Выберите проект для синхронизации:\n` +
-      `(данные будут загружены из Google таблицы в бот)\n\n` +
-      `💎 Лимит: ${user.is_premium ? '∞' : `${user.daily_syncs_used || 0}/3`}`,
+      `(данные будут загружены из Google таблицы в бот)`,
       {
         reply_markup: { inline_keyboard: keyboard }
       }
@@ -2011,7 +1990,7 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
 Всё верно?`;
 
         await bot.sendMessage(chatId, confirmationText, {
-          reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+          reply_markup: getIncomeConfirmationKeyboard(tempId)
         });
 
         // Auto-expire after 5 minutes
@@ -2045,7 +2024,7 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
 Всё верно?`;
 
         await bot.sendMessage(chatId, confirmationText, {
-          reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+          reply_markup: getExpenseConfirmationKeyboard(tempId)
         });
 
         // Auto-expire after 5 minutes
@@ -2069,21 +2048,39 @@ async function handleInviteUsernameInput(msg, userState) {
 
   let targetUserId = null;
   let username = null;
+  let displayName = null;
 
-  // Check if this is a forwarded message
   if (msg.forward_from) {
     targetUserId = msg.forward_from.id;
     username = msg.forward_from.username || msg.forward_from.first_name;
+    displayName = msg.forward_from.username ? `@${msg.forward_from.username}` : msg.forward_from.first_name;
     logger.info(`Invite via forward: user ${targetUserId}, username: ${username}`);
+  } else if (msg.forward_origin?.type === 'user' && msg.forward_origin.sender_user) {
+    const forwardedUser = msg.forward_origin.sender_user;
+    targetUserId = forwardedUser.id;
+    username = forwardedUser.username || forwardedUser.first_name;
+    displayName = forwardedUser.username ? `@${forwardedUser.username}` : forwardedUser.first_name;
+    logger.info(`Invite via forward_origin: user ${targetUserId}, username: ${username}`);
+  } else if (msg.forward_origin?.type === 'hidden_user') {
+    await bot.sendMessage(
+      chatId,
+      '❌ Telegram скрыл отправителя форварда.\n\nПопросите пользователя написать боту /start и пришлите его @username, или нажмите «Создать ссылку-приглашение».'
+    );
+    return;
   }
-  // Check if message contains user mention
-  else if (msg.entities && msg.entities.some(e => e.type === 'mention')) {
+  else if (msg.entities && msg.entities.some(e => e.type === 'text_mention')) {
+    const mentionEntity = msg.entities.find(e => e.type === 'text_mention');
+    targetUserId = mentionEntity.user.id;
+    username = mentionEntity.user.username || mentionEntity.user.first_name;
+    displayName = mentionEntity.user.username ? `@${mentionEntity.user.username}` : mentionEntity.user.first_name;
+  } else if (msg.entities && msg.entities.some(e => e.type === 'mention')) {
     const mentionEntity = msg.entities.find(e => e.type === 'mention');
     username = msg.text.substring(mentionEntity.offset + 1, mentionEntity.offset + mentionEntity.length);
+    displayName = `@${username}`;
   }
-  // Regular username input
   else if (msg.text) {
     username = msg.text.trim().replace('@', ''); // Remove @ if user includes it
+    displayName = `@${username}`;
 
     if (username.length < 3 || username.length > 32) {
       await bot.sendMessage(chatId, '❌ Username должен быть от 3 до 32 символов!');
@@ -2094,6 +2091,11 @@ async function handleInviteUsernameInput(msg, userState) {
       await bot.sendMessage(chatId, '❌ Username может содержать только буквы, цифры и подчеркивания!');
       return;
     }
+  }
+
+  if (!targetUserId && !username) {
+    await bot.sendMessage(chatId, '❌ Не удалось определить пользователя. Пришлите @username или создайте ссылку-приглашение.');
+    return;
   }
 
   try {
@@ -2108,11 +2110,12 @@ async function handleInviteUsernameInput(msg, userState) {
 
     stateManager.clearState(chatId);
 
-    let ownerMessage = `✅ Пользователь @${username} приглашен в проект "${result.project.name}"!\n\n`;
+    const invitedLabel = displayName || (result.user.username ? `@${result.user.username}` : result.user.first_name || 'пользователь');
+    let ownerMessage = `✅ Пользователь ${invitedLabel} приглашен в проект "${result.project.name}"!\n\n`;
 
     if (result.project.google_sheet_id) {
       const sheetsUrl = `https://docs.google.com/spreadsheets/d/${result.project.google_sheet_id}/edit`;
-      ownerMessage += `📊 ВАЖНО: Предоставьте @${username} доступ к Google таблице:\n\n` +
+      ownerMessage += `📊 ВАЖНО: Предоставьте ${invitedLabel} доступ к Google таблице:\n\n` +
         `1️⃣ Откройте таблицу: ${sheetsUrl}\n` +
         `2️⃣ Нажмите "Настройки доступа" (справа вверху)\n` +
         `3️⃣ Добавьте email пользователя или сделайте "доступно всем по ссылке"\n` +
@@ -2134,15 +2137,16 @@ async function handleInviteUsernameInput(msg, userState) {
 
     // Notify the invited user with Google Sheets link and keyword setup
     try {
+      const inviterLabel = msg.user.username ? `@${msg.user.username}` : (msg.user.first_name || 'владелец проекта');
       let notificationMessage = `🎉 Вас пригласили в командный проект!\n\n` +
         `📁 Проект: "${result.project.name}"\n` +
-        `👤 Пригласил: @${msg.user.username || msg.user.first_name}\n\n`;
+        `👤 Пригласил: ${inviterLabel}\n\n`;
 
       // Add Google Sheets link if available
       if (result.project.google_sheet_id) {
         const sheetsUrl = `https://docs.google.com/spreadsheets/d/${result.project.google_sheet_id}/edit`;
         notificationMessage += `📊 Google таблица: ${sheetsUrl}\n\n` +
-          `⚠️ Обратитесь к @${msg.user.username || msg.user.first_name} за доступом к таблице!\n\n`;
+          `⚠️ Обратитесь к ${inviterLabel} за доступом к таблице!\n\n`;
       }
 
       notificationMessage += `🔍 Настройте ключевые слова для проекта, чтобы AI автоматически определял ваши транзакции:\n\n` +
@@ -2172,6 +2176,83 @@ async function handleInviteUsernameInput(msg, userState) {
         inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'invite_member' }]]
       }
     });
+  }
+}
+
+async function handleMemberGoogleEmailInput(msg, userState) {
+  const chatId = msg.chat.id;
+  const email = msg.text.trim();
+  const bot = getBot();
+  const { projectId, memberUserId, messageId } = userState.data;
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    await bot.sendMessage(chatId, '❌ Неверный формат email. Отправьте Google email, например name@gmail.com');
+    return;
+  }
+
+  try {
+    const project = await projectService.findById(projectId);
+    if (!project || project.owner_id !== msg.user.id) {
+      await bot.sendMessage(chatId, '❌ Только владелец проекта может добавлять email участников.');
+      stateManager.clearState(chatId);
+      return;
+    }
+
+    const member = await userService.findById(memberUserId);
+    if (!member) {
+      await bot.sendMessage(chatId, '❌ Участник не найден.');
+      stateManager.clearState(chatId);
+      return;
+    }
+
+    const access = await projectService.hasAccess(projectId, memberUserId);
+    if (!access.access || access.role === 'owner') {
+      await bot.sendMessage(chatId, '❌ Этот пользователь не является участником проекта.');
+      stateManager.clearState(chatId);
+      return;
+    }
+
+    await userService.update(memberUserId, { email });
+
+    const sheet = await projectSheetService.findActiveByProject(projectId);
+    if (!sheet?.google_sheet_id) {
+      await bot.sendMessage(chatId, `✅ Email ${email} сохранён. Таблица проекта пока не подключена.`);
+      stateManager.clearState(chatId);
+      return;
+    }
+
+    const shareResult = await googleSheetsService.shareSheetWithUserDetailed(
+      sheet.google_sheet_id,
+      email,
+      member.first_name || member.username
+    );
+
+    await projectSheetService.upsertMemberAccess(
+      projectId,
+      memberUserId,
+      email,
+      shareResult.success ? 'shared' : 'failed',
+      shareResult.success ? null : shareResult.error
+    );
+
+    const text = shareResult.success
+      ? `✅ Email ${email} сохранён, доступ к Google таблице выдан.`
+      : `✅ Email ${email} сохранён.\n\n⚠️ Доступ к таблице не выдан: ${shareResult.error}`;
+
+    await bot.editMessageText(text, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Назад к доступам', callback_data: `gss:${projectId}` }]]
+      }
+    });
+
+    stateManager.clearState(chatId);
+  } catch (error) {
+    logger.error('Member Google email input error:', error);
+    await bot.sendMessage(chatId, '❌ Не удалось сохранить email или выдать доступ. Попробуйте позже.');
+    stateManager.clearState(chatId);
   }
 }
 

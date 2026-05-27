@@ -1,4 +1,4 @@
-const { userService, projectService, projectMemberService, expenseService, customCategoryService, incomeService, transactionService, supabase } = require('../../services/supabase');
+const { userService, projectService, projectSheetService, projectMemberService, expenseService, customCategoryService, incomeService, transactionService, supabase } = require('../../services/supabase');
 const googleSheetsService = require('../../services/googleSheets');
 const analyticsService = require('../../services/analytics');
 // Import temp storage from messages handler
@@ -14,7 +14,6 @@ const {
   getExpenseConfirmationKeyboard,
   getProjectSelectionKeyboardForExpense,
   getProjectSelectionForTransactionKeyboard,
-  getUpgradeKeyboard,
   getExportFormatKeyboard,
   getExportPeriodKeyboard,
   getSettingsKeyboard,
@@ -25,7 +24,6 @@ const {
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
-const channelCheckService = require('../../services/channelCheck');
 const { handleFamilyCallback } = require('./familyBudget');
 const { notifyPartners, partnerLabel } = require('../../services/familyBudget');
 
@@ -187,8 +185,6 @@ async function handleCallback(callbackQuery) {
       await handleExportPeriod(chatId, messageId, data, user);
     } else if (data === 'confirm_clear_data') {
       await handleConfirmClearData(chatId, messageId, user);
-    } else if (data === 'check_pro_status') {
-      await handleCheckProStatus(chatId, messageId, user);
     } else if (data.startsWith('project_info:')) {
       await handleProjectInfo(chatId, messageId, data, user);
     } else if (data.startsWith('export_project:')) {
@@ -205,10 +201,22 @@ async function handleCallback(callbackQuery) {
       await handleCancelClearData(chatId, messageId, user);
     } else if (data.startsWith('sync_project:')) {
       await handleSyncProject(chatId, messageId, data, user);
+    } else if (data.startsWith('gs:')) {
+      await handleGoogleSheetsSettings(chatId, messageId, data, user);
+    } else if (data.startsWith('gsc:')) {
+      await handleSelectProjectForConnect(chatId, messageId, data.replace('gsc:', 'select_project_for_connect:'), user);
+    } else if (data.startsWith('gss:')) {
+      await handleShareSheetWithMembers(chatId, messageId, data, user);
+    } else if (data.startsWith('gsr:')) {
+      await handleRepairGoogleSheet(chatId, messageId, data, user);
+    } else if (data.startsWith('gsd:')) {
+      await handleDisconnectGoogleSheet(chatId, messageId, data, user);
+    } else if (data.startsWith('sme:')) {
+      await handleSetMemberGoogleEmail(chatId, messageId, data, user);
     } else if (data === 'cancel_sync') {
       await handleCancelSync(chatId, messageId);
     } else if (data.startsWith('connect_sheet_to_project:')) {
-      await handleConnectSheetToProject(chatId, messageId, data, user);
+      await handleSelectProjectForConnect(chatId, messageId, data, user);
     } else if (data === 'cancel_connect_sheet') {
       await handleCancelConnectSheet(chatId, messageId);
     } else if (data.startsWith('select_project_for_connect:')) {
@@ -229,8 +237,6 @@ async function handleCallback(callbackQuery) {
       return;
     } else if (data.startsWith('create_project')) {
       await handleCreateProject(chatId, user);
-    } else if (data.startsWith('upgrade:')) {
-      await handleUpgradeAction(chatId, messageId, data, user);
     } else if (data.startsWith('settings:')) {
       await handleSettingsAction(chatId, messageId, data, user);
     } else if (data.startsWith('switch_project:')) {
@@ -315,17 +321,14 @@ async function handleSaveExpense(chatId, messageId, data, user) {
   }
 
   try {
-    // Check monthly records limit for FREE users
+    // Keep the guard for older deployments that may still enforce limits.
     const canCreate = await userService.checkMonthlyRecordsLimit(user.id);
     if (!canCreate) {
       await bot.editMessageText(
-        `⛔ Лимит записей исчерпан (100 записей в месяц).\n\n💎 В PRO плане: неограниченные записи.`,
+        '⛔ Лимит записей исчерпан. Напишите в поддержку @loomiq_support.',
         {
           chat_id: chatId,
-          message_id: messageId,
-          reply_markup: { inline_keyboard: [[
-            { text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }
-          ]] }
+          message_id: messageId
         }
       );
       return;
@@ -457,14 +460,11 @@ async function handleEditCategory(chatId, messageId, data, user) {
   }
 
   try {
-    // Get user's custom categories if PRO
     let customCategories = [];
-    if (user.is_premium) {
-      try {
-        customCategories = await customCategoryService.findByUserId(user.id);
-      } catch (error) {
-        logger.error('Error loading custom categories:', error);
-      }
+    try {
+      customCategories = await customCategoryService.findByUserId(user.id);
+    } catch (error) {
+      logger.error('Error loading custom categories:', error);
     }
 
     await bot.editMessageText('📂 Выберите категорию:', {
@@ -488,19 +488,8 @@ async function handleEditProject(chatId, messageId, data, user) {
 
   const expenseData = tempExpenses.get(tempId);
   logger.info(`💾 Found expenseData: ${expenseData ? 'YES' : 'NO'}`);
-  logger.info(`👤 User is premium: ${user.is_premium}`);
 
   const bot = getBot();
-
-  if (!user.is_premium) {
-    logger.info(`🚫 User ${user.id} is not premium, showing premium message`);
-    await bot.editMessageText('💎 Проекты доступны только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_confirmation:${tempId}` }]] }
-    });
-    return;
-  }
 
   if (!expenseData) {
     logger.info(`❌ No expenseData found for tempId: ${tempId}`);
@@ -582,7 +571,7 @@ async function handleSetProject(chatId, messageId, data, user) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+      reply_markup: getExpenseConfirmationKeyboard(tempId)
     });
   } catch (error) {
     logger.error('Error setting project for expense:', error);
@@ -608,18 +597,15 @@ async function handleSetCategory(chatId, messageId, data, user) {
   }
 
   try {
-    logger.info(`Setting category for expense ${tempId}, categoryIndex: ${categoryIndex}, user.is_premium: ${user.is_premium}`);
-    
-    // Get available categories (same logic as in keyboard)
+    logger.info(`Setting category for expense ${tempId}, categoryIndex: ${categoryIndex}`);
+
     let customCategories = [];
-    if (user.is_premium) {
-      try {
-        customCategories = await customCategoryService.findByUserId(user.id);
-        logger.info(`Found ${customCategories.length} custom categories`);
-      } catch (customError) {
-        logger.error('Error getting custom categories:', customError);
-        customCategories = [];
-      }
+    try {
+      customCategories = await customCategoryService.findByUserId(user.id);
+      logger.info(`Found ${customCategories.length} custom categories`);
+    } catch (customError) {
+      logger.error('Error getting custom categories:', customError);
+      customCategories = [];
     }
     
     const { DEFAULT_CATEGORIES } = require('../../config/constants');
@@ -677,7 +663,7 @@ async function handleBackToConfirmation(chatId, messageId, data, user) {
   await bot.editMessageText(confirmationText, {
     chat_id: chatId,
     message_id: messageId,
-    reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+    reply_markup: getExpenseConfirmationKeyboard(tempId)
   });
 }
 
@@ -698,19 +684,7 @@ async function handleCreateProject(chatId, user) {
   const bot = getBot();
   
   try {
-    // Get user data
-    const userData = await userService.findById(user.id);
     const userProjects = await projectService.findByUserId(user.id);
-
-    // For FREE users, only allow 1 owned project
-    const ownedProjects = userProjects.filter(p => p.user_role === 'owner');
-    if (!userData.is_premium && ownedProjects.length >= 1) {
-      await bot.sendMessage(chatId,
-        `⛔ Лимит проектов исчерпан!\n\n🆓 FREE план: 1 проект (у вас уже ${ownedProjects.length})\n💎 PRO план: неограниченные проекты`,
-        { reply_markup: getUpgradeKeyboard() }
-      );
-      return;
-    }
 
     // For first project, redirect to currency selection
     if (userProjects.length === 0) {
@@ -722,45 +696,35 @@ async function handleCreateProject(chatId, user) {
       );
       return;
     } else {
-      // For additional projects (PRO only), check if user has existing Google Sheets
-      if (userData.is_premium) {
-        const projectsWithSheets = userProjects.filter(p => p.google_sheet_id);
-        
-        if (projectsWithSheets.length > 0) {
-          // User has existing Google Sheets - offer choice
-          await bot.sendMessage(chatId, 
-            '📋 Создание нового проекта\n\n' +
-            '📊 У вас уже есть подключенные Google таблицы. Выберите опцию:\n\n' +
-            '💡 Новый лист - создаст лист в существующей таблице\n' +
-            '📄 Отдельная таблица - создаст новую Google таблицу для проекта',
-            {
-              parse_mode: 'Markdown',
-              reply_markup: {
-                inline_keyboard: [
-                  [
-                    { text: '📄 Новый лист в таблице', callback_data: 'create_project_existing_sheet' },
-                    { text: '📊 Отдельная таблица', callback_data: 'create_project_new_sheet' }
-                  ],
-                  [
-                    { text: '❌ Отмена', callback_data: 'cancel_project_creation' }
-                  ]
+      const projectsWithSheets = userProjects.filter(p => p.google_sheet_id);
+
+      if (projectsWithSheets.length > 0) {
+        await bot.sendMessage(chatId,
+          '📋 Создание нового проекта\n\n' +
+          '📊 У вас уже есть подключенные Google таблицы. Выберите опцию:\n\n' +
+          '💡 Новый лист - создаст лист в существующей таблице\n' +
+          '📄 Отдельная таблица - создаст новую Google таблицу для проекта',
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📄 Новый лист в таблице', callback_data: 'create_project_existing_sheet' },
+                  { text: '📊 Отдельная таблица', callback_data: 'create_project_new_sheet' }
+                ],
+                [
+                  { text: '❌ Отмена', callback_data: 'cancel_project_creation' }
                 ]
-              }
+              ]
             }
-          );
-        } else {
-          // No existing sheets - just ask for name
-          stateManager.clearState(chatId);
-          stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_SIMPLE, {});
-          
-          await bot.sendMessage(chatId, 
-            '📋 Создание нового проекта\n\nОтправьте название проекта:\n\n📝 Пример: "Отпуск в Турции" или "Рабочие расходы"'
-          );
-        }
+          }
+        );
       } else {
-        await bot.sendMessage(chatId, 
-          '💎 Создание дополнительных проектов доступно только в PRO плане!',
-          { reply_markup: getUpgradeKeyboard() }
+        stateManager.clearState(chatId);
+        stateManager.setState(chatId, STATE_TYPES.WAITING_PROJECT_NAME_SIMPLE, {});
+
+        await bot.sendMessage(chatId,
+          '📋 Создание нового проекта\n\nОтправьте название проекта:\n\n📝 Пример: "Отпуск в Турции" или "Рабочие расходы"'
         );
       }
     }
@@ -769,153 +733,6 @@ async function handleCreateProject(chatId, user) {
     await bot.sendMessage(chatId, '❌ Ошибка создания проекта. Попробуйте позже.');
   }
 }
-
-async function handleUpgradeAction(chatId, messageId, data, user) {
-  const action = data.split(':')[1];
-
-  switch (action) {
-    case 'tribute':
-      try {
-        // Get PRO channel link
-        const channelLink = await channelCheckService.getProChannelLink();
-
-        await bot.editMessageText(
-          `💎 PRO подписка через Tribute
-🌍 Для всех пользователей
-
-Цена: 4€ в месяц
-
-Как подписаться:
-1. Нажмите кнопку "Подписаться на канал"
-2. В канале найдите @tribute бота
-3. Оплатите подписку через @tribute
-4. PRO статус активируется автоматически!
-
-⚠️ ВАЖНО: PRO активируется только после оплаты!
-Просто подписка на канал без оплаты НЕ дает PRO статус.
-
-✨ Принимаем карты всех стран и криптовалюты
-
-📋 PRO возможности:
-• Неограниченные проекты
-• Неограниченные записи
-• 20 AI вопросов/день
-• 10 синхронизаций/день
-• Командная работа
-• Кастомные категории`, {
-          chat_id: chatId,
-          message_id: messageId,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '💎 Подписаться на канал', url: channelLink }]
-            ]
-          }
-        });
-      } catch (error) {
-        logger.error('Error getting PRO channel link:', error);
-        await bot.editMessageText(
-          `❌ Произошла ошибка при получении ссылки на канал.
-
-Пожалуйста, обратитесь в поддержку @loomiq_support`, {
-          chat_id: chatId,
-          message_id: messageId
-        });
-      }
-      break;
-      
-    case 'compare':
-      const compareText = `📊 Сравнение планов:
-
-🆓 FREE:
-✅ 1 проект
-✅ 100 записей/месяц
-✅ 5 AI вопросов/день
-✅ 1 синхронизация/день
-✅ Базовые категории
-❌ Командная работа
-❌ Кастомные категории
-
-💎 PRO (4€/месяц):
-✅ Неограниченные проекты
-✅ Неограниченные записи
-✅ 20 AI вопросов/день
-✅ 10 синхронизаций/день
-✅ Командная работа
-✅ Кастомные категории
-✅ Приоритетная поддержка`;
-
-      await bot.editMessageText(compareText, {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '💎 Купить PRO', callback_data: 'upgrade:pro' }
-          ]]
-        }
-      });
-      break;
-      
-    case 'faq':
-      const faqText = `❓ Частые вопросы PRO:
-
-Q: Как отменить подписку?
-A: Напишите @loomiq_support
-
-Q: Есть ли бесплатный пробный период?
-A: Да, 7 дней бесплатно при первом платеже
-
-Q: Сохранятся ли данные при отмене?
-A: Да, все данные останутся, но с ограничениями FREE плана
-
-Q: Можно ли оплатить картой РФ?
-A: Да, поддерживаются все основные платежные системы
-
-Другие вопросы: @loomiq_support`;
-
-      await bot.editMessageText(faqText, {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '💎 Купить PRO', callback_data: 'upgrade:pro' }
-          ]]
-        }
-      });
-      break;
-
-    case 'info':
-    case 'pro':
-      // Redirect to main upgrade message with full info and buttons
-      const { handleUpgrade } = require('./commands');
-      const upgradeMessage = {
-        chat: { id: chatId },
-        user: { id: chatId } // Will be populated by middleware
-      };
-
-      // Delete current message and send new upgrade message
-      try {
-        await bot.deleteMessage(chatId, messageId);
-      } catch (error) {
-        // If delete fails, just edit the message
-      }
-
-      await handleUpgrade(upgradeMessage);
-      break;
-
-    default:
-      // Unknown upgrade action, show main upgrade info
-      await bot.editMessageText(
-        '💎 Информация о PRO подписке недоступна. Используйте команду /upgrade',
-        {
-          chat_id: chatId,
-          message_id: messageId
-        }
-      );
-      break;
-  }
-}
-
 
 // Settings handlers
 async function handleSettingsAction(chatId, messageId, data, user) {
@@ -960,63 +777,49 @@ async function handleSettingsAction(chatId, messageId, data, user) {
         break;
         
       case 'categories':
-        if (!user.is_premium) {
-          await bot.editMessageText('💎 Управление категориями доступно только в PRO плане!', {
+        try {
+          const categories = await customCategoryService.findByUserId(user.id);
+
+          let message = '📂 Ваши категории:\n\n';
+          if (categories.length === 0) {
+            message += '❌ У вас пока нет своих категорий.\n\n💡 Создайте их при добавлении расходов через кнопку "➕ Своя категория"';
+          } else {
+            categories.forEach((cat, index) => {
+              message += `${index + 1}. ${cat.emoji} ${cat.name}\n`;
+            });
+            message += `\n📊 Всего: ${categories.length}/50`;
+          }
+
+          const keyboard = [[
+            { text: '➕ Создать категорию', callback_data: 'add_custom_category' }
+          ]];
+
+          if (categories.length > 0) {
+            keyboard.push([
+              { text: '📝 Управлять', callback_data: 'manage_categories' }
+            ]);
+          }
+
+          keyboard.push([
+            { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
+          ]);
+
+          await bot.editMessageText(message, {
             chat_id: chatId,
             message_id: messageId,
-            reply_markup: getUpgradeKeyboard()
+            reply_markup: { inline_keyboard: keyboard }
           });
-        } else {
-          // Show user's custom categories
-          try {
-            const categories = await customCategoryService.findByUserId(user.id);
-            
-            let message = '📂 Ваши кастомные категории:\n\n';
-            if (categories.length === 0) {
-              message += '❌ У вас пока нет кастомных категорий.\n\n💡 Создайте их при добавлении расходов через кнопку "➕ Своя категория"';
-            } else {
-              categories.forEach((cat, index) => {
-                message += `${index + 1}. ${cat.emoji} ${cat.name}\n`;
-              });
-              message += `\n📊 Всего: ${categories.length}/50`;
+        } catch (error) {
+          logger.error('Error loading categories:', error);
+          await bot.editMessageText('❌ Ошибка загрузки категорий.', {
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
+              ]]
             }
-            
-            const keyboard = [];
-
-            // Always show create button first
-            keyboard.push([
-              { text: '➕ Создать категорию', callback_data: 'add_custom_category' }
-            ]);
-
-            // Add manage button if categories exist
-            if (categories.length > 0) {
-              keyboard.push([
-                { text: '📝 Управлять', callback_data: 'manage_categories' }
-              ]);
-            }
-
-            // Add back button
-            keyboard.push([
-              { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
-            ]);
-
-            await bot.editMessageText(message, {
-              chat_id: chatId,
-              message_id: messageId,
-              reply_markup: { inline_keyboard: keyboard }
-            });
-          } catch (error) {
-            logger.error('Error loading categories:', error);
-            await bot.editMessageText('❌ Ошибка загрузки категорий.', {
-              chat_id: chatId,
-              message_id: messageId,
-              reply_markup: {
-                inline_keyboard: [[
-                  { text: '⬅️ Назад к настройкам', callback_data: 'settings:main' }
-                ]]
-              }
-            });
-          }
+          });
         }
         break;
         
@@ -1024,7 +827,7 @@ async function handleSettingsAction(chatId, messageId, data, user) {
         await bot.editMessageText('⚙️ Настройки', {
           chat_id: chatId,
           message_id: messageId,
-          reply_markup: getSettingsKeyboard(user.is_premium)
+          reply_markup: getSettingsKeyboard()
         });
         break;
         
@@ -1071,26 +874,16 @@ async function handleSwitchProject(chatId, messageId, data, user) {
   }
 }
 
-// Custom category (PRO feature)
+// Custom category
 async function handleCustomCategory(chatId, messageId, data, user) {
   const bot = getBot();
   const tempId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Кастомные категории доступны только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: getUpgradeKeyboard()
-    });
-    return;
-  }
-  
-  // Check limit for FREE vs PRO
+
   const categoryCount = await customCategoryService.getCountByUserId(user.id);
-  const maxCategories = user.is_premium ? 50 : 10; // PRO can have 50, FREE would be 10 (but FREE can't create)
-  
+  const maxCategories = 50;
+
   if (categoryCount >= maxCategories) {
-    await bot.editMessageText(`📂 Достигнут лимит категорий (${maxCategories})\n\nУдалите старые категории или обновитесь до более высокого плана.`, {
+    await bot.editMessageText(`📂 Достигнут лимит категорий (${maxCategories})\n\nУдалите старые категории, чтобы добавить новую.`, {
       chat_id: chatId,
       message_id: messageId
     });
@@ -1239,9 +1032,7 @@ async function handleBackToSettings(chatId, messageId, user) {
 👤 Пользователь: ${user.first_name} ${user.username ? `(@${user.username})` : ''}
 💱 Основная валюта: ${user.primary_currency || 'USD'}
 🌐 Язык: ${user.language_code === 'ru' ? 'Русский' : 'English'}
-💎 План: ${user.is_premium ? 'PRO' : 'FREE'}
-
-${user.is_premium ? '' : '💎 Обновитесь до PRO для дополнительных возможностей!'}`;
+🌐 Язык: ${user.language_code === 'ru' ? 'Русский' : 'English'}`;
 
     await bot.editMessageText(settingsText, {
       chat_id: chatId, 
@@ -1257,20 +1048,11 @@ ${user.is_premium ? '' : '💎 Обновитесь до PRO для дополн
 async function handleAddCustomCategory(chatId, messageId, user) {
   const bot = getBot();
   const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Кастомные категории доступны только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'manage_categories' }]] }
-    });
-    return;
-  }
 
   try {
     const categoryCount = await customCategoryService.getCountByUserId(user.id);
-    if (categoryCount >= 10) {
-      await bot.editMessageText('❌ Достигнут лимит кастомных категорий (10/10)', {
+    if (categoryCount >= 50) {
+      await bot.editMessageText('❌ Достигнут лимит категорий (50/50)', {
         chat_id: chatId,
         message_id: messageId,
         reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'manage_categories' }]] }
@@ -1305,15 +1087,6 @@ async function handleAddCustomCategory(chatId, messageId, user) {
 
 async function handleManageCategories(chatId, messageId, user) {
   const bot = getBot();
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Управление категориями доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
 
   try {
     const customCategories = await customCategoryService.findByUserId(user.id);
@@ -1334,7 +1107,7 @@ async function handleManageCategories(chatId, messageId, user) {
       return;
     }
 
-    let message = `📝 Управление категориями (${customCategories.length}/10)\n\nВыберите категорию для редактирования:`;
+    let message = `📝 Управление категориями (${customCategories.length}/50)\n\nВыберите категорию для редактирования:`;
     
     const keyboard = customCategories.map(cat => ([
       { text: `${cat.emoji || '📁'} ${cat.name}`, callback_data: `edit_custom_category:${cat.id}` }
@@ -1360,16 +1133,7 @@ async function handleManageCategories(chatId, messageId, user) {
 async function handleEditCustomCategory(chatId, messageId, data, user) {
   const bot = getBot();
   const categoryId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
-  
+
   try {
     const categories = await customCategoryService.findByUserId(user.id);
     const category = categories.find(cat => cat.id === categoryId);
@@ -1420,16 +1184,7 @@ ${category.emoji || '📁'} **${category.name}${keywordsText}
 async function handleDeleteCategory(chatId, messageId, data, user) {
   const bot = getBot();
   const categoryId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Удаление категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
-  
+
   try {
     const categories = await customCategoryService.findByUserId(user.id);
     const category = categories.find(cat => cat.id === categoryId);
@@ -1468,16 +1223,7 @@ async function handleDeleteCategory(chatId, messageId, data, user) {
 async function handleConfirmDeleteCategory(chatId, messageId, data, user) {
   const bot = getBot();
   const categoryId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Удаление категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
-  
+
   try {
     await customCategoryService.delete(categoryId);
     
@@ -1501,16 +1247,7 @@ async function handleEditCategoryName(chatId, messageId, data, user) {
   const bot = getBot();
   const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
   const categoryId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
-  
+
   try {
     const categories = await customCategoryService.findByUserId(user.id);
     const category = categories.find(cat => cat.id === categoryId);
@@ -1553,16 +1290,7 @@ async function handleEditCategoryEmoji(chatId, messageId, data, user) {
   const bot = getBot();
   const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
   const categoryId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
-  
+
   try {
     const categories = await customCategoryService.findByUserId(user.id);
     const category = categories.find(cat => cat.id === categoryId);
@@ -1610,16 +1338,7 @@ async function handleEditCategoryEmoji(chatId, messageId, data, user) {
 async function handleRemoveEmoji(chatId, messageId, data, user) {
   const bot = getBot();
   const categoryId = data.split(':')[1];
-  
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
-  
+
   try {
     await customCategoryService.update(categoryId, { emoji: null });
     
@@ -1688,15 +1407,6 @@ async function handleEditCategoryKeywords(chatId, messageId, data, user) {
   const bot = getBot();
   const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
   const categoryId = data.split(':')[1];
-
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Редактирование категорий доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: { inline_keyboard: [[{ text: '🔙 Назад', callback_data: 'categories' }]] }
-    });
-    return;
-  }
 
   try {
     const categories = await customCategoryService.findByUserId(user.id);
@@ -2070,7 +1780,7 @@ async function handleCancelClearData(chatId, messageId, user) {
   await bot.editMessageText('⚙️ Настройки', {
     chat_id: chatId,
     message_id: messageId,
-    reply_markup: getSettingsKeyboard(user.is_premium)
+    reply_markup: getSettingsKeyboard()
   });
 }
 
@@ -2124,17 +1834,14 @@ async function handleSaveIncome(chatId, messageId, data, user) {
   }
 
   try {
-    // Check monthly records limit for FREE users
+    // Keep the guard for older deployments that may still enforce limits.
     const canCreate = await userService.checkMonthlyRecordsLimit(user.id);
     if (!canCreate) {
       await bot.editMessageText(
-        `⛔ Лимит записей исчерпан (100 записей в месяц).\n\n💎 В PRO плане: неограниченные записи.`,
+        '⛔ Лимит записей исчерпан. Напишите в поддержку @loomiq_support.',
         {
           chat_id: chatId,
-          message_id: messageId,
-          reply_markup: { inline_keyboard: [[
-            { text: '💎 Обновить до PRO', callback_data: 'upgrade:info' }
-          ]] }
+          message_id: messageId
         }
       );
       return;
@@ -2305,17 +2012,6 @@ async function handleEditIncomeProject(chatId, messageId, data, user) {
     return;
   }
 
-  if (!user.is_premium) {
-    await bot.editMessageText('💎 Изменение проекта доступно только в PRO плане!', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: {
-        inline_keyboard: [[{ text: '🔙 Назад', callback_data: `back_to_income_confirmation:${tempId}` }]]
-      }
-    });
-    return;
-  }
-
   try {
     const projects = await projectService.findByUserId(user.id);
     if (projects.length === 0) {
@@ -2392,7 +2088,7 @@ async function handleSetIncomeCategory(chatId, messageId, data, user) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+      reply_markup: getIncomeConfirmationKeyboard(tempId)
     });
   } catch (error) {
     logger.error('Error setting income category:', error);
@@ -2447,7 +2143,7 @@ async function handleSetIncomeProject(chatId, messageId, data, user) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+      reply_markup: getIncomeConfirmationKeyboard(tempId)
     });
 
   } catch (error) {
@@ -2488,7 +2184,7 @@ async function handleBackToIncomeConfirmation(chatId, messageId, data, user) {
     await bot.editMessageText(confirmationText, {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+      reply_markup: getIncomeConfirmationKeyboard(tempId)
     });
 
   } catch (error) {
@@ -2990,7 +2686,7 @@ async function handleSetTransactionCurrency(chatId, messageId, data, user) {
           {
             chat_id: chatId,
             message_id: messageId,
-            reply_markup: getIncomeConfirmationKeyboard(expenseId, user.is_premium)
+            reply_markup: getIncomeConfirmationKeyboard(expenseId)
           }
         );
       }
@@ -3005,7 +2701,7 @@ async function handleSetTransactionCurrency(chatId, messageId, data, user) {
           {
             chat_id: chatId,
             message_id: messageId,
-            reply_markup: getExpenseConfirmationKeyboard(expenseId, user.is_premium)
+            reply_markup: getExpenseConfirmationKeyboard(expenseId)
           }
         );
       }
@@ -3015,32 +2711,226 @@ async function handleSetTransactionCurrency(chatId, messageId, data, user) {
   }
 }
 
+function formatSheetStatus(sheet) {
+  if (!sheet?.google_sheet_id) return 'не подключено';
+  if (sheet.status === 'broken') return 'нужна проверка';
+  if (sheet.status === 'revoked') return 'отключено';
+  return 'подключено';
+}
+
+async function loadProjectForOwnerAction(projectId, user) {
+  const project = await projectService.findById(projectId);
+  if (!project) {
+    throw new Error('Проект не найден.');
+  }
+  if (project.owner_id !== user.id) {
+    throw new Error('Только владелец проекта может менять Google Sheets.');
+  }
+  return project;
+}
+
+async function handleGoogleSheetsSettings(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await loadProjectForOwnerAction(projectId, user);
+    const sheet = await projectSheetService.findActiveByProject(projectId);
+    const serviceEmail = googleSheetsService.getServiceAccountEmail();
+
+    const connected = Boolean(sheet?.google_sheet_id);
+    const lines = [
+      `Google Sheets для проекта "${project.name}"`,
+      '',
+      `Статус: ${formatSheetStatus(sheet)}`,
+      connected ? `Таблица: ${sheet.google_sheet_url || sheet.google_sheet_id}` : 'Таблица ещё не подключена.',
+      sheet?.last_sync_at ? `Последняя синхронизация: ${new Date(sheet.last_sync_at).toLocaleString('ru-RU')}` : null,
+      sheet?.last_sync_error ? `Последняя ошибка: ${sheet.last_sync_error}` : null,
+      serviceEmail ? `Сервисный аккаунт: ${serviceEmail}` : 'Сервисный аккаунт не настроен.'
+    ].filter(Boolean);
+
+    const keyboard = [];
+    if (connected) {
+      if (sheet.google_sheet_url) {
+        keyboard.push([{ text: 'Открыть таблицу', url: sheet.google_sheet_url }]);
+      }
+      keyboard.push([{ text: 'Синхронизировать', callback_data: `sync_project:${projectId}` }]);
+      keyboard.push([{ text: 'Проверить и починить', callback_data: `gsr:${projectId}` }]);
+      keyboard.push([{ text: 'Дать доступ участникам', callback_data: `gss:${projectId}` }]);
+      keyboard.push([{ text: 'Отключить таблицу', callback_data: `gsd:${projectId}` }]);
+    } else {
+      keyboard.push([{ text: 'Подключить таблицу', callback_data: `gsc:${projectId}` }]);
+    }
+    keyboard.push([{ text: 'Назад к настройкам', callback_data: `project_settings:${projectId}` }]);
+
+    await bot.editMessageText(lines.join('\n'), {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard },
+      disable_web_page_preview: true
+    });
+  } catch (error) {
+    logger.error('Google Sheets settings error:', error);
+    await bot.editMessageText(`❌ ${error.message}`, { chat_id: chatId, message_id: messageId });
+  }
+}
+
+async function handleShareSheetWithMembers(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await loadProjectForOwnerAction(projectId, user);
+    const sheet = await projectSheetService.findActiveByProject(projectId);
+    if (!sheet?.google_sheet_id) {
+      await bot.editMessageText('❌ Сначала подключите Google таблицу к проекту.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: 'Назад', callback_data: `gs:${projectId}` }]] }
+      });
+      return;
+    }
+
+    const members = await projectService.getMembers(projectId);
+    const memberUsers = members.map(member => member.user).filter(Boolean);
+    if (memberUsers.length === 0) {
+      await bot.editMessageText('В проекте пока нет участников, которым нужно выдать доступ.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [[{ text: 'Назад', callback_data: `gs:${projectId}` }]] }
+      });
+      return;
+    }
+
+    const resultLines = [`Доступ к таблице "${project.name}"`];
+    const missingEmailButtons = [];
+
+    for (const member of memberUsers) {
+      const label = member.username ? `@${member.username}` : (member.first_name || member.id);
+      if (!member.email) {
+        resultLines.push(`• ${label}: нужен Google email`);
+        missingEmailButtons.push([{ text: `Email для ${label}`, callback_data: `sme:${projectId}:${member.id}` }]);
+        await projectSheetService.upsertMemberAccess(projectId, member.id, null, 'no_email', 'Email не указан');
+        continue;
+      }
+
+      const shareResult = await googleSheetsService.shareSheetWithUserDetailed(
+        sheet.google_sheet_id,
+        member.email,
+        member.first_name || member.username
+      );
+
+      if (shareResult.success) {
+        resultLines.push(`• ${label}: доступ выдан на ${member.email}`);
+        await projectSheetService.upsertMemberAccess(projectId, member.id, member.email, 'shared');
+      } else {
+        resultLines.push(`• ${label}: ошибка - ${shareResult.error}`);
+        await projectSheetService.upsertMemberAccess(projectId, member.id, member.email, 'failed', shareResult.error);
+      }
+    }
+
+    const keyboard = [
+      ...missingEmailButtons,
+      [{ text: 'Проверить ещё раз', callback_data: `gss:${projectId}` }],
+      [{ text: 'Назад', callback_data: `gs:${projectId}` }]
+    ];
+
+    await bot.editMessageText(resultLines.join('\n'), {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: keyboard }
+    });
+  } catch (error) {
+    logger.error('Share sheet with members error:', error);
+    await bot.editMessageText(`❌ ${error.message}`, { chat_id: chatId, message_id: messageId });
+  }
+}
+
+async function handleSetMemberGoogleEmail(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, projectId, memberUserId] = data.split(':');
+
+  try {
+    await loadProjectForOwnerAction(projectId, user);
+    stateManager.setState(chatId, STATE_TYPES.WAITING_MEMBER_GOOGLE_EMAIL, {
+      projectId,
+      memberUserId: Number(memberUserId),
+      messageId
+    });
+
+    await bot.editMessageText('Отправьте Google email участника одним сообщением. На него бот выдаст доступ к таблице проекта.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: `gss:${projectId}` }]] }
+    });
+  } catch (error) {
+    logger.error('Set member email state error:', error);
+    await bot.editMessageText(`❌ ${error.message}`, { chat_id: chatId, message_id: messageId });
+  }
+}
+
+async function handleRepairGoogleSheet(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    const project = await loadProjectForOwnerAction(projectId, user);
+    const sheet = await projectSheetService.findActiveByProject(projectId);
+    if (!sheet?.google_sheet_id) {
+      await bot.editMessageText('❌ Таблица не подключена.', { chat_id: chatId, message_id: messageId });
+      return;
+    }
+
+    await bot.editMessageText('Проверяю доступ и структуру Google таблицы...', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+
+    const result = await googleSheetsService.checkProjectSheet(sheet.google_sheet_id, project.name);
+    await projectSheetService.markHealthResult(projectId, {
+      success: result.success,
+      errorMessage: result.success ? null : result.error
+    });
+
+    const text = result.success
+      ? `✅ Таблица "${project.name}" в порядке: доступ есть, лист проекта и заголовки проверены.`
+      : `❌ Нужно поправить подключение: ${result.error}`;
+
+    await bot.editMessageText(text, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: 'Назад', callback_data: `gs:${projectId}` }]] }
+    });
+  } catch (error) {
+    logger.error('Repair Google Sheet error:', error);
+    await projectSheetService.markHealthResult(projectId, { success: false, errorMessage: error.message });
+    await bot.editMessageText(`❌ ${error.message}`, { chat_id: chatId, message_id: messageId });
+  }
+}
+
+async function handleDisconnectGoogleSheet(chatId, messageId, data, user) {
+  const bot = getBot();
+  const projectId = data.split(':')[1];
+
+  try {
+    await loadProjectForOwnerAction(projectId, user);
+    await projectSheetService.disconnect(projectId);
+    await bot.editMessageText('✅ Google таблица отключена от проекта. Данные в самой таблице не удалялись.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: 'Назад к проекту', callback_data: `project_info:${projectId}` }]] }
+    });
+  } catch (error) {
+    logger.error('Disconnect Google Sheet error:', error);
+    await bot.editMessageText(`❌ ${error.message}`, { chat_id: chatId, message_id: messageId });
+  }
+}
+
 async function handleSyncProject(chatId, messageId, data, user) {
   const bot = getBot();
   const projectId = data.split(':')[1];
 
   try {
-    // Check sync limit for users without unlimited access
-    const hasUnlimited = await userService.hasUnlimitedAccess(user.id);
-    if (!hasUnlimited) {
-      const syncLimit = 3;
-      if (user.daily_syncs_used >= syncLimit) {
-        await bot.editMessageText(
-          `📊 Лимит синхронизаций исчерпан (${syncLimit}/день)\n\n💎 Обновитесь до PRO для неограниченных синхронизаций`,
-          {
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '❌ Закрыть', callback_data: 'cancel_sync' }
-              ]]
-            }
-          }
-        );
-        return;
-      }
-    }
-
     // Get project info
     const project = await projectService.findById(projectId);
     if (!project) {
@@ -3051,7 +2941,17 @@ async function handleSyncProject(chatId, messageId, data, user) {
       return;
     }
 
-    if (!project.google_sheet_id) {
+    const access = await projectService.hasAccess(projectId, user.id);
+    if (!access.access) {
+      await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const projectSheet = await projectSheetService.findActiveByProject(projectId);
+    if (!projectSheet?.google_sheet_id) {
       await bot.editMessageText('❌ Проект не подключен к Google Sheets', {
         chat_id: chatId,
         message_id: messageId
@@ -3071,13 +2971,6 @@ async function handleSyncProject(chatId, messageId, data, user) {
     // Perform sync
     const googleSheetsService = require('../../services/googleSheets');
     const result = await googleSheetsService.syncFromGoogleSheets(user.id, projectId);
-
-    // Update daily sync counter for non-premium users
-    if (!user.is_premium) {
-      await userService.update(user.id, {
-        daily_syncs_used: (user.daily_syncs_used || 0) + 1
-      });
-    }
 
     // Show result
     let resultText = `✅ Синхронизация завершена!\n\n`;
@@ -3143,6 +3036,11 @@ async function handleConnectSheetToProject(chatId, messageId, data, user) {
   const sheetId = parts[2];
 
   try {
+    if (!sheetId) {
+      await handleSelectProjectForConnect(chatId, messageId, `select_project_for_connect:${projectId}`, user);
+      return;
+    }
+
     // Get project info
     const project = await projectService.findById(projectId);
     if (!project) {
@@ -3153,9 +3051,37 @@ async function handleConnectSheetToProject(chatId, messageId, data, user) {
       return;
     }
 
-    // Update project with Google Sheets ID
-    await projectService.update(projectId, {
-      google_sheet_id: sheetId
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Только владелец проекта может подключать Google таблицу.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const connectResult = await googleSheetsService.connectToUserSheet(sheetId, user.email);
+    if (!connectResult.success) {
+      await bot.editMessageText(`❌ ${connectResult.error}`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const healthResult = await googleSheetsService.checkProjectSheet(sheetId, project.name);
+    if (!healthResult.success) {
+      await bot.editMessageText(`❌ Таблица открывается, но её не удалось подготовить: ${healthResult.error}`, {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    await projectSheetService.upsertConnection(projectId, {
+      google_sheet_id: sheetId,
+      google_sheet_url: connectResult.sheetUrl,
+      connected_by_user_id: user.id,
+      status: 'active'
     });
 
     // Delete the selection message
@@ -3214,6 +3140,14 @@ async function handleSelectProjectForConnect(chatId, messageId, data, user) {
       return;
     }
 
+    if (project.owner_id !== user.id) {
+      await bot.editMessageText('❌ Только владелец проекта может подключать Google таблицу.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
     // Show instructions for this specific project
     const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
     stateManager.setState(chatId, STATE_TYPES.WAITING_GOOGLE_SHEETS_LINK, { selectedProjectId: projectId });
@@ -3231,7 +3165,7 @@ async function handleSelectProjectForConnect(chatId, messageId, data, user) {
       emailInstruction +
       `4️⃣ Установите права: "Редактор"\n` +
       `5️⃣ Скопируйте ссылку или ID таблицы и отправьте мне\n\n` +
-      `⚠️ Каждый пользователь подключает свою таблицу — в каждой нужно добавить email выше.\n\n` +
+      `⚠️ Таблицу проекта подключает владелец. Участникам нужно выдать доступ к этой же таблице.\n\n` +
       `📝 Можно отправить ссылку или только ID (часть после /d/ в ссылке)\n` +
       `Пример: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms\n\n` +
       `✨ Отправьте ссылку или ID следующим сообщением!`,
@@ -3349,7 +3283,7 @@ async function handleProjectSelectionForTransaction(callbackQuery, data) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: getIncomeConfirmationKeyboard(fullTransactionId, user.is_premium)
+        reply_markup: getIncomeConfirmationKeyboard(fullTransactionId)
       });
     } else {
       const confirmationText = `💰 Подтвердите расход:
@@ -3365,7 +3299,7 @@ async function handleProjectSelectionForTransaction(callbackQuery, data) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: messageId,
-        reply_markup: getExpenseConfirmationKeyboard(fullTransactionId, user.is_premium)
+        reply_markup: getExpenseConfirmationKeyboard(fullTransactionId)
       });
     }
 
@@ -3570,7 +3504,9 @@ async function handleGenerateInvite(chatId, messageId, data, user) {
   try {
     const { projectMemberService } = require('../../services/supabase');
     const token = await projectMemberService.generateInviteLink(projectId, user.id);
-    const inviteLink = `https://t.me/${process.env.BOT_USERNAME}?start=${token}`;
+    const me = await bot.getMe();
+    const botUsername = process.env.BOT_USERNAME || me.username;
+    const inviteLink = `https://t.me/${botUsername}?start=${token}`;
 
     await bot.editMessageText(
       `🔗 Ссылка-приглашение создана!\n\n` +
@@ -3827,34 +3763,6 @@ async function handleEditTransaction(chatId, messageId, data, user) {
       return;
     }
 
-    // Проверка прав на редактирование для FREE пользователей
-    if (!user.is_premium) {
-      // Получаем последнюю транзакцию пользователя
-      const recentTransactions = await transactionService.getRecentTransactions(user.id, 1);
-      const lastTransaction = recentTransactions[0];
-
-      // Проверяем, является ли текущая транзакция последней
-      const isLastTransaction = lastTransaction &&
-        lastTransaction.id === transaction.id &&
-        lastTransaction.type === transactionType;
-
-      if (!isLastTransaction) {
-        await bot.editMessageText(
-          '⚠️ В FREE версии доступно редактирование только последней записи.\n\n💎 Обновитесь до PRO для редактирования до 20 последних записей.',
-          {
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '💎 Перейти на PRO', callback_data: 'upgrade' }
-              ]]
-            }
-          }
-        );
-        return;
-      }
-    }
-
     // Get project name
     const project = await projectService.findById(transaction.project_id);
 
@@ -3999,9 +3907,17 @@ async function handleEditTransactionCategory(chatId, messageId, data, user) {
       messageId
     });
 
-    // Show category selection
+    let customCategories = [];
+    if (transactionType === 'expense') {
+      try {
+        customCategories = await customCategoryService.findByUserId(user.id);
+      } catch (error) {
+        logger.error('Error loading custom categories:', error);
+      }
+    }
+
     const keyboard = transactionType === 'expense'
-      ? getCategorySelectionKeyboard(transactionId, user.is_premium)
+      ? getCategorySelectionKeyboard(transactionId, customCategories)
       : getIncomeCategorySelectionKeyboard(transactionId);
 
     await bot.editMessageText(
@@ -4197,8 +4113,7 @@ async function handleEditFromAnalytics(chatId, messageId, data, user) {
     // Clear any active states
     stateManager.clearState(chatId);
 
-    // Определяем лимит редактирования по подписке
-    const editLimit = user.is_premium ? 20 : 1;
+    const editLimit = 20;
     const actualLimit = Math.min(numLimit, editLimit);
 
     // Get recent transactions
@@ -4219,11 +4134,6 @@ async function handleEditFromAnalytics(chatId, messageId, data, user) {
 
     let message = `✏️ Редактирование транзакций\n\nПоказано последних записей: ${recentTransactions.length}`;
 
-    // Предупреждение для FREE пользователей
-    if (!user.is_premium && numLimit > 1) {
-      message += `\n\n⚠️ В FREE версии доступно редактирование только последней записи.\n💎 Обновитесь до PRO для редактирования до 20 последних записей.`;
-    }
-
     message += '\n\nВыберите транзакцию для редактирования:';
 
     await bot.editMessageText(message, {
@@ -4236,77 +4146,6 @@ async function handleEditFromAnalytics(chatId, messageId, data, user) {
   } catch (error) {
     logger.error('Error in handleEditFromAnalytics:', error);
     await bot.editMessageText('❌ Ошибка загрузки транзакций. Попробуйте позже.', {
-      chat_id: chatId,
-      message_id: messageId
-    });
-  }
-}
-
-// Check PRO status by verifying channel membership
-async function handleCheckProStatus(chatId, messageId, user) {
-  const bot = getBot();
-
-  try {
-    await bot.editMessageText('🔄 Проверяю статус подписки...', {
-      chat_id: chatId,
-      message_id: messageId
-    });
-
-    // Check channel membership and update database
-    const updatedUser = await channelCheckService.syncUserProStatus(user);
-
-    if (updatedUser.is_premium) {
-      await bot.editMessageText(
-        `✅ PRO статус активен!
-
-🎉 Поздравляем! Вы успешно подписались на PRO план.
-
-Ваши возможности:
-• ∞ Неограниченные проекты
-• ∞ Неограниченные записи
-• 20 AI вопросов/день
-• 10 синхронизаций/день
-• 👥 Командная работа
-• 📂 Кастомные категории
-• ⚡ Приоритетная поддержка
-
-Начните использовать расширенные функции прямо сейчас! 🚀`, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown'
-      });
-    } else {
-      await bot.editMessageText(
-        `❌ PRO статус не активен
-
-Возможные причины:
-• Вы не подписались на PRO канал
-• Вы не оплатили подписку через @tribute
-• После оплаты не прошло достаточно времени
-
-Для активации PRO статуса:
-1. Подпишитесь на PRO канал
-2. Найдите @tribute в канале и оплатите подписку
-3. PRO статус активируется автоматически в течение 1-2 минут
-
-⚠️ Просто подписка на канал без оплаты НЕ активирует PRO!`, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '💎 Подписаться', callback_data: 'upgrade:tribute' }]
-          ]
-        }
-      });
-    }
-
-  } catch (error) {
-    logger.error('Error checking PRO status:', error);
-    await bot.editMessageText(
-      `❌ Ошибка при проверке статуса подписки.
-
-Пожалуйста, попробуйте позже или обратитесь в поддержку @loomiq_support`, {
       chat_id: chatId,
       message_id: messageId
     });
@@ -4555,8 +4394,7 @@ async function handleEditProjectTransactions(chatId, messageId, data, user) {
       ...incomes.map(i => ({ ...i, type: 'income', date: i.income_date }))
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-    // Определяем лимит редактирования по подписке
-    const editLimit = user.is_premium ? 20 : 1;
+    const editLimit = 20;
     const limitedTransactions = allTransactions.slice(0, editLimit);
 
     if (limitedTransactions.length === 0) {
@@ -4575,11 +4413,6 @@ async function handleEditProjectTransactions(chatId, messageId, data, user) {
     const keyboard = getRecentTransactionsKeyboard(limitedTransactions);
 
     let message = `✏️ Редактирование записей проекта\n\nПоказано последних записей: ${limitedTransactions.length}`;
-
-    // Предупреждение для FREE пользователей
-    if (!user.is_premium && allTransactions.length > 1) {
-      message += `\n\n⚠️ В FREE версии доступно редактирование только последней записи.\n💎 Обновитесь до PRO для редактирования до 20 последних записей.`;
-    }
 
     message += '\n\nВыберите транзакцию для редактирования:';
 
@@ -4629,7 +4462,7 @@ async function handleProjectSettings(chatId, messageId, data, user) {
       [{ text: '✏️ Изменить название', callback_data: `edit_project_name:${projectId}` }],
       [{ text: '🔍 Ключевые слова', callback_data: `edit_project_keywords:${projectId}` }],
       [{ text: '👥 Управление командой', callback_data: `manage_team:${projectId}` }],
-      [{ text: '🔗 Google Sheets', callback_data: `connect_sheet_to_project:${projectId}` }],
+      [{ text: '🔗 Google Sheets', callback_data: `gs:${projectId}` }],
       [{ text: '🗑️ Удалить проект', callback_data: `delete_project:${projectId}` }],
       [{ text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }]
     ];

@@ -32,8 +32,6 @@ async function runMigrations() {
   const columnsToCheck = [
     { table: 'user_patterns', column: 'confidence', type: 'DECIMAL(3,2) DEFAULT 0.5' },
     { table: 'projects', column: 'keywords', type: 'TEXT' },
-    { table: 'users', column: 'pro_expires_at', type: 'TIMESTAMP' },
-    { table: 'users', column: 'pro_plan_type', type: 'VARCHAR(20)' },
     { table: 'projects', column: 'is_collaborative', type: 'BOOLEAN DEFAULT FALSE' },
     { table: 'projects', column: 'is_family_budget', type: 'BOOLEAN DEFAULT FALSE' },
     { table: 'projects', column: 'budget_currency', type: 'VARCHAR(3)' },
@@ -41,6 +39,7 @@ async function runMigrations() {
     { table: 'users', column: 'lumik_update_seen', type: 'BOOLEAN DEFAULT FALSE' },
     { table: 'users', column: 'last_morning_sent_date', type: 'DATE' },
     { table: 'users', column: 'last_insight_sent_date', type: 'DATE' },
+    { table: 'users', column: 'email', type: 'TEXT' },
     { table: 'projects', column: 'family_established_at', type: 'TIMESTAMP' },
     { table: 'projects', column: 'family_established_by', type: 'BIGINT' }
   ];
@@ -81,7 +80,6 @@ async function createTables() {
       language_code VARCHAR(10) DEFAULT 'en',
       primary_currency VARCHAR(3) DEFAULT 'USD',
       timezone VARCHAR(50) DEFAULT 'UTC',
-      is_premium BOOLEAN DEFAULT FALSE,
       daily_ai_questions_used INTEGER DEFAULT 0,
       daily_syncs_used INTEGER DEFAULT 0,
       last_ai_reset DATE DEFAULT CURRENT_DATE,
@@ -216,6 +214,19 @@ const userService = {
     return data;
   },
 
+  async findByIds(ids) {
+    const uniqueIds = [...new Set((ids || []).filter(Boolean))];
+    if (uniqueIds.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .in('id', uniqueIds);
+
+    if (error) throw error;
+    return data || [];
+  },
+
   async isTeamMember(userId) {
     // Check if user is a member of any collaborative project
     const { data, error } = await supabase
@@ -232,30 +243,12 @@ const userService = {
   },
 
   async hasUnlimitedAccess(userId) {
-    // Check if user has premium OR is team member
-    const user = await this.findById(userId);
-    if (!user) return false;
-
-    if (user.is_premium) return true;
-
-    // Check if user is team member
-    return await this.isTeamMember(userId);
+    return Boolean(await this.findById(userId));
   },
 
   async canCreateProject(userId) {
-    // Check if user is PRO
     const user = await this.findById(userId);
-    if (!user) return false;
-
-    if (user.is_premium) return true;
-
-    // For non-PRO users, check if they have any owned projects
-    const projects = await projectService.findByUserId(userId);
-    const ownedProjects = projects.filter(p => p.user_role === 'owner');
-
-    // Non-PRO users can create only 1 project ("Личные траты")
-    // This includes team members - they can have 1 personal project
-    return ownedProjects.length === 0;
+    return Boolean(user);
   },
 
   async findById(id) {
@@ -282,38 +275,6 @@ const userService = {
   },
 
   async checkDailyLimits(userId, action) {
-    // Check if user has unlimited access (PRO or team member)
-    const hasUnlimited = await this.hasUnlimitedAccess(userId);
-    if (hasUnlimited) return true;
-
-    const user = await this.findById(userId);
-    if (!user) return false;
-
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Reset counters if new day
-    if (user.last_ai_reset !== today) {
-      await this.update(userId, {
-        daily_ai_questions_used: 0,
-        daily_syncs_used: 0,
-        last_ai_reset: today
-      });
-      user.daily_ai_questions_used = 0;
-      user.daily_syncs_used = 0;
-    }
-
-    const limits = user.is_premium 
-      ? { ai_questions: 20, syncs: 10 }
-      : { ai_questions: 5, syncs: 1 };
-
-    if (action === 'ai_question') {
-      return user.daily_ai_questions_used < limits.ai_questions;
-    }
-    
-    if (action === 'sync') {
-      return user.daily_syncs_used < limits.syncs;
-    }
-
     return true;
   },
 
@@ -328,36 +289,7 @@ const userService = {
   },
 
   async checkMonthlyRecordsLimit(userId) {
-    // Check if user has unlimited access (PRO or team member)
-    const hasUnlimited = await this.hasUnlimitedAccess(userId);
-    if (hasUnlimited) return true;
-
-    const { SUBSCRIPTION_LIMITS } = require('../config/constants');
-    const limit = SUBSCRIPTION_LIMITS.FREE.expenses_per_month;
-
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-    // Count both expenses and incomes for this month
-    const [expensesResult, incomesResult] = await Promise.all([
-      supabase
-        .from('expenses')
-        .select('id', { count: 'exact' })
-        .eq('user_id', userId)
-        .gte('expense_date', startOfMonth.toISOString().split('T')[0])
-        .lte('expense_date', endOfMonth.toISOString().split('T')[0]),
-
-      supabase
-        .from('incomes')
-        .select('id', { count: 'exact' })
-        .eq('user_id', userId)
-        .gte('income_date', startOfMonth.toISOString().split('T')[0])
-        .lte('income_date', endOfMonth.toISOString().split('T')[0])
-    ]);
-
-    const totalRecords = (expensesResult.count || 0) + (incomesResult.count || 0);
-    return totalRecords < limit;
+    return true;
   }
 };
 
@@ -462,18 +394,12 @@ const projectService = {
   },
 
   async addMember(projectId, userId, role = 'editor') {
-    // Check member count limit
     const memberCount = await projectMemberService.getMemberCount(projectId);
     const project = await this.findById(projectId);
-    const owner = await userService.findById(project.owner_id);
-
-    // FREE: max 3 members total (owner + 2 members)
-    // PRO: max 30 members total (owner + 29 members)
-    const maxMembers = project.is_family_budget ? 2 : (owner.is_premium ? 30 : 3);
+    const maxMembers = project.is_family_budget ? 2 : 30;
 
     if (memberCount >= maxMembers) {
-      const limit = owner.is_premium ? '30' : '3';
-      throw new Error(`Достигнут лимит участников проекта (${limit} ${owner.is_premium ? 'человек' : 'человека'}). ${!owner.is_premium ? 'Обновитесь до PRO для увеличения лимита до 30.' : ''}`);
+      throw new Error(`Достигнут лимит участников проекта (${maxMembers} человек).`);
     }
 
     const { data, error } = await supabase
@@ -1107,35 +1033,26 @@ const customCategoryService = {
 const projectMemberService = {
   async invite(projectId, username, invitedByUserId) {
     try {
-      // Try to find user by current username first
+      const normalizedUsername = String(username || '').replace(/^@/, '').trim();
+      if (!normalizedUsername) {
+        throw new Error('Укажите username или перешлите сообщение пользователя.');
+      }
+
       let { data: targetUser, error: userError } = await supabase
         .from('users')
         .select('id, username, first_name')
-        .eq('username', username)
+        .ilike('username', normalizedUsername)
         .single();
 
-      // If not found by current username, search by first_name as fallback
-      if (userError || !targetUser) {
-        const { data: usersByName } = await supabase
-          .from('users')
-          .select('id, username, first_name')
-          .ilike('first_name', `%${username}%`);
-
-        if (usersByName && usersByName.length > 0) {
-          targetUser = usersByName[0]; // Take first match
-          logger.info(`Found user by name: ${targetUser.first_name} (${targetUser.username})`);
-        }
-      }
-
-      // If still not found, show error
+      if (userError && userError.code !== 'PGRST116') throw userError;
       if (!targetUser) {
-        throw new Error(`Пользователь @${username} не найден в боте.\n\n💡 Попросите пользователя написать /start боту, а затем повторите приглашение.`);
+        throw new Error(`Пользователь @${normalizedUsername} не найден в боте.\n\n💡 Попросите пользователя написать /start боту, затем повторите приглашение или отправьте ссылку-приглашение.`);
       }
 
       // Check if user is already a member or owner
       const access = await projectService.hasAccess(projectId, targetUser.id);
       if (access.access) {
-        throw new Error(`Пользователь @${username} уже участвует в проекте`);
+        throw new Error(`Пользователь @${targetUser.username || targetUser.first_name} уже участвует в проекте`);
       }
 
       // Get project info to check if it's collaborative
@@ -1261,6 +1178,18 @@ const projectMemberService = {
     return (data?.length || 0) + 1;
   },
 
+  async findByProjectAndUser(projectId, userId) {
+    const { data, error } = await supabase
+      .from('project_members')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
+
   async generateInviteLink(projectId, ownerId) {
     const project = await projectService.findById(projectId);
     if (!project || project.owner_id !== ownerId) {
@@ -1306,6 +1235,11 @@ const projectMemberService = {
     // Check if user is already owner
     if (invite.project.owner_id === userId) {
       throw new Error('Вы уже владелец этого проекта');
+    }
+
+    const access = await projectService.hasAccess(invite.project_id, userId);
+    if (access.access) {
+      throw new Error('Вы уже участвуете в этом проекте');
     }
 
     // Add member
@@ -1361,6 +1295,188 @@ const projectMemberService = {
   }
 };
 
+function isMissingGoogleSheetsTableError(error) {
+  return ['42P01', 'PGRST106', 'PGRST205', 'PGRST204'].includes(error?.code);
+}
+
+// Project Google Sheets connection operations
+const projectSheetService = {
+  async findActiveByProject(projectId) {
+    try {
+      const { data, error } = await supabase
+        .from('project_sheets')
+        .select('*')
+        .eq('project_id', projectId)
+        .neq('status', 'revoked')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) return data;
+    } catch (error) {
+      if (!isMissingGoogleSheetsTableError(error)) throw error;
+      logger.warn('project_sheets table is missing. Falling back to projects.google_sheet_id.');
+    }
+
+    const project = await projectService.findById(projectId);
+    if (!project?.google_sheet_id) return null;
+
+    return {
+      id: null,
+      project_id: projectId,
+      google_sheet_id: project.google_sheet_id,
+      google_sheet_url: project.google_sheet_url,
+      owner_user_id: project.owner_id,
+      connected_by_user_id: project.owner_id,
+      status: 'active',
+      last_sync_at: null,
+      last_sync_error: null
+    };
+  },
+
+  async upsertConnection(projectId, connectionData) {
+    const project = await projectService.findById(projectId);
+    if (!project) throw new Error('Project not found');
+
+    const updates = {
+      google_sheet_id: connectionData.google_sheet_id,
+      google_sheet_url: connectionData.google_sheet_url
+    };
+
+    try {
+      const row = {
+        project_id: projectId,
+        owner_user_id: project.owner_id,
+        connected_by_user_id: connectionData.connected_by_user_id || project.owner_id,
+        google_sheet_id: connectionData.google_sheet_id,
+        google_sheet_url: connectionData.google_sheet_url,
+        status: connectionData.status || 'active',
+        last_health_check_at: new Date().toISOString(),
+        last_sync_error: null,
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('project_sheets')
+        .upsert(row, { onConflict: 'project_id' })
+        .select()
+        .single();
+
+      if (error) throw error;
+      await projectService.update(projectId, updates);
+      return data;
+    } catch (error) {
+      if (!isMissingGoogleSheetsTableError(error)) throw error;
+      logger.warn('project_sheets table is missing. Saving Google Sheets connection on projects only.');
+      await projectService.update(projectId, updates);
+      return {
+        id: null,
+        project_id: projectId,
+        owner_user_id: project.owner_id,
+        connected_by_user_id: connectionData.connected_by_user_id || project.owner_id,
+        google_sheet_id: connectionData.google_sheet_id,
+        google_sheet_url: connectionData.google_sheet_url,
+        status: connectionData.status || 'active'
+      };
+    }
+  },
+
+  async markSyncResult(projectId, { success, errorMessage = null }) {
+    try {
+      const updates = {
+        status: success ? 'active' : 'broken',
+        last_sync_error: errorMessage,
+        updated_at: new Date().toISOString()
+      };
+      if (success) updates.last_sync_at = new Date().toISOString();
+
+      const { error } = await supabase
+        .from('project_sheets')
+        .update(updates)
+        .eq('project_id', projectId);
+
+      if (error) throw error;
+    } catch (error) {
+      if (!isMissingGoogleSheetsTableError(error)) {
+        logger.warn('Could not update project_sheets sync status:', error.message);
+      }
+    }
+  },
+
+  async markHealthResult(projectId, { success, errorMessage = null }) {
+    try {
+      const { error } = await supabase
+        .from('project_sheets')
+        .update({
+          status: success ? 'active' : 'broken',
+          last_health_check_at: new Date().toISOString(),
+          last_sync_error: errorMessage,
+          updated_at: new Date().toISOString()
+        })
+        .eq('project_id', projectId);
+
+      if (error) throw error;
+    } catch (error) {
+      if (!isMissingGoogleSheetsTableError(error)) {
+        logger.warn('Could not update project_sheets health status:', error.message);
+      }
+    }
+  },
+
+  async disconnect(projectId) {
+    try {
+      const { error } = await supabase
+        .from('project_sheets')
+        .update({
+          status: 'revoked',
+          updated_at: new Date().toISOString()
+        })
+        .eq('project_id', projectId);
+
+      if (error) throw error;
+    } catch (error) {
+      if (!isMissingGoogleSheetsTableError(error)) throw error;
+    }
+
+    await projectService.update(projectId, {
+      google_sheet_id: null,
+      google_sheet_url: null
+    });
+  },
+
+  async upsertMemberAccess(projectId, userId, email, status, errorMessage = null) {
+    try {
+      const sheet = await this.findActiveByProject(projectId);
+      if (!sheet?.id) return null;
+
+      const row = {
+        project_sheet_id: sheet.id,
+        user_id: userId,
+        email,
+        status,
+        last_error: errorMessage,
+        shared_at: status === 'shared' ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('project_sheet_access')
+        .upsert(row, { onConflict: 'project_sheet_id,user_id' })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      if (!isMissingGoogleSheetsTableError(error)) {
+        logger.warn('Could not save project_sheet_access row:', error.message);
+      }
+      return null;
+    }
+  }
+};
+
 // Transaction operations (combined expenses and incomes)
 const transactionService = {
   async getRecentTransactions(userId, limit = 3) {
@@ -1390,6 +1506,7 @@ module.exports = {
   setupDatabase,
   userService,
   projectService,
+  projectSheetService,
   projectMemberService,
   expenseService,
   incomeService,

@@ -1,5 +1,5 @@
 const { google } = require('googleapis');
-const { projectService, expenseService, incomeService, userService } = require('./supabase');
+const { projectService, projectSheetService, expenseService, incomeService, userService } = require('./supabase');
 const logger = require('../utils/logger');
 
 class GoogleSheetsService {
@@ -59,7 +59,10 @@ class GoogleSheetsService {
         credentials.client_email,
         null,
         credentials.private_key,
-        ['https://www.googleapis.com/auth/spreadsheets']
+        [
+          'https://www.googleapis.com/auth/spreadsheets',
+          'https://www.googleapis.com/auth/drive'
+        ]
       );
 
       this.sheets = google.sheets({ version: 'v4', auth: this.auth });
@@ -121,17 +124,17 @@ class GoogleSheetsService {
       // Проверяем заголовки
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: 'A1:G1'
+        range: 'A1:H1'
       });
 
       const headers = response.data.values?.[0] || [];
-      const expectedHeaders = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип'];
+      const expectedHeaders = this.getTransactionHeaders();
 
       // Если заголовки отсутствуют или неправильные, создаем их
       if (headers.length === 0 || !this.arraysEqual(headers, expectedHeaders)) {
         await this.sheets.spreadsheets.values.update({
           spreadsheetId,
-          range: 'A1:G1',
+        range: 'A1:H1',
           valueInputOption: 'RAW',
           resource: {
             values: [expectedHeaders]
@@ -150,7 +153,7 @@ class GoogleSheetsService {
                     startRowIndex: 0,
                     endRowIndex: 1,
                     startColumnIndex: 0,
-                    endColumnIndex: 7
+                    endColumnIndex: expectedHeaders.length
                   },
                   cell: {
                     userEnteredFormat: {
@@ -167,7 +170,7 @@ class GoogleSheetsService {
                     sheetId: 0,
                     dimension: 'COLUMNS',
                     startIndex: 0,
-                    endIndex: 7
+                    endIndex: expectedHeaders.length
                   }
                 }
               }
@@ -192,13 +195,149 @@ class GoogleSheetsService {
     return true;
   }
 
+  quoteSheetName(sheetName) {
+    return `'${String(sheetName).replace(/'/g, "''")}'`;
+  }
+
+  sheetRange(sheetName, a1Range) {
+    return `${this.quoteSheetName(sheetName)}!${a1Range}`;
+  }
+
+  extractRowNumberFromUpdatedRange(updatedRange) {
+    const match = String(updatedRange || '').match(/![A-Z]+(\d+):/i);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  getTransactionHeaders() {
+    return ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип', 'ID'];
+  }
+
+  async getProjectSheetConnection(project) {
+    const connection = await projectSheetService.findActiveByProject(project.id);
+    const spreadsheetId = connection?.google_sheet_id || project.google_sheet_id;
+    if (!spreadsheetId) return null;
+
+    return {
+      spreadsheetId,
+      sheetUrl: connection?.google_sheet_url || project.google_sheet_url,
+      connection
+    };
+  }
+
+  async ensureProjectWorksheet(spreadsheetId, sheetTitle) {
+    const spreadsheet = await this.sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties'
+    });
+
+    const existingSheet = spreadsheet.data.sheets.find(
+      sheet => sheet.properties.title === sheetTitle
+    );
+
+    let sheetId = existingSheet?.properties.sheetId;
+    if (!existingSheet) {
+      const response = await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: {
+          requests: [{
+            addSheet: {
+              properties: { title: sheetTitle }
+            }
+          }]
+        }
+      });
+      sheetId = response.data.replies[0].addSheet.properties.sheetId;
+      await this.protectSheetName(spreadsheetId, sheetId, sheetTitle);
+    }
+
+    await this.ensureHeaders(spreadsheetId, sheetTitle, sheetId);
+    return { sheetName: sheetTitle, sheetId };
+  }
+
+  async ensureHeaders(spreadsheetId, sheetName, sheetId = null) {
+    const expectedHeaders = this.getTransactionHeaders();
+    const response = await this.sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: this.sheetRange(sheetName, 'A1:H1')
+    });
+
+    const currentHeaders = response.data.values?.[0] || [];
+    if (currentHeaders.length === expectedHeaders.length && this.arraysEqual(currentHeaders, expectedHeaders)) {
+      return;
+    }
+
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: this.sheetRange(sheetName, 'A1:H1'),
+      valueInputOption: 'RAW',
+      resource: { values: [expectedHeaders] }
+    });
+
+    if (sheetId !== null) {
+      await this.sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: {
+          requests: [{
+            autoResizeDimensions: {
+              dimensions: {
+                sheetId,
+                dimension: 'COLUMNS',
+                startIndex: 0,
+                endIndex: expectedHeaders.length
+              }
+            }
+          }]
+        }
+      });
+    }
+  }
+
+  async checkProjectSheet(spreadsheetId, projectName) {
+    try {
+      if (!this.sheets) {
+        return { success: false, error: 'Google Sheets API не настроен' };
+      }
+
+      const sheetInfo = await this.getSheetInfo(spreadsheetId);
+      if (!sheetInfo) {
+        return { success: false, error: 'Таблица не найдена или нет доступа' };
+      }
+
+      if (projectName) {
+        await this.ensureProjectWorksheet(spreadsheetId, projectName);
+      } else {
+        await this.ensureSheetStructure(spreadsheetId);
+      }
+
+      return { success: true, sheetInfo };
+    } catch (error) {
+      logger.error('Google Sheets health check failed:', error);
+      if ((error.message || '').includes('403')) {
+        return { success: false, error: 'Нет доступа на запись. Добавьте сервисный аккаунт как редактора таблицы.' };
+      }
+      if ((error.message || '').includes('404')) {
+        return { success: false, error: 'Таблица не найдена. Проверьте ссылку или ID.' };
+      }
+      return { success: false, error: error.message || 'Не удалось проверить таблицу' };
+    }
+  }
+
 
 
   async shareSheetWithUser(spreadsheetId, userEmail, userName) {
+    const result = await this.shareSheetWithUserDetailed(spreadsheetId, userEmail, userName);
+    return result.success;
+  }
+
+  async shareSheetWithUserDetailed(spreadsheetId, userEmail, userName) {
     try {
-      if (!this.sheets) {
-        logger.warn('Google Sheets not available - skipping sheet sharing');
-        return false;
+      if (!this.auth) {
+        logger.warn('Google API not available - skipping sheet sharing');
+        return { success: false, error: 'Google API не настроен' };
+      }
+
+      if (!userEmail) {
+        return { success: false, error: 'У участника не указан email' };
       }
 
       // Share the spreadsheet with the user
@@ -214,16 +353,20 @@ class GoogleSheetsService {
       });
 
       logger.info(`Shared sheet ${spreadsheetId} with ${userEmail}`);
-      return true;
+      return { success: true };
     } catch (error) {
       logger.error('Failed to share sheet with user:', error);
-      return false;
+      if ((error.message || '').includes('403')) {
+        return { success: false, error: 'У сервисного аккаунта нет прав управлять доступом к таблице' };
+      }
+      return { success: false, error: error.message || 'Не удалось выдать доступ' };
     }
   }
 
   async addTransactionToSheet(transaction, projectId, type = 'expense') {
     // Declare sheetName outside try block to access in catch
     let sheetName = 'unknown';
+    let spreadsheetId = 'unknown';
     
     try {
       if (!this.sheets) {
@@ -232,10 +375,12 @@ class GoogleSheetsService {
       }
 
       const project = await projectService.findById(projectId);
-      if (!project?.google_sheet_id) {
+      const projectSheet = await this.getProjectSheetConnection(project);
+      if (!projectSheet?.spreadsheetId) {
         logger.debug('No Google Sheet ID for project:', projectId);
         return;
       }
+      spreadsheetId = projectSheet.spreadsheetId;
 
       const user = await userService.findById(transaction.user_id);
       const authorName = user?.username || user?.first_name || 'Unknown';
@@ -251,7 +396,8 @@ class GoogleSheetsService {
         transaction.currency,
         transaction.category,
         authorName,
-        type
+        type,
+        transaction.id
       ]];
 
       // Use project name as sheet name, fallback to first sheet
@@ -280,18 +426,18 @@ class GoogleSheetsService {
           try {
             const headerResponse = await this.sheets.spreadsheets.values.get({
               spreadsheetId: project.google_sheet_id,
-              range: `${project.name}!A1:G1`
+              range: this.sheetRange(project.name, 'A1:H1')
             });
 
             const currentHeaders = headerResponse.data.values?.[0] || [];
-            const expectedHeaders = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип'];
+            const expectedHeaders = this.getTransactionHeaders();
 
             // Check if headers need updating (old format had 'Источник' instead of 'Тип')
             if (currentHeaders.length === 0 || !this.arraysEqual(currentHeaders, expectedHeaders)) {
               logger.info(`🔧 [${type.toUpperCase()}] Updating headers for existing sheet "${project.name}"`);
               await this.sheets.spreadsheets.values.update({
                 spreadsheetId: project.google_sheet_id,
-                range: `${project.name}!A1:G1`,
+                range: this.sheetRange(project.name, 'A1:H1'),
                 valueInputOption: 'RAW',
                 resource: {
                   values: [expectedHeaders]
@@ -327,10 +473,10 @@ class GoogleSheetsService {
             logger.info(`🔧 [${type.toUpperCase()}] Adding headers to new sheet "${project.name}"...`);
             await this.sheets.spreadsheets.values.update({
               spreadsheetId: project.google_sheet_id,
-              range: `${project.name}!A1:G1`,
+                range: this.sheetRange(project.name, 'A1:H1'),
               valueInputOption: 'RAW',
               resource: {
-                values: [['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Автор', 'Тип']]
+                values: [this.getTransactionHeaders()]
               }
             });
 
@@ -355,19 +501,24 @@ class GoogleSheetsService {
       }
 
       logger.info(`📝 [${type.toUpperCase()}] Adding ${type} to sheet "${sheetName}"`);
-      await this.sheets.spreadsheets.values.append({
+      const appendResponse = await this.sheets.spreadsheets.values.append({
         spreadsheetId: project.google_sheet_id,
-        range: `${sheetName}!A:G`,
+        range: this.sheetRange(sheetName, 'A:H'),
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: { values }
       });
 
-      // Mark as synced
+      const sheetsRowId = this.extractRowNumberFromUpdatedRange(appendResponse.data?.updates?.updatedRange);
+      const syncUpdates = {
+        synced_to_sheets: true,
+        ...(sheetsRowId ? { sheets_row_id: sheetsRowId } : {})
+      };
+
       if (type === 'expense') {
-        await expenseService.update(transaction.id, { synced_to_sheets: true });
+        await expenseService.update(transaction.id, syncUpdates);
       } else {
-        await incomeService.update(transaction.id, { synced_to_sheets: true });
+        await incomeService.update(transaction.id, syncUpdates);
       }
 
       logger.info(`✅ Added ${type} to sheet "${sheetName}": ${transaction.description} - ${amount} ${transaction.currency}`);
@@ -408,15 +559,17 @@ class GoogleSheetsService {
   async syncFromGoogleSheets(userId, projectId) {
     try {
       const project = await projectService.findById(projectId);
-      if (!project?.google_sheet_id) {
+      const projectSheet = await this.getProjectSheetConnection(project);
+      if (!projectSheet?.spreadsheetId) {
         return { imported: 0, errors: ['No Google Sheet linked to project'] };
       }
+      const spreadsheetId = projectSheet.spreadsheetId;
 
       // Get the sheet tab name matching the project name
       let sheetName = project.name;
       try {
         const spreadsheet = await this.sheets.spreadsheets.get({
-          spreadsheetId: project.google_sheet_id,
+          spreadsheetId,
           fields: 'sheets.properties.title'
         });
 
@@ -433,8 +586,8 @@ class GoogleSheetsService {
       }
 
       const response = await this.sheets.spreadsheets.values.get({
-        spreadsheetId: project.google_sheet_id,
-        range: `${sheetName}!A2:G`, // Skip header row
+        spreadsheetId,
+        range: this.sheetRange(sheetName, 'A2:H'), // Skip header row
       });
 
       const rows = response.data.values || [];
@@ -456,6 +609,7 @@ class GoogleSheetsService {
 
           const transactionType = row[6]; // 'expense', 'income', or 'bot'
           const isIncome = transactionType === 'income';
+          const externalId = row[7];
 
           let transactionData = {
             user_id: userId,
@@ -476,7 +630,9 @@ class GoogleSheetsService {
           }
 
           // Check if already imported
-          const existing = await this.findTransactionBySheetRow(projectId, rowNumber, isIncome);
+          const existing = externalId
+            ? await this.findTransactionByExternalId(projectId, externalId, isIncome)
+            : await this.findTransactionBySheetRow(projectId, rowNumber, isIncome);
 
           if (existing) {
             // Update existing entry if data changed in Google Sheets
@@ -494,6 +650,17 @@ class GoogleSheetsService {
               imported++;
               logger.info(`Updated ${isIncome ? 'income' : 'expense'} from sheet row ${rowNumber}`);
             }
+            continue;
+          }
+
+          const matching = await this.findMatchingTransaction(projectId, transactionData, isIncome);
+          if (matching) {
+            const service = isIncome ? incomeService : expenseService;
+            await service.update(matching.id, {
+              sheets_row_id: rowNumber,
+              synced_to_sheets: true
+            });
+            logger.info(`Matched existing ${isIncome ? 'income' : 'expense'} to sheet row ${rowNumber}`);
             continue;
           }
 
@@ -535,6 +702,10 @@ class GoogleSheetsService {
       }
 
       logger.info(`📊 Sync completed from "${sheetName}": ${imported} imported, ${errors.length} errors`);
+      await projectSheetService.markSyncResult(projectId, {
+        success: errors.length === 0,
+        errorMessage: errors.length ? errors.slice(0, 3).join('; ') : null
+      });
       return { imported, errors };
     } catch (error) {
       logger.error('❌ Failed to sync from Google Sheets:', error);
@@ -554,9 +725,40 @@ class GoogleSheetsService {
     try {
       const service = isIncome ? incomeService : expenseService;
       const transactions = await service.findByProject(projectId, 1000, 0);
-      return transactions.find(t => t.sheets_row_id === rowNumber && t.source === 'sheets');
+      return transactions.find(t => t.sheets_row_id === rowNumber);
     } catch (error) {
       logger.error(`Failed to find ${isIncome ? 'income' : 'expense'} by sheet row:`, error);
+      return null;
+    }
+  }
+
+  async findTransactionByExternalId(projectId, transactionId, isIncome = false) {
+    try {
+      const service = isIncome ? incomeService : expenseService;
+      const transaction = await service.findById(transactionId);
+      return transaction?.project_id === projectId ? transaction : null;
+    } catch (error) {
+      logger.error(`Failed to find ${isIncome ? 'income' : 'expense'} by external id:`, error);
+      return null;
+    }
+  }
+
+  async findMatchingTransaction(projectId, transactionData, isIncome = false) {
+    try {
+      const service = isIncome ? incomeService : expenseService;
+      const dateField = isIncome ? 'income_date' : 'expense_date';
+      const transactions = await service.findByProject(projectId, 1000, 0);
+
+      return transactions.find((t) => (
+        !t.sheets_row_id &&
+        Number(t.amount) === Number(transactionData.amount) &&
+        (t.currency || '') === (transactionData.currency || '') &&
+        (t.description || '') === (transactionData.description || '') &&
+        (t.category || '') === (transactionData.category || '') &&
+        t[dateField] === transactionData[dateField]
+      ));
+    } catch (error) {
+      logger.error(`Failed to find matching ${isIncome ? 'income' : 'expense'}:`, error);
       return null;
     }
   }
@@ -623,12 +825,13 @@ class GoogleSheetsService {
         expense.currency,
         expense.category,
         expense.user_username || 'Bot User',
-        'bot'
+        'bot',
+        expense.id
       ]);
 
       await this.sheets.spreadsheets.values.append({
         spreadsheetId,
-        range: 'A:G',
+        range: 'A:H',
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: { values }
@@ -688,18 +891,10 @@ class GoogleSheetsService {
       // Add header row to the new sheet
       await this.sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${sheetTitle}!A1:G1`,
+        range: this.sheetRange(sheetTitle, 'A1:H1'),
         valueInputOption: 'RAW',
         resource: {
-          values: [[
-            'Дата',
-            'Описание',
-            'Сумма',
-            'Валюта', 
-            'Категория',
-            'Пользователь',
-            'Источник'
-          ]]
+          values: [this.getTransactionHeaders()]
         }
       });
 
@@ -804,7 +999,8 @@ class GoogleSheetsService {
       }
 
       const project = await projectService.findById(projectId);
-      if (!project?.google_sheet_id) {
+      const projectSheet = await this.getProjectSheetConnection(project);
+      if (!projectSheet?.spreadsheetId) {
         logger.debug('No Google Sheet ID for project:', projectId);
         return;
       }
@@ -829,15 +1025,16 @@ class GoogleSheetsService {
         transaction.currency,
         transaction.category,
         authorName,
-        type
+        type,
+        transaction.id
       ]];
 
       // Use project name as sheet name
       const sheetName = project.name;
-      const range = `${sheetName}!A${transaction.sheets_row_id}:G${transaction.sheets_row_id}`;
+      const range = this.sheetRange(sheetName, `A${transaction.sheets_row_id}:H${transaction.sheets_row_id}`);
 
       await this.sheets.spreadsheets.values.update({
-        spreadsheetId: project.google_sheet_id,
+        spreadsheetId: projectSheet.spreadsheetId,
         range: range,
         valueInputOption: 'USER_ENTERED',
         resource: { values }
@@ -860,7 +1057,8 @@ class GoogleSheetsService {
       }
 
       const project = await projectService.findById(projectId);
-      if (!project?.google_sheet_id) {
+      const projectSheet = await this.getProjectSheetConnection(project);
+      if (!projectSheet?.spreadsheetId) {
         logger.debug('No Google Sheet ID for project:', projectId);
         return;
       }
@@ -871,23 +1069,12 @@ class GoogleSheetsService {
         return;
       }
 
-      const sheetName = project.name;
+      const range = this.sheetRange(project.name, `A${transaction.sheets_row_id}:H${transaction.sheets_row_id}`);
 
-      // Delete the row by clearing its content and then deleting the row
-      await this.sheets.spreadsheets.batchUpdate({
-        spreadsheetId: project.google_sheet_id,
-        resource: {
-          requests: [{
-            deleteDimension: {
-              range: {
-                sheetId: 0, // This should be dynamically determined based on sheet name
-                dimension: 'ROWS',
-                startIndex: transaction.sheets_row_id - 1, // 0-based index
-                endIndex: transaction.sheets_row_id
-              }
-            }
-          }]
-        }
+      // Clear the row instead of deleting it so stored sheets_row_id values stay stable.
+      await this.sheets.spreadsheets.values.clear({
+        spreadsheetId: projectSheet.spreadsheetId,
+        range
       });
 
       logger.info(`Deleted ${type} from Google Sheets: row ${transaction.sheets_row_id}, project: ${project.name}`);

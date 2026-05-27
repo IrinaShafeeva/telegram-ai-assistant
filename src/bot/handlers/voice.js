@@ -157,7 +157,7 @@ async function handleVoice(msg) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: processingMessage.message_id,
-        reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+        reply_markup: getIncomeConfirmationKeyboard(tempId)
       });
 
       // Auto-expire temp income after 5 minutes
@@ -196,7 +196,7 @@ async function handleVoice(msg) {
       await bot.editMessageText(confirmationText, {
         chat_id: chatId,
         message_id: processingMessage.message_id,
-        reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+        reply_markup: getExpenseConfirmationKeyboard(tempId)
       });
 
       // Auto-expire temp expense after 5 minutes
@@ -302,7 +302,7 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
 Всё верно?`;
 
         await bot.sendMessage(chatId, confirmationText, {
-          reply_markup: getIncomeConfirmationKeyboard(tempId, user.is_premium)
+          reply_markup: getIncomeConfirmationKeyboard(tempId)
         });
 
         // Auto-expire after 5 minutes
@@ -337,7 +337,7 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
 Всё верно?`;
 
         await bot.sendMessage(chatId, confirmationText, {
-          reply_markup: getExpenseConfirmationKeyboard(tempId, user.is_premium)
+          reply_markup: getExpenseConfirmationKeyboard(tempId)
         });
 
         // Auto-expire after 5 minutes
