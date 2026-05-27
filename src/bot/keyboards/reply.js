@@ -3,6 +3,7 @@ function getMainMenuKeyboard(hasFamilyBudget = false) {
     return {
       keyboard: [
         ['📋 Проекты'],
+        ['👨‍👩‍👧 Семейный бюджет'],
         ['📊 Реальность месяца', '📝 Мои списки'],
         ['⚙️ Настройки', 'ℹ️ Помощь']
       ],
