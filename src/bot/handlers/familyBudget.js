@@ -43,8 +43,13 @@ function parseDay(text) {
 }
 
 async function userHasFamilyMenu(userId) {
-  const p = await familyProjectService.findFamilyProjectForUser(userId);
-  return p && p.onboarding_completed;
+  try {
+    const p = await familyProjectService.findFamilyProjectForUser(userId);
+    return p && p.onboarding_completed;
+  } catch (error) {
+    logger.warn('Could not check family budget menu state:', error.message);
+    return false;
+  }
 }
 
 function formatPlanSnapshot(snapshot, currency) {
@@ -159,7 +164,7 @@ async function getFamilyProjectOrReply(chatId, userId) {
   const project = await familyProjectService.findFamilyProjectForUser(userId);
   if (!project) {
     const bot = getBot();
-    await bot.sendMessage(chatId, 'Семейный бюджет не создан. Нажмите /start и выберите «Создать семейный бюджет».');
+    await bot.sendMessage(chatId, 'Семейный бюджет не создан. Нажмите /start и выберите «Семейный бюджет» в меню.');
     return null;
   }
   if (!project.onboarding_completed) {
@@ -226,11 +231,20 @@ async function sendPartnerWelcomeAfterJoin(chatId, user, project) {
 async function showLumikUpdateIfNeeded(chatId, user) {
   if (user.lumik_update_seen) return false;
   const bot = getBot();
-  await bot.sendMessage(chatId, LUMIK_UPDATE_MESSAGE, {
-    reply_markup: updateBroadcastKeyboard()
-  });
-  await userService.update(user.id, { lumik_update_seen: true });
-  return true;
+  try {
+    await bot.sendMessage(chatId, LUMIK_UPDATE_MESSAGE, {
+      reply_markup: updateBroadcastKeyboard()
+    });
+    try {
+      await userService.update(user.id, { lumik_update_seen: true });
+    } catch (updateError) {
+      logger.warn('Could not mark Lumik update as seen:', updateError.message);
+    }
+    return true;
+  } catch (error) {
+    logger.warn('Could not show Lumik update broadcast:', error.message);
+    return false;
+  }
 }
 
 async function startCreateFamilyBudget(chatId, user) {

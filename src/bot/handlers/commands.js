@@ -61,6 +61,10 @@ async function handleStart(msg, match) {
 💱 Сначала выберите основную валюту:`,
         { reply_markup: getCurrencySelectionKeyboard('initial', 'onboarding') }
       );
+      await bot.sendMessage(chatId,
+        'Если хотите начать с общего бюджета, нажмите «Семейный бюджет» в меню ниже.',
+        { reply_markup: getMainMenuKeyboard(false) }
+      );
     } else {
       const hasFamily = await userHasFamilyMenu(user.id);
       await bot.sendMessage(chatId, 
