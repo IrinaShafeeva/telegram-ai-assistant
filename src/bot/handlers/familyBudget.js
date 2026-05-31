@@ -42,6 +42,26 @@ function parseDay(text) {
   return null;
 }
 
+function isFamilySchemaError(error) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(error?.code) ||
+    /is_family_budget|budget_currency|onboarding_completed|family_established|planned_payments|planned_incomes|family_budget_member_state|budget_changelog|floating_incomes|debt_adjustments/i.test(message);
+}
+
+async function sendFamilySchemaError(chatId) {
+  const bot = getBot();
+  await bot.sendMessage(
+    chatId,
+    'Семейный бюджет пока не может стартовать: в Supabase не применена схема семейного бюджета.\n\n' +
+      'Нужно выполнить SQL-миграции:\n' +
+      '1. migrations/001_family_budget.sql\n' +
+      '2. migrations/002_family_member_onboarding.sql\n' +
+      '3. migrations/003_family_canonical_project.sql\n\n' +
+      'После этого нажмите /start и снова выберите «Семейный бюджет».',
+    { reply_markup: getMainMenuKeyboard(false) }
+  );
+}
+
 async function userHasFamilyMenu(userId) {
   try {
     const p = await familyProjectService.findFamilyProjectForUser(userId);
@@ -250,44 +270,54 @@ async function showLumikUpdateIfNeeded(chatId, user) {
 async function startCreateFamilyBudget(chatId, user) {
   const bot = getBot();
 
-  const canonical = await familyProjectService.findCanonicalFamilyProject();
-  if (canonical) {
-    const access = await projectService.hasAccess(canonical.id, user.id);
-    if (access.access) {
-      await showMonthReality(chatId, user.id);
+  try {
+    const canonical = await familyProjectService.findCanonicalFamilyProject();
+    if (canonical) {
+      const access = await projectService.hasAccess(canonical.id, user.id);
+      if (access.access) {
+        await showMonthReality(chatId, user.id);
+        return;
+      }
+      await bot.sendMessage(
+        chatId,
+        '👫 Семейный бюджет уже создан вашим партнёром.\n\nПопросите ссылку «Пригласить партнёра» или откройте приглашение /start …'
+      );
       return;
     }
+
+    const owned = await familyProjectService.findOwnedFamilyProject(user.id);
+    if (owned) {
+      if (owned.onboarding_completed) {
+        await showMonthReality(chatId, user.id);
+      } else {
+        await startOnboarding(chatId, user.id, owned);
+      }
+      return;
+    }
+
+    const can = await familyProjectService.canCreateFamilyProject(user.id);
+    if (!can) {
+      await bot.sendMessage(chatId, 'Семейный бюджет уже есть — откройте «Реальность месяца».');
+      return;
+    }
+
+    const currency = user.primary_currency || 'RUB';
+    const project = await familyProjectService.createFamilyProject(user.id, currency);
     await bot.sendMessage(
       chatId,
-      '👫 Семейный бюджет уже создан вашим партнёром.\n\nПопросите ссылку «Пригласить партнёра» или откройте приглашение /start …'
+      `✅ Проект «${project.name}» создан.\n\nВалюта бюджета: ${currency}\nКлючевые слова для операционных трат: семья, семейный, общак.\n\nОтветьте на несколько вопросов — так соберём «Реальность месяца».`,
+      { reply_markup: getMainMenuKeyboard(true) }
     );
-    return;
-  }
-
-  const owned = await familyProjectService.findOwnedFamilyProject(user.id);
-  if (owned) {
-    if (owned.onboarding_completed) {
-      await showMonthReality(chatId, user.id);
-    } else {
-      await startOnboarding(chatId, user.id, owned);
+    await startOnboarding(chatId, user.id, project);
+  } catch (error) {
+    logger.error('Start family budget error:', error);
+    stateManager.clearState(chatId);
+    if (isFamilySchemaError(error)) {
+      await sendFamilySchemaError(chatId);
+      return;
     }
-    return;
+    await bot.sendMessage(chatId, 'Не удалось открыть семейный бюджет. Попробуйте ещё раз через /start.');
   }
-
-  const can = await familyProjectService.canCreateFamilyProject(user.id);
-  if (!can) {
-    await bot.sendMessage(chatId, 'Семейный бюджет уже есть — откройте «Реальность месяца».');
-    return;
-  }
-
-  const currency = user.primary_currency || 'RUB';
-  const project = await familyProjectService.createFamilyProject(user.id, currency);
-  await bot.sendMessage(
-    chatId,
-    `✅ Проект «${project.name}» создан.\n\nВалюта бюджета: ${currency}\nКлючевые слова для операционных трат: семья, семейный, общак.\n\nОтветьте на несколько вопросов — так соберём «Реальность месяца».`,
-    { reply_markup: getMainMenuKeyboard(true) }
-  );
-  await startOnboarding(chatId, user.id, project);
 }
 
 async function startOnboarding(chatId, userId, project, isMonthly = false) {

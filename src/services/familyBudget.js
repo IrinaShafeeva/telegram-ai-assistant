@@ -91,6 +91,8 @@ const familyProjectService = {
       .eq('owner_id', userId)
       .eq('is_family_budget', true)
       .eq('is_active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
       .maybeSingle();
     if (error && error.code !== 'PGRST116') throw error;
     return data;
