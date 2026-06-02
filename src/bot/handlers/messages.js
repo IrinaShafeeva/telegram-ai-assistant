@@ -17,6 +17,8 @@ const {
   handleFamilyMenuText,
   userHasFamilyMenu
 } = require('./familyBudget');
+const { startTransfer, handleTransferText } = require('./transfer');
+const { showProjectsSummary } = require('./projectsSummary');
 
 // Function to detect currency based on language and text content
 function detectCurrencyByLanguage(text, languageCode) {
@@ -70,6 +72,10 @@ async function handleText(msg) {
         await handleFamilyText(msg, userState);
         return;
       }
+      if (userState.type.startsWith('TRANSFER_')) {
+        await handleTransferText(msg, userState);
+        return;
+      }
       // Special case: if user is editing project name but input looks like a transaction, clear state and process as transaction
       if (userState.type === 'WAITING_PROJECT_NAME_EDIT' && /\d/.test(text)) {
         logger.info(`🔄 User in project edit state but input "${text}" looks like transaction, clearing state`);
@@ -89,12 +95,24 @@ async function handleText(msg) {
       return;
     }
 
-    // Handle main menu buttons - clear any existing state first
+    // Handle main menu buttons. Family handlers manage their own state
+    // internally (startOnboarding sets FB_ONBOARDING), so we must NOT clear
+    // state after dispatch — clearing here would drop FB_ONBOARDING and the
+    // next user message would fall through to expense parsing.
     if (await handleFamilyMenuText(msg)) {
-      stateManager.clearState(chatId);
       return;
     }
 
+    if (text === '💸 Перевод') {
+      stateManager.clearState(chatId);
+      await startTransfer(chatId, user);
+      return;
+    }
+    if (text === '📊 По проектам') {
+      stateManager.clearState(chatId);
+      await showProjectsSummary(chatId, user.id);
+      return;
+    }
     if (text === '📋 Проекты') {
       stateManager.clearState(chatId);
       return require('./commands').handleProjects(msg);

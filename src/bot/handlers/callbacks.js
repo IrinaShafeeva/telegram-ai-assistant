@@ -26,8 +26,20 @@ const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 const { handleFamilyCallback } = require('./familyBudget');
 const { notifyPartners, partnerLabel } = require('../../services/familyBudget');
+const { handleTransferCallback } = require('./transfer');
+const { handleProjectsSummaryCallback } = require('./projectsSummary');
 
 async function handleCallback(callbackQuery) {
+  // Inter-project transfer wizard handles its own fb_xfer:* callbacks.
+  if (callbackQuery.data && callbackQuery.data.startsWith('fb_xfer:')) {
+    try { await handleTransferCallback(callbackQuery); } catch (e) { logger.error('transfer cb error:', e); }
+    return;
+  }
+  // Per-project summary period switcher.
+  if (callbackQuery.data && callbackQuery.data.startsWith('psum:')) {
+    try { await handleProjectsSummaryCallback(callbackQuery); } catch (e) { logger.error('psum cb error:', e); }
+    return;
+  }
   const chatId = callbackQuery.message.chat.id;
   const messageId = callbackQuery.message.message_id;
   const data = callbackQuery.data;
@@ -345,13 +357,10 @@ async function handleSaveExpense(chatId, messageId, data, user) {
     // Get project name for confirmation
     const project = await projectService.findById(expenseData.project_id);
 
-    // Notify family budget partner about the expense
-    if (project.is_family_budget) {
-      await notifyPartners(
-        bot, project.id, user.id,
-        `💸 ${partnerLabel(user)} записал(а) расход: ${expenseData.description} — ${expenseData.amount} ${expenseData.currency}`
-      );
-    }
+    // Co-participants get notified by the service layer (notifyProjectMembers
+    // in supabase.js → expenseService.create) for every is_collaborative
+    // project, which includes family budgets the moment a partner joins.
+    // No extra notification needed here.
 
     // Try to add to Google Sheets only if project has google_sheet_id
     let sheetsSuccess = false;
@@ -1856,13 +1865,8 @@ async function handleSaveIncome(chatId, messageId, data, user) {
     // Get project name for confirmation
     const project = await projectService.findById(incomeData.project_id);
 
-    // Notify family budget partner about the income
-    if (project.is_family_budget) {
-      await notifyPartners(
-        bot, project.id, user.id,
-        `💰 ${partnerLabel(user)} записал(а) доход: ${incomeData.description} — +${incomeData.amount} ${incomeData.currency}`
-      );
-    }
+    // Co-participants get notified by the service layer (see expense
+    // handler above for full explanation).
 
     // Try to add to Google Sheets only if project has google_sheet_id
     let sheetsSuccess = false;

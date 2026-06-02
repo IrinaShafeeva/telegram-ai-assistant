@@ -123,7 +123,13 @@ const STATE_TYPES = {
   FB_LIST_EDIT: 'FB_LIST_EDIT',
   FB_FLOATING_AMOUNT: 'FB_FLOATING_AMOUNT',
   FB_DEBT_TOPUP: 'FB_DEBT_TOPUP',
-  FB_CONFIRM_DELETE: 'FB_CONFIRM_DELETE'
+  FB_CONFIRM_DELETE: 'FB_CONFIRM_DELETE',
+  // Inter-project transfer wizard.
+  // Data carried: { sourceProjectId, targetProjectId, currency, sourceName, targetName, amount, comment }
+  TRANSFER_PICK_SOURCE: 'TRANSFER_PICK_SOURCE',
+  TRANSFER_PICK_TARGET: 'TRANSFER_PICK_TARGET',
+  TRANSFER_AMOUNT: 'TRANSFER_AMOUNT',
+  TRANSFER_COMMENT: 'TRANSFER_COMMENT'
 };
 
 const stateManager = new StateManager();

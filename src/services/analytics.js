@@ -1,4 +1,12 @@
 const { expenseService, userService, incomeService, supabase } = require('./supabase');
+// Inter-project transfers are recorded as paired expense+income rows under
+// the ↔️ Перевод category and share a transfer_id. They cancel each other
+// out and must be excluded from analytics so we don't double-count internal
+// money moves as real income or expense.
+function dropTransferRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.filter(r => !r || !r.transfer_id);
+}
 const openaiService = require('./openai');
 const currencyService = require('./currency');
 const { formatCurrency, formatMultiCurrencyAmount } = require('../utils/currency');
@@ -11,12 +19,13 @@ class AnalyticsService {
       const { startDate, endDate } = getDateRange(period);
       
       // Get expenses for the period
-      const { data: expenses } = await supabase
+      const { data: rawExpenses } = await supabase
         .rpc('get_user_expenses_for_period', {
           p_user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
           end_date: endDate.toISOString().split('T')[0]
         });
+      const expenses = dropTransferRows(rawExpenses);
 
       if (!expenses || expenses.length === 0) {
         return {
@@ -119,7 +128,7 @@ class AnalyticsService {
       endDate.setTime(futureEndDate.getTime());
 
       // Get both expenses and incomes in parallel
-      const [expensesResult, incomes] = await Promise.all([
+      let [expensesResult, incomes] = await Promise.all([
         supabase.rpc('get_user_expenses_for_period', {
           p_user_id: userId,
           start_date: startDate.toISOString().split('T')[0],
@@ -128,7 +137,8 @@ class AnalyticsService {
         incomeService.getIncomesForExport(userId, startDate, endDate)
       ]);
 
-      let expenses = expensesResult.data || [];
+      let expenses = dropTransferRows(expensesResult.data || []);
+      incomes = dropTransferRows(incomes || []);
 
       // Filter by project if specified
       if (projectId) {
@@ -585,6 +595,110 @@ class AnalyticsService {
         periodName: this.getPeriodName(period),
         error: 'Ошибка при расчёте аналитики доходов'
       };
+    }
+  }
+
+  // Per-project breakdown for a period. Returns one entry per project the
+  // user can see, split into:
+  //   income / expense     — real, external money (excludes transfers)
+  //   transferIn/Out       — inter-project transfers, shown on their own lines
+  //   balance              — income + transferIn - expense - transferOut
+  //                          (per currency; the real cash impact on the project)
+  //
+  // The global "all projects" total upstream still excludes transfers so we
+  // don't double-count internal moves, but at the project level transfers ARE
+  // shown — otherwise a family budget funded entirely by business transfers
+  // looks like it earns nothing.
+  async getProjectsBreakdown(userId, period = 'this_month') {
+    try {
+      const { startDate, endDate } = getDateRange(period);
+
+      const [projects, expenses, incomes] = await Promise.all([
+        require('./supabase').projectService.findByUserId(userId),
+        expenseService.getExpensesForExport(userId, startDate, endDate),
+        incomeService.getIncomesForExport(userId, startDate, endDate)
+      ]);
+
+      const empty = () => ({
+        income: {},      // external income (no transfer_id)
+        expense: {},     // external expense (no transfer_id)
+        transferIn: {},  // money received via transfers from other projects
+        transferOut: {}, // money sent via transfers to other projects
+        incomeCount: 0,
+        expenseCount: 0,
+        transferInCount: 0,
+        transferOutCount: 0
+      });
+
+      const byProject = new Map();
+      for (const p of (projects || [])) {
+        byProject.set(p.id, { id: p.id, name: p.name, isFamily: !!p.is_family_budget, ...empty() });
+      }
+      const ensure = (pid, fallbackName) => {
+        if (!byProject.has(pid)) byProject.set(pid, { id: pid, name: fallbackName || 'Без проекта', isFamily: false, ...empty() });
+        return byProject.get(pid);
+      };
+
+      for (const e of (expenses || [])) {
+        const entry = ensure(e.project_id, e.project_name);
+        const cur = e.currency || 'XXX';
+        const amt = Math.abs(parseFloat(e.amount || 0));
+        if (e.transfer_id) {
+          entry.transferOut[cur] = (entry.transferOut[cur] || 0) + amt;
+          entry.transferOutCount += 1;
+        } else {
+          entry.expense[cur] = (entry.expense[cur] || 0) + amt;
+          entry.expenseCount += 1;
+        }
+      }
+      for (const i of (incomes || [])) {
+        const entry = ensure(i.project_id, i.project_name);
+        const cur = i.currency || 'XXX';
+        const amt = parseFloat(i.amount || 0);
+        if (i.transfer_id) {
+          entry.transferIn[cur] = (entry.transferIn[cur] || 0) + amt;
+          entry.transferInCount += 1;
+        } else {
+          entry.income[cur] = (entry.income[cur] || 0) + amt;
+          entry.incomeCount += 1;
+        }
+      }
+
+      // balance per currency includes transfers — it answers the practical
+      // question "what actually happened to this project's cash position?"
+      const result = Array.from(byProject.values()).map(p => {
+        const curs = new Set([
+          ...Object.keys(p.income), ...Object.keys(p.expense),
+          ...Object.keys(p.transferIn), ...Object.keys(p.transferOut)
+        ]);
+        const balance = {};
+        for (const c of curs) {
+          balance[c] = (p.income[c] || 0) + (p.transferIn[c] || 0)
+                     - (p.expense[c] || 0) - (p.transferOut[c] || 0);
+        }
+        const hasActivity = (p.incomeCount + p.expenseCount + p.transferInCount + p.transferOutCount) > 0;
+        return { ...p, balance, hasActivity };
+      });
+
+      result.sort((a, b) => {
+        if (a.hasActivity !== b.hasActivity) return a.hasActivity ? -1 : 1;
+        const turnover = (x) => Object.values(x.income).reduce((s, v) => s + v, 0)
+                              + Object.values(x.expense).reduce((s, v) => s + v, 0)
+                              + Object.values(x.transferIn).reduce((s, v) => s + v, 0)
+                              + Object.values(x.transferOut).reduce((s, v) => s + v, 0);
+        return turnover(b) - turnover(a);
+      });
+
+      return {
+        period,
+        periodName: this.getPeriodName(period),
+        startDate: formatDate(startDate),
+        endDate: formatDate(endDate),
+        projects: result
+      };
+    } catch (error) {
+      logger.error('Projects breakdown error:', error);
+      throw error;
     }
   }
 

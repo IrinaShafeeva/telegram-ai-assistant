@@ -41,7 +41,9 @@ async function runMigrations() {
     { table: 'users', column: 'last_insight_sent_date', type: 'DATE' },
     { table: 'users', column: 'email', type: 'TEXT' },
     { table: 'projects', column: 'family_established_at', type: 'TIMESTAMP' },
-    { table: 'projects', column: 'family_established_by', type: 'BIGINT' }
+    { table: 'projects', column: 'family_established_by', type: 'BIGINT' },
+    { table: 'expenses', column: 'transfer_id', type: 'UUID' },
+    { table: 'incomes', column: 'transfer_id', type: 'UUID' }
   ];
 
   for (const { table, column, type } of columnsToCheck) {
@@ -1501,6 +1503,90 @@ const transactionService = {
   }
 };
 
+const TRANSFER_CATEGORY = '↔️ Перевод';
+
+const transferService = {
+  TRANSFER_CATEGORY,
+
+  isTransferRow(row) {
+    return !!(row && row.transfer_id);
+  },
+
+  // Create a paired expense (source) + income (target) sharing one transfer_id.
+  // Returns { transferId, expense, income }. Both rows live under
+  // TRANSFER_CATEGORY so analytics/reports can filter them out — they are
+  // internal moves, not real income or expense across the household.
+  async create({ sourceProjectId, targetProjectId, amount, currency, comment, userId, date }) {
+    if (!sourceProjectId || !targetProjectId) throw new Error('source and target projects required');
+    if (sourceProjectId === targetProjectId) throw new Error('source and target must differ');
+    const num = parseFloat(amount);
+    if (!Number.isFinite(num) || num <= 0) throw new Error('amount must be > 0');
+
+    const sourceProject = await projectService.findById(sourceProjectId);
+    const targetProject = await projectService.findById(targetProjectId);
+    if (!sourceProject || !targetProject) throw new Error('project not found');
+
+    const transferId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : require('crypto').randomUUID();
+
+    const today = (date || new Date()).toISOString().slice(0, 10);
+    const descSource = `→ ${targetProject.name}${comment ? ` (${comment})` : ''}`;
+    const descTarget = `← ${sourceProject.name}${comment ? ` (${comment})` : ''}`;
+
+    // Insert the expense first; if the income insert fails we roll the expense
+    // back so a transfer is never half-recorded.
+    const { data: expense, error: expErr } = await supabase
+      .from('expenses')
+      .insert({
+        user_id: userId,
+        project_id: sourceProjectId,
+        amount: num,
+        currency,
+        category: TRANSFER_CATEGORY,
+        description: descSource,
+        expense_date: today,
+        source: 'transfer',
+        transfer_id: transferId
+      })
+      .select()
+      .single();
+    if (expErr) throw expErr;
+
+    const { data: income, error: incErr } = await supabase
+      .from('incomes')
+      .insert({
+        user_id: userId,
+        project_id: targetProjectId,
+        amount: num,
+        currency,
+        category: TRANSFER_CATEGORY,
+        description: descTarget,
+        income_date: today,
+        source: 'transfer',
+        transfer_id: transferId
+      })
+      .select()
+      .single();
+    if (incErr) {
+      try {
+        await supabase.from('expenses').delete().eq('id', expense.id);
+      } catch (rollbackErr) {
+        logger.error('Transfer rollback failed (orphan expense left):', rollbackErr, 'transferId:', transferId);
+      }
+      throw incErr;
+    }
+
+    return { transferId, expense, income, sourceProject, targetProject };
+  },
+
+  async deletePair(transferId) {
+    if (!transferId) throw new Error('transferId required');
+    await supabase.from('expenses').delete().eq('transfer_id', transferId);
+    await supabase.from('incomes').delete().eq('transfer_id', transferId);
+  }
+};
+
 module.exports = {
   supabase,
   setupDatabase,
@@ -1512,5 +1598,6 @@ module.exports = {
   incomeService,
   patternService,
   customCategoryService,
-  transactionService
+  transactionService,
+  transferService
 };

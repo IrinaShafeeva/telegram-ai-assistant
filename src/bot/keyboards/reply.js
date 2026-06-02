@@ -5,6 +5,7 @@ function getMainMenuKeyboard(hasFamilyBudget = false) {
         ['📋 Проекты'],
         ['👨‍👩‍👧 Семейный бюджет'],
         ['📊 Реальность месяца', '📝 Мои списки'],
+        ['💸 Перевод', '📊 По проектам'],
         ['⚙️ Настройки', 'ℹ️ Помощь']
       ],
       resize_keyboard: true,
@@ -15,6 +16,7 @@ function getMainMenuKeyboard(hasFamilyBudget = false) {
     keyboard: [
       ['📋 Проекты'],
       ['👨‍👩‍👧 Семейный бюджет'],
+      ['💸 Перевод', '📊 По проектам'],
       ['⚙️ Настройки', 'ℹ️ Помощь']
     ],
     resize_keyboard: true,

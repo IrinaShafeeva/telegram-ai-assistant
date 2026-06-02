@@ -42,6 +42,25 @@ function parseDay(text) {
   return null;
 }
 
+// Parse a single-line entry like "550 жилье Албания" or "жилье 550"
+// into { amount, title }. Returns null if no usable amount is present.
+function parseAmountAndTitle(text) {
+  if (!text) return null;
+  const leading = text.match(/^\s*([\d]+(?:[.,][\d]+)?)\s+(.+)$/);
+  if (leading) {
+    const amount = parseFloat(leading[1].replace(',', '.'));
+    const title = leading[2].trim();
+    if (!isNaN(amount) && amount > 0 && title) return { amount, title };
+  }
+  const trailing = text.match(/^(.+?)\s+([\d]+(?:[.,][\d]+)?)\s*$/);
+  if (trailing) {
+    const amount = parseFloat(trailing[2].replace(',', '.'));
+    const title = trailing[1].trim();
+    if (!isNaN(amount) && amount > 0 && title) return { amount, title };
+  }
+  return null;
+}
+
 function isFamilySchemaError(error) {
   const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
   return ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(error?.code) ||
@@ -337,14 +356,14 @@ async function startOnboarding(chatId, userId, project, isMonthly = false) {
     step: 'payment_title',
     draft: {},
     isMonthly
-  }, 60);
+  }, 1440);
   const bot = getBot();
   const intro = isMonthly
     ? `📅 План на ${currentPlanMonth()} — обновите платежи и доходы (можно только добавить новые или пропустить шаги).\n\n`
     : '';
   await bot.sendMessage(
     chatId,
-    `${intro}💳 Шаг 1. Обязательные платежи\n\nЗа что платите каждый месяц? (например: аренда, коммуналка)\n\nМожно пригласить партнёра в любой момент.`,
+    `${intro}💳 Шаг 1. Обязательные платежи\n\nЗа что платите каждый месяц? (например: аренда, коммуналка)\n\nМожно одной строкой: «550 жилье Албания» — разберу сумму и название.\n\nМожно пригласить партнёра в любой момент.`,
     { reply_markup: onboardingSkipKeyboard('payments') }
   );
 }
@@ -461,13 +480,19 @@ async function showList(chatId, userId, listType) {
 
   if (items.length === 0) lines.push('_Пока пусто._');
 
-  if (items.length > 0 && items.length <= 15) {
+  // Render an inline edit/delete row for each item. We previously capped at
+  // 15 to avoid spam, but that left larger lists uneditable. Cap raised to 60;
+  // beyond that we silently skip rows to protect against Telegram message floods.
+  const MAX_INLINE_ROWS = 60;
+  if (items.length > 0 && items.length <= MAX_INLINE_ROWS) {
     for (const item of items) {
       const label = item.title || item.description;
       await bot.sendMessage(chatId, `▫️ ${label}`, {
         reply_markup: listRowKeyboard(listType, item.id)
       });
     }
+  } else if (items.length > MAX_INLINE_ROWS) {
+    await bot.sendMessage(chatId, `_В списке ${items.length} записей. Кнопки правки/удаления не показываю — список слишком большой. Удалите ненужное и я снова покажу кнопки._`, { parse_mode: 'Markdown' });
   }
 
   await bot.sendMessage(chatId, lines.join('\n'), {
@@ -522,9 +547,19 @@ async function handleOnboardingInput(msg, data) {
   const { projectId, step, draft } = data;
 
   if (step === 'payment_title') {
+    const oneLine = parseAmountAndTitle(text);
+    if (oneLine) {
+      data.draft = { ...draft, title: oneLine.title, amount: oneLine.amount };
+      data.step = 'payment_day';
+      stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
+      return bot.sendMessage(
+        chatId,
+        `Понял: «${oneLine.title}» — ${oneLine.amount}. В какой день месяца платите? (число 1–31)`
+      );
+    }
     data.draft = { ...draft, title: text };
     data.step = 'payment_amount';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'Сумма платежа в месяц?');
   }
   if (step === 'payment_amount') {
@@ -532,7 +567,7 @@ async function handleOnboardingInput(msg, data) {
     if (!amount) return bot.sendMessage(chatId, 'Укажите сумму.');
     data.draft = { ...draft, amount };
     data.step = 'payment_day';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'В какой день месяца платите? (число 1–31)');
   }
   if (step === 'payment_day') {
@@ -544,15 +579,25 @@ async function handleOnboardingInput(msg, data) {
     );
     data.draft = {};
     data.step = 'payment_title';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'Платёж добавлен. Ещё один обязательный платёж (название) или «Дальше».', {
       reply_markup: onboardingSkipKeyboard('payments')
     });
   }
   if (step === 'income_title') {
+    const oneLine = parseAmountAndTitle(text);
+    if (oneLine) {
+      data.draft = { title: oneLine.title, amount: oneLine.amount };
+      data.step = 'income_day';
+      stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
+      return bot.sendMessage(
+        chatId,
+        `Понял: «${oneLine.title}» — ${oneLine.amount}. День поступления (1–31)?`
+      );
+    }
     data.draft = { title: text };
     data.step = 'income_amount';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'Сумма дохода?');
   }
   if (step === 'income_amount') {
@@ -560,7 +605,7 @@ async function handleOnboardingInput(msg, data) {
     if (!amount) return bot.sendMessage(chatId, 'Укажите сумму.');
     data.draft.amount = amount;
     data.step = 'income_day';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'День поступления (1–31)?');
   }
   if (step === 'income_day') {
@@ -572,7 +617,7 @@ async function handleOnboardingInput(msg, data) {
     );
     data.draft = {};
     data.step = 'income_title';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'Доход добавлен. Ещё один или «Дальше».', {
       reply_markup: onboardingSkipKeyboard('incomes')
     });
@@ -580,7 +625,7 @@ async function handleOnboardingInput(msg, data) {
   if (step === 'floating') {
     data.hasFloating = /да|yes|\+/i.test(text);
     data.step = 'debt_ask';
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'Есть долги? Кому и сколько (например: банк 50000). Или «нет».', {
       reply_markup: onboardingSkipKeyboard('debts')
     });
@@ -591,7 +636,7 @@ async function handleOnboardingInput(msg, data) {
     }
     data.step = 'debt_amount';
     data.draft = { description: text };
-    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 60);
+    stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, data, 1440);
     return bot.sendMessage(chatId, 'Сумма долга?');
   }
   if (step === 'debt_amount') {
@@ -841,19 +886,19 @@ async function handleFamilyCallback(callbackQuery) {
     if (action === 'skip' || action === 'next') {
       if (section === 'payments') {
         st.data.step = 'income_title';
-        stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 60);
+        stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 1440);
         await bot.sendMessage(chatId, '📥 Шаг 2. Ожидаемые доходы — источник (зарплата, аренда…)?', {
           reply_markup: onboardingSkipKeyboard('incomes')
         });
       } else if (section === 'incomes') {
         st.data.step = 'floating';
-        stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 60);
+        stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 1440);
         await bot.sendMessage(chatId, 'Шаг 3. Бывает нерегулярный доход? (да / нет)', {
           reply_markup: onboardingSkipKeyboard('floating')
         });
       } else if (section === 'floating') {
         st.data.step = 'debt_ask';
-        stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 60);
+        stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 1440);
         await bot.sendMessage(chatId, 'Шаг 4. Есть долги? Опишите или «нет».', {
           reply_markup: onboardingSkipKeyboard('debts')
         });
@@ -863,7 +908,7 @@ async function handleFamilyCallback(callbackQuery) {
     }
     if (action === 'more' && section === 'payments') {
       st.data.step = 'payment_title';
-      stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 60);
+      stateManager.setState(chatId, STATE_TYPES.FB_ONBOARDING, st.data, 1440);
       await bot.sendMessage(chatId, 'Название следующего платежа?');
     }
     return true;

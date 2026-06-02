@@ -73,15 +73,18 @@ class UserContextService {
       const projects = await projectService.findByUserId(userId);
 
       // Возвращаем все проекты с подготовленными keywords (ИИ сам выберет нужный)
+      // Use ONLY the project's own keywords. We previously auto-appended a long
+      // list of household terms ("транспорт", "покупки", "аренда" …) to the
+      // family budget project, which hijacked business-project transactions
+      // for users who run businesses alongside the family budget. The
+      // project's stored keywords (FAMILY_KEYWORDS: семья / семейный / общак
+      // for family budget) are enough on their own.
       return (projects || [])
         .map(proj => {
-          let keywords =
+          const keywords =
             proj.keywords && typeof proj.keywords === 'string' && proj.keywords.trim().length > 0
               ? proj.keywords
               : (proj.name || '').toLowerCase();
-          if (proj.is_family_budget) {
-            keywords += ', продукты, еда, магазин, покупки, хозяйство, коммуналка, квартира, аренда, транспорт, дети, бытовые';
-          }
           return { id: proj.id, name: proj.name, keywords };
         });
     } catch (error) {
