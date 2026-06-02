@@ -82,9 +82,13 @@ async function sendFamilySchemaError(chatId) {
 }
 
 async function userHasFamilyMenu(userId) {
+  // Show the family menu as soon as the user belongs to a family project,
+  // even before onboarding is completed. Otherwise a freshly-invited
+  // partner has no entry point to fill in payments / incomes and looks
+  // like a regular user with the basic menu.
   try {
     const p = await familyProjectService.findFamilyProjectForUser(userId);
-    return p && p.onboarding_completed;
+    return !!p;
   } catch (error) {
     logger.warn('Could not check family budget menu state:', error.message);
     return false;

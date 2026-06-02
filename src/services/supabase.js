@@ -63,6 +63,24 @@ async function runMigrations() {
     }
   }
 
+  // Tables that the code expects but bootstrap doesn't create. Log a clear
+  // warning instead of letting the first runtime usage fail silently.
+  const requiredTables = ['project_invites'];
+  for (const table of requiredTables) {
+    try {
+      const { error } = await supabase.from(table).select('*').limit(1);
+      if (error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message || ''))) {
+        logger.warn(`Table "${table}" is MISSING. Apply migration: see migrations/006_project_invites.sql`);
+      } else if (error) {
+        logger.warn(`Could not probe table "${table}":`, error.message);
+      } else {
+        logger.info(`Table "${table}" exists`);
+      }
+    } catch (err) {
+      logger.warn(`Could not check table "${table}":`, err.message);
+    }
+  }
+
   logger.info('Migration checks completed');
 }
 
@@ -1066,18 +1084,26 @@ const projectMemberService = {
       // Add user as member
       const member = await projectService.addMember(projectId, targetUser.id, 'editor');
 
-      // Send notification to new member
+      // Notify the new member. Family-budget projects get the full partner
+      // welcome (with the family keyboard) so they immediately see the
+      // 👨‍👩‍👧 Семейный бюджет / 📊 Реальность месяца / 📝 Мои списки
+      // buttons — without this they sit on the basic menu and look like a
+      // regular user with no permissions.
       try {
-        const { getBot } = require('../utils/bot');
-        const bot = getBot();
-        const inviter = await userService.findById(invitedByUserId);
-
-        await bot.sendMessage(targetUser.id,
-          `👥 Вас добавили в командный проект!\n\n` +
-          `📁 Проект: ${project.name}\n` +
-          `👤 Пригласил: ${inviter.first_name || inviter.username}\n\n` +
-          `Теперь вы можете добавлять траты и доходы в этот проект.`
-        );
+        if (project.is_family_budget) {
+          const { sendPartnerWelcomeAfterJoin } = require('../bot/handlers/familyBudget');
+          await sendPartnerWelcomeAfterJoin(targetUser.id, targetUser, project);
+        } else {
+          const { getBot } = require('../utils/bot');
+          const bot = getBot();
+          const inviter = await userService.findById(invitedByUserId);
+          await bot.sendMessage(targetUser.id,
+            `👥 Вас добавили в командный проект!\n\n` +
+            `📁 Проект: ${project.name}\n` +
+            `👤 Пригласил: ${inviter.first_name || inviter.username}\n\n` +
+            `Теперь вы можете добавлять траты и доходы в этот проект.`
+          );
+        }
       } catch (notifyError) {
         logger.warn('Could not send member notification:', notifyError.message);
       }
@@ -1117,18 +1143,26 @@ const projectMemberService = {
       // Add user as member
       const member = await projectService.addMember(projectId, targetUser.id, 'editor');
 
-      // Send notification to new member
+      // Notify the new member. Family-budget projects get the full partner
+      // welcome (with the family keyboard) so they immediately see the
+      // 👨‍👩‍👧 Семейный бюджет / 📊 Реальность месяца / 📝 Мои списки
+      // buttons — without this they sit on the basic menu and look like a
+      // regular user with no permissions.
       try {
-        const { getBot } = require('../utils/bot');
-        const bot = getBot();
-        const inviter = await userService.findById(invitedByUserId);
-
-        await bot.sendMessage(targetUser.id,
-          `👥 Вас добавили в командный проект!\n\n` +
-          `📁 Проект: ${project.name}\n` +
-          `👤 Пригласил: ${inviter.first_name || inviter.username}\n\n` +
-          `Теперь вы можете добавлять траты и доходы в этот проект.`
-        );
+        if (project.is_family_budget) {
+          const { sendPartnerWelcomeAfterJoin } = require('../bot/handlers/familyBudget');
+          await sendPartnerWelcomeAfterJoin(targetUser.id, targetUser, project);
+        } else {
+          const { getBot } = require('../utils/bot');
+          const bot = getBot();
+          const inviter = await userService.findById(invitedByUserId);
+          await bot.sendMessage(targetUser.id,
+            `👥 Вас добавили в командный проект!\n\n` +
+            `📁 Проект: ${project.name}\n` +
+            `👤 Пригласил: ${inviter.first_name || inviter.username}\n\n` +
+            `Теперь вы можете добавлять траты и доходы в этот проект.`
+          );
+        }
       } catch (notifyError) {
         logger.warn('Could not send member notification:', notifyError.message);
       }
@@ -1206,42 +1240,88 @@ const projectMemberService = {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
-    await supabase
+    // We MUST capture the insert error: without it a failed insert (RLS, FK,
+    // missing table, etc) silently returned a token that was never stored,
+    // and the partner's click would then fail with "ссылка не найдена".
+    const { error: insertError } = await supabase
       .from('project_invites')
       .insert({
         project_id: projectId,
         token,
         expires_at: expiresAt.toISOString()
       });
+    if (insertError) {
+      logger.error('generateInviteLink: insert failed', { code: insertError.code, message: insertError.message, hint: insertError.hint });
+      throw new Error('Не удалось сохранить приглашение в базу: ' + (insertError.message || insertError.code || 'unknown'));
+    }
+
+    // Verify the row is actually queryable — catches the case where insert
+    // "succeeded" but RLS or a trigger reverted it before another connection
+    // can see it.
+    const { data: roundtrip } = await supabase
+      .from('project_invites')
+      .select('id')
+      .eq('token', token)
+      .maybeSingle();
+    if (!roundtrip) {
+      logger.error('generateInviteLink: roundtrip readback failed for token (RLS?)', { projectId });
+      throw new Error('Приглашение сохранено, но не читается обратно. Проверьте RLS на project_invites.');
+    }
 
     return token;
   },
 
   async joinByInvite(token, userId) {
-    // Find invite
+    // Two-step lookup. Previously this used a PostgREST JOIN
+    // (`*, project:projects(*)`); if the FK relationship between
+    // project_invites and projects can't be auto-resolved (RLS, ambiguous FK,
+    // missing constraint) the whole query fails and the user sees
+    // "ссылка не найдена" even when the row exists. Splitting it isolates
+    // the failure modes.
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken) throw new Error('Пустой токен приглашения.');
+
     const { data: invite, error: inviteError } = await supabase
       .from('project_invites')
-      .select('*, project:projects(*)')
-      .eq('token', token)
-      .single();
+      .select('id, project_id, token, expires_at')
+      .eq('token', cleanToken)
+      .maybeSingle();
 
-    if (inviteError || !invite) {
-      throw new Error('Неверная или устаревшая ссылка-приглашение');
+    if (inviteError) {
+      logger.error('joinByInvite: lookup failed', { code: inviteError.code, message: inviteError.message, hint: inviteError.hint, token: cleanToken });
+      throw new Error('Ошибка при проверке ссылки в базе: ' + (inviteError.message || inviteError.code || 'unknown'));
+    }
+    if (!invite) {
+      logger.warn('joinByInvite: token not found', { token: cleanToken, tokenLength: cleanToken.length });
+      throw new Error(
+        'Ссылка не найдена в базе. Возможные причины: 1) ссылка скопирована\n' +
+        'не полностью; 2) ссылка старше 7 дней; 3) хозяин проекта удалил её.\n\n' +
+        'Попросите хозяина проекта сгенерировать новую ссылку (кнопка\n' +
+        '«👫 Пригласить партнёра» в семейном бюджете).'
+      );
     }
 
-    // Check if expired
     if (new Date(invite.expires_at) < new Date()) {
-      throw new Error('Ссылка-приглашение истекла');
+      throw new Error('Ссылка-приглашение истекла (срок 7 дней). Попросите хозяина проекта прислать новую.');
     }
 
-    // Check if user is already owner
-    if (invite.project.owner_id === userId) {
-      throw new Error('Вы уже владелец этого проекта');
+    const project = await projectService.findById(invite.project_id);
+    if (!project) {
+      logger.error('joinByInvite: project gone', { projectId: invite.project_id });
+      throw new Error('Проект из приглашения больше не существует.');
     }
 
+    // Owner clicked their own link — return the project so /start renders the
+    // welcome rather than throwing.
+    if (project.owner_id === userId) {
+      return project;
+    }
+
+    // Already a member — idempotent: return the project so /start re-renders
+    // the family welcome / menu instead of throwing "уже участвуете".
     const access = await projectService.hasAccess(invite.project_id, userId);
     if (access.access) {
-      throw new Error('Вы уже участвуете в этом проекте');
+      return project;
     }
 
     // Add member
@@ -1253,16 +1333,16 @@ const projectMemberService = {
       const bot = getBot();
       const newMember = await userService.findById(userId);
 
-      await bot.sendMessage(invite.project.owner_id,
+      await bot.sendMessage(project.owner_id,
         `👥 Новый участник присоединился к проекту!\n\n` +
-        `📁 Проект: ${invite.project.name}\n` +
+        `📁 Проект: ${project.name}\n` +
         `👤 Участник: ${newMember.first_name || newMember.username || 'Пользователь'}`
       );
     } catch (notifyError) {
       logger.warn('Could not send owner notification:', notifyError.message);
     }
 
-    return invite.project;
+    return project;
   },
 
   async notifyProjectMembers(projectId, message, excludeUserId = null) {
