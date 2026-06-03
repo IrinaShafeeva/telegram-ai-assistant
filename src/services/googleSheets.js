@@ -118,30 +118,52 @@ class GoogleSheetsService {
     }
   }
 
-  // Проверяем и создаем правильную структуру таблицы
+  // Проверяем и создаем правильную структуру таблицы.
+  //
+  // Bug history: this used to hardcode sheetId: 0 in the batchUpdate format
+  // call. That sheetId only exists on freshly-created spreadsheets whose
+  // first tab was never deleted or replaced. For users connecting an
+  // existing spreadsheet (with project tabs, renamed defaults, etc.) the
+  // batchUpdate failed with "No grid with id: 0" and the whole connect step
+  // aborted before headers were even applied. We now look up the actual
+  // first-sheet ID from the spreadsheet metadata before formatting.
   async ensureSheetStructure(spreadsheetId) {
     try {
-      // Проверяем заголовки
+      // Discover the real first-tab sheetId — never assume 0.
+      const meta = await this.sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(sheetId,title,index))'
+      });
+      const firstSheet = (meta.data.sheets || [])
+        .map(s => s.properties)
+        .sort((a, b) => (a.index || 0) - (b.index || 0))[0];
+      if (!firstSheet) {
+        throw new Error('В таблице нет ни одной вкладки.');
+      }
+      const firstSheetId = firstSheet.sheetId;
+      const firstSheetTitle = firstSheet.title;
+
+      // Read headers from the first tab by its actual name (so it works even
+      // if the user reordered tabs).
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: 'A1:H1'
+        range: this.sheetRange(firstSheetTitle, 'A1:H1')
       });
 
       const headers = response.data.values?.[0] || [];
       const expectedHeaders = this.getTransactionHeaders();
 
-      // Если заголовки отсутствуют или неправильные, создаем их
       if (headers.length === 0 || !this.arraysEqual(headers, expectedHeaders)) {
         await this.sheets.spreadsheets.values.update({
           spreadsheetId,
-        range: 'A1:H1',
+          range: this.sheetRange(firstSheetTitle, 'A1:H1'),
           valueInputOption: 'RAW',
           resource: {
             values: [expectedHeaders]
           }
         });
 
-        // Форматируем заголовки
+        // Format headers — use the resolved firstSheetId, not 0.
         await this.sheets.spreadsheets.batchUpdate({
           spreadsheetId,
           resource: {
@@ -149,7 +171,7 @@ class GoogleSheetsService {
               {
                 repeatCell: {
                   range: {
-                    sheetId: 0,
+                    sheetId: firstSheetId,
                     startRowIndex: 0,
                     endRowIndex: 1,
                     startColumnIndex: 0,
@@ -167,7 +189,7 @@ class GoogleSheetsService {
               {
                 autoResizeDimensions: {
                   dimensions: {
-                    sheetId: 0,
+                    sheetId: firstSheetId,
                     dimension: 'COLUMNS',
                     startIndex: 0,
                     endIndex: expectedHeaders.length
@@ -178,7 +200,7 @@ class GoogleSheetsService {
           }
         });
 
-        logger.info(`Sheet structure created for: ${spreadsheetId}`);
+        logger.info(`Sheet structure created for: ${spreadsheetId} (sheet "${firstSheetTitle}", id ${firstSheetId})`);
       }
     } catch (error) {
       logger.error('Failed to ensure sheet structure:', error);

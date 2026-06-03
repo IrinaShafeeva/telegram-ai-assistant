@@ -127,26 +127,30 @@ class AnalyticsService {
       futureEndDate.setFullYear(futureEndDate.getFullYear() + 2);
       endDate.setTime(futureEndDate.getTime());
 
-      // Get both expenses and incomes in parallel
-      let [expensesResult, incomes] = await Promise.all([
-        supabase.rpc('get_user_expenses_for_period', {
-          p_user_id: userId,
-          start_date: startDate.toISOString().split('T')[0],
-          end_date: endDate.toISOString().split('T')[0]
-        }),
-        incomeService.getIncomesForExport(userId, startDate, endDate)
-      ]);
-
-      let expenses = dropTransferRows(expensesResult.data || []);
-      incomes = dropTransferRows(incomes || []);
-
-      // Filter by project if specified
+      // When a projectId is supplied we must fetch by project (NOT by user_id),
+      // otherwise transactions added by the partner on a shared project — e.g.
+      // family budget where both spouses record — are silently missing and the
+      // bot tells the user "0 transactions" when in fact there are plenty.
+      let expenses;
+      let incomes;
       if (projectId) {
-        expenses = expenses.filter(exp => exp.project_id === projectId);
-        // Also filter incomes by project
-        const filteredIncomes = incomes.filter(inc => inc.project_id === projectId);
-        incomes.length = 0;
-        incomes.push(...filteredIncomes);
+        const [exps, incs] = await Promise.all([
+          expenseService.getExpensesForExportByProject(projectId, startDate, endDate),
+          incomeService.getIncomesForExportByProject(projectId, startDate, endDate)
+        ]);
+        expenses = dropTransferRows(exps || []);
+        incomes = dropTransferRows(incs || []);
+      } else {
+        const [expensesResult, allIncomes] = await Promise.all([
+          supabase.rpc('get_user_expenses_for_period', {
+            p_user_id: userId,
+            start_date: startDate.toISOString().split('T')[0],
+            end_date: endDate.toISOString().split('T')[0]
+          }),
+          incomeService.getIncomesForExport(userId, startDate, endDate)
+        ]);
+        expenses = dropTransferRows(expensesResult.data || []);
+        incomes = dropTransferRows(allIncomes || []);
       }
 
       // If no data at all, return appropriate message
@@ -613,11 +617,18 @@ class AnalyticsService {
     try {
       const { startDate, endDate } = getDateRange(period);
 
-      const [projects, expenses, incomes] = await Promise.all([
-        require('./supabase').projectService.findByUserId(userId),
-        expenseService.getExpensesForExport(userId, startDate, endDate),
-        incomeService.getIncomesForExport(userId, startDate, endDate)
-      ]);
+      // Fetch per project (not per user_id). On shared projects we must see
+      // partner-authored rows; user_id filtering would hide them and the
+      // breakdown would understate every shared project.
+      const projects = await require('./supabase').projectService.findByUserId(userId);
+      const expenseLists = await Promise.all(
+        (projects || []).map(p => expenseService.getExpensesForExportByProject(p.id, startDate, endDate))
+      );
+      const incomeLists = await Promise.all(
+        (projects || []).map(p => incomeService.getIncomesForExportByProject(p.id, startDate, endDate))
+      );
+      const expenses = expenseLists.flat();
+      const incomes = incomeLists.flat();
 
       const empty = () => ({
         income: {},      // external income (no transfer_id)
