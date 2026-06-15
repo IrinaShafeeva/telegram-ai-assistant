@@ -197,6 +197,8 @@ async function handleCallback(callbackQuery) {
       await handleExportPeriod(chatId, messageId, data, user);
     } else if (data === 'confirm_clear_data') {
       await handleConfirmClearData(chatId, messageId, user);
+    } else if (data.startsWith('set_default_project:')) {
+      await handleSetDefaultProject(chatId, messageId, data, user);
     } else if (data.startsWith('project_info:')) {
       await handleProjectInfo(chatId, messageId, data, user);
     } else if (data.startsWith('export_project:')) {
@@ -527,7 +529,7 @@ async function handleEditProject(chatId, messageId, data, user) {
     await bot.editMessageText('📋 Выберите проект:', {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getProjectSelectionKeyboardForExpense(tempId, projects)
+      reply_markup: getProjectSelectionKeyboardForExpense(tempId, projects, expenseData.project_id)
     });
   } catch (error) {
     logger.error('Error loading projects for expense:', error);
@@ -2032,7 +2034,7 @@ async function handleEditIncomeProject(chatId, messageId, data, user) {
     await bot.editMessageText('📋 Выберите проект для дохода:', {
       chat_id: chatId,
       message_id: messageId,
-      reply_markup: getIncomeProjectSelectionKeyboard(tempId, projects)
+      reply_markup: getIncomeProjectSelectionKeyboard(tempId, projects, incomeData.project_id)
     });
 
   } catch (error) {
@@ -4157,6 +4159,52 @@ async function handleEditFromAnalytics(chatId, messageId, data, user) {
 }
 
 // Show detailed project information and management options
+// Set the user's default project. Transactions whose text matches no project
+// keyword land here instead of always defaulting to "Личные траты".
+async function handleSetDefaultProject(chatId, messageId, data, user) {
+  const bot = getBot();
+
+  try {
+    const projectId = data.split(':')[1];
+    const project = await projectService.findById(projectId);
+
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', { chat_id: chatId, message_id: messageId });
+      return;
+    }
+
+    // Verify the user has access to this project.
+    let hasAccess = project.owner_id === user.id;
+    if (!hasAccess) {
+      const member = await projectMemberService.findByProjectAndUser(projectId, user.id);
+      hasAccess = !!member;
+    }
+    if (!hasAccess) {
+      await bot.editMessageText('❌ У вас нет доступа к этому проекту.', { chat_id: chatId, message_id: messageId });
+      return;
+    }
+
+    await userService.setDefaultProject(user.id, projectId);
+    // Keep the in-memory user object in sync so the refreshed card is correct.
+    user.default_project_id = projectId;
+
+    await bot.editMessageText(
+      `⭐ Проект "${project.name}" теперь по умолчанию.\n\n` +
+      `Все траты без совпадения по ключевым словам будут попадать сюда.`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [[
+          { text: '🔙 Назад к проекту', callback_data: `project_info:${projectId}` }
+        ]] }
+      }
+    );
+  } catch (error) {
+    logger.error('Error setting default project:', error);
+    await bot.editMessageText('❌ Не удалось установить проект по умолчанию.', { chat_id: chatId, message_id: messageId });
+  }
+}
+
 async function handleProjectInfo(chatId, messageId, data, user) {
   const bot = getBot();
 
@@ -4213,9 +4261,16 @@ async function handleProjectInfo(chatId, messageId, data, user) {
 Выберите действие:`;
 
     const isOwner = project.owner_id === user.id;
+    const isDefault = user.default_project_id === projectId;
     const keyboard = [
       [{ text: '📝 Последние записи', callback_data: `project_transactions:${projectId}` }]
     ];
+
+    // Default-project toggle: transactions with no keyword match go here.
+    keyboard.push([{
+      text: isDefault ? '⭐ Проект по умолчанию (выбран)' : '⭐ Сделать проектом по умолчанию',
+      callback_data: `set_default_project:${projectId}`
+    }]);
 
     if (isOwner) {
       keyboard.push([{ text: '⚙️ Настройки проекта', callback_data: `project_settings:${projectId}` }]);

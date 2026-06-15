@@ -1,4 +1,4 @@
-const { supabase, projectService } = require('./supabase');
+const { supabase, projectService, projectMemberService } = require('./supabase');
 const logger = require('../utils/logger');
 
 /**
@@ -72,6 +72,11 @@ class UserContextService {
       // Берем все проекты пользователя
       const projects = await projectService.findByUserId(userId);
 
+      // Personal (per-member) keywords for shared projects. Each participant
+      // of a team/family project can add their own trigger words on top of the
+      // owner-set projects.keywords (see migration 007).
+      const memberKeywordsMap = await projectMemberService.getKeywordsByUser(userId);
+
       // Возвращаем все проекты с подготовленными keywords (ИИ сам выберет нужный)
       // Use ONLY the project's own keywords. We previously auto-appended a long
       // list of household terms ("транспорт", "покупки", "аренда" …) to the
@@ -81,10 +86,34 @@ class UserContextService {
       // for family budget) are enough on their own.
       return (projects || [])
         .map(proj => {
-          const keywords =
-            proj.keywords && typeof proj.keywords === 'string' && proj.keywords.trim().length > 0
-              ? proj.keywords
-              : (proj.name || '').toLowerCase();
+          // Merge the owner-set project keywords with this user's personal
+          // keywords for the same project (deduplicated).
+          const parts = [];
+          if (proj.keywords && typeof proj.keywords === 'string' && proj.keywords.trim()) {
+            parts.push(proj.keywords.trim());
+          }
+          if (memberKeywordsMap[proj.id]) {
+            parts.push(memberKeywordsMap[proj.id]);
+          }
+
+          let keywords;
+          if (parts.length > 0) {
+            const seen = new Set();
+            keywords = parts
+              .join(',')
+              .split(',')
+              .map(k => k.trim())
+              .filter(k => {
+                const low = k.toLowerCase();
+                if (!low || seen.has(low)) return false;
+                seen.add(low);
+                return true;
+              })
+              .join(', ');
+          } else {
+            keywords = (proj.name || '').toLowerCase();
+          }
+
           return { id: proj.id, name: proj.name, keywords };
         });
     } catch (error) {

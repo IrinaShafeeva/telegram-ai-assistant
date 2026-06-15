@@ -85,7 +85,12 @@ class OpenAIService {
 
   async parseTransaction(userInput, userContext = {}) {
     try {
-      const { categories = [], projects = [], primaryCurrency = 'RUB' } = userContext;
+      const { categories = [], projects = [], primaryCurrency = 'RUB', defaultProjectName } = userContext;
+      // Project used when no keyword matches. Configurable per user
+      // (users.default_project_id); falls back to the personal project name.
+      const defaultProject = (defaultProjectName && defaultProjectName.trim())
+        ? defaultProjectName.trim()
+        : 'Личные траты';
 
       // ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ КОНТЕКСТА
       logger.info(`🧠 AI parsing transaction: "${userInput}"`);
@@ -145,13 +150,12 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
 6. currency: определи из контекста или используй "${primaryCurrency}" по умолчанию
 7. description: краткое описание на русском
 8. category: ТОЧНОЕ название из пользовательских или стандартных категорий
-9. project: Если есть прямое совпадение с ключевыми словами - название проекта, иначе используй дефолтный проект ("Личные траты" или "Личные расходы")
+9. project: Если есть прямое совпадение с ключевыми словами - название проекта, иначе используй дефолтный проект ("${defaultProject}")
 
 ВАЖНО ДЛЯ ПРОЕКТОВ:
 - Если в тексте есть ключевые слова конкретного проекта - назначай этот проект
-- Если НЕТ совпадений с ключевыми словами проектов - ищи проект "Личные траты" или "Личные расходы" из списка
-- Если найден проект "Личные траты" - используй его
-- Если найден проект "Личные расходы" - используй его
+- Если НЕТ совпадений с ключевыми словами проектов - используй дефолтный проект "${defaultProject}" из списка
+- Дефолтный проект пользователя: "${defaultProject}"
 - НЕ оставляй project как null
 
 РАСПОЗНАВАНИЕ ВАЛЮТ (учитывай все варианты написания и склонения):

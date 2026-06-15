@@ -77,7 +77,15 @@ const PLANNED_INCOME_CATEGORIES = [
 
 const BOT_COMMANDS = [
   { command: 'start', description: 'Начать работу с ботом' },
-  { command: 'help', description: 'Справка по возможностям' }
+  { command: 'help', description: 'Справка и список команд' },
+  { command: 'projects', description: 'Проекты: выбрать, дефолтный, ключевые слова' },
+  { command: 'ask', description: 'AI-аналитика: вопрос о тратах' },
+  { command: 'categories', description: 'Категории и ключевые слова' },
+  { command: 'team', description: 'Командные и семейные проекты' },
+  { command: 'edit', description: 'Редактировать последние записи' },
+  { command: 'connect', description: 'Подключить Google таблицу' },
+  { command: 'sync', description: 'Синхронизация с Google Sheets' },
+  { command: 'settings', description: 'Настройки' }
 ];
 
 module.exports = {

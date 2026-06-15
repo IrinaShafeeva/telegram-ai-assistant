@@ -87,6 +87,8 @@ async function setupBot(bot) {
     bot.onText(/\/sync/, withUser(commandHandlers.handleSync));
     bot.onText(/\/team/, withUser(commandHandlers.handleTeam));
     bot.onText(/\/edit/, withUser(commandHandlers.handleEdit));
+    bot.onText(/\/ask(?:\s+(.+))?/, withUser(commandHandlers.handleAsk));
+    bot.onText(/\/categories/, withUser(commandHandlers.handleCategories));
 
     // Add general message logging
     bot.on('message', (msg) => {

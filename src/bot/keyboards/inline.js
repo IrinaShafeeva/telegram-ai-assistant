@@ -112,41 +112,43 @@ function getIncomeCategorySelectionKeyboard(incomeId) {
   return { inline_keyboard: keyboard };
 }
 
-function getIncomeProjectSelectionKeyboard(incomeId, projects) {
+function getIncomeProjectSelectionKeyboard(incomeId, projects, currentProjectId = null) {
   const keyboard = [];
-  
+
   projects.forEach((project, index) => {
-    keyboard.push([{ 
-      text: `${project.name}`, 
-      callback_data: `set_income_project:${incomeId}:${index}` 
+    const isCurrent = currentProjectId && project.id === currentProjectId;
+    keyboard.push([{
+      text: `${isCurrent ? '✅ ' : ''}${project.name}`,
+      callback_data: `set_income_project:${incomeId}:${index}`
     }]);
   });
-  
+
   // Add back button
-  keyboard.push([{ 
-    text: '⬅️ Назад', 
-    callback_data: `back_to_income_confirmation:${incomeId}` 
+  keyboard.push([{
+    text: '⬅️ Назад',
+    callback_data: `back_to_income_confirmation:${incomeId}`
   }]);
-  
+
   return { inline_keyboard: keyboard };
 }
 
-function getProjectSelectionKeyboardForExpense(expenseId, projects) {
+function getProjectSelectionKeyboardForExpense(expenseId, projects, currentProjectId = null) {
   const keyboard = [];
-  
+
   projects.forEach((project, index) => {
-    keyboard.push([{ 
-      text: `${project.name}`, 
-      callback_data: `set_project:${expenseId}:${index}` 
+    const isCurrent = currentProjectId && project.id === currentProjectId;
+    keyboard.push([{
+      text: `${isCurrent ? '✅ ' : ''}${project.name}`,
+      callback_data: `set_project:${expenseId}:${index}`
     }]);
   });
-  
+
   // Add back button
-  keyboard.push([{ 
-    text: '⬅️ Назад', 
-    callback_data: `back_to_confirmation:${expenseId}` 
+  keyboard.push([{
+    text: '⬅️ Назад',
+    callback_data: `back_to_confirmation:${expenseId}`
   }]);
-  
+
   return { inline_keyboard: keyboard };
 }
 

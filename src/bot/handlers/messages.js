@@ -38,6 +38,78 @@ function detectCurrencyByLanguage(text, languageCode) {
   return 'USD';
 }
 
+// Pick the user's default project: explicit user setting → personal project →
+// first project. `allProjects` are full rows from projectService.findByUserId,
+// `user` is the current user row (may carry default_project_id).
+function pickDefaultProject(allProjects, user) {
+  if (!allProjects || allProjects.length === 0) return null;
+
+  if (user && user.default_project_id) {
+    const chosen = allProjects.find(p => p.id === user.default_project_id);
+    if (chosen) return chosen;
+  }
+
+  const personal = allProjects.find(
+    p => p.name === 'Личные траты' || p.name === 'Личные расходы'
+  );
+  return personal || allProjects[0];
+}
+
+// Resolve which project a transaction belongs to.
+// Precedence: strict keyword match (deterministic) > AI suggestion > default.
+// `ucProjects` come from userContext (id, name, keywords incl. member keywords).
+function resolveProject(text, ucProjects, allProjects, parsedTransaction, defaultProject) {
+  const textLower = (text || '').toLowerCase();
+
+  // 1) Deterministic keyword match — beats the AI so "семейный завтрак" always
+  //    lands in the family project regardless of how the model guesses.
+  for (const uc of (ucProjects || [])) {
+    if (!uc.keywords) continue;
+    const kws = String(uc.keywords)
+      .split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(Boolean);
+    if (kws.some(k => textLower.includes(k))) {
+      const match = allProjects.find(p => p.id === uc.id);
+      if (match) {
+        logger.info(`🎯 Keyword match → project "${match.name}"`);
+        return match;
+      }
+    }
+  }
+
+  // 2) AI suggestion, if it names a real project.
+  if (parsedTransaction && parsedTransaction.project) {
+    const aiMatch = allProjects.find(p => p.name === parsedTransaction.project);
+    if (aiMatch) {
+      logger.info(`🤖 AI selected project "${aiMatch.name}"`);
+      return aiMatch;
+    }
+    logger.warn(`⚠️ AI suggested unknown project "${parsedTransaction.project}", using default`);
+  }
+
+  // 3) Fallback to the user's default project.
+  return defaultProject;
+}
+
+// If a custom category's keywords match the text, prefer that category over the
+// AI guess. Improves recognition for user-defined categories.
+function resolveCategory(text, ucCategories, parsedCategory) {
+  const textLower = (text || '').toLowerCase();
+  for (const cat of (ucCategories || [])) {
+    if (!cat.keywords) continue;
+    const kws = String(cat.keywords)
+      .split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(Boolean);
+    if (kws.some(k => textLower.includes(k))) {
+      logger.info(`🏷️ Keyword match → category "${cat.name}"`);
+      return cat.name;
+    }
+  }
+  return parsedCategory;
+}
+
 // Store temporary expense data
 const tempExpenses = new Map();
 // Store temporary income data
@@ -221,6 +293,15 @@ async function handleExpenseText(msg) {
     // Get user context for AI (custom categories and projects with keywords)
     const userContext = await userContextService.getUserContext(user.id);
 
+    // Resolve the user's default project up front and tell the AI about it so
+    // unmatched transactions land in the chosen default (e.g. family budget)
+    // instead of always defaulting to "Личные траты".
+    const projects = await projectService.findByUserId(user.id);
+    const defaultProject = pickDefaultProject(projects, user);
+    if (defaultProject) {
+      userContext.defaultProjectName = defaultProject.name;
+    }
+
     // Parse transaction(s) first to determine if it's income or expense
     const processingMessage = await bot.sendMessage(chatId, '🤖 Обрабатываю транзакцию(и)...');
     const parsedResult = await openaiService.parseTransaction(text, userContext);
@@ -243,10 +324,6 @@ async function handleExpenseText(msg) {
       logger.info(`💱 Using user default currency: ${parsedTransaction.currency} (was: ${originalCurrency || 'null'})`);
     }
 
-    // Get user's projects (all of them, AI will choose the right one)
-    const projects = await projectService.findByUserId(user.id);
-    const defaultProject = projects[0]; // fallback project
-
     if (!defaultProject) {
       await bot.editMessageText('📋 Сначала создайте проект для отслеживания транзакций.', {
         chat_id: chatId,
@@ -260,17 +337,9 @@ async function handleExpenseText(msg) {
       return;
     }
 
-    // Find the correct project based on AI analysis
-    let selectedProject = defaultProject; // default fallback
-    if (parsedTransaction.project) {
-      const foundProject = projects.find(p => p.name === parsedTransaction.project);
-      if (foundProject) {
-        selectedProject = foundProject;
-        logger.info(`🎯 AI selected project: ${foundProject.name} for transaction: ${text}`);
-      } else {
-        logger.warn(`⚠️ AI suggested project "${parsedTransaction.project}" not found, using default: ${defaultProject.name}`);
-      }
-    }
+    // Pick project (strict keyword match > AI > default) and refine category.
+    const selectedProject = resolveProject(text, userContext.projects, projects, parsedTransaction, defaultProject);
+    parsedTransaction.category = resolveCategory(text, userContext.categories, parsedTransaction.category);
 
     const tempId = generateShortId();
 
@@ -1952,6 +2021,10 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
     // Send summary message
     await bot.sendMessage(chatId, `🔢 Найдено ${transactions.length} транзакций. Подтвердите каждую:`);
 
+    // Load projects + default once for the whole batch.
+    const allProjects = await projectService.findByUserId(user.id);
+    const batchDefaultProject = pickDefaultProject(allProjects, user);
+
     // Create individual confirmation cards for each transaction
     for (let i = 0; i < transactions.length; i++) {
       const transaction = transactions[i];
@@ -1961,18 +2034,20 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
         transaction.currency = userContext.primaryCurrency || 'RUB';
       }
 
-      // Find project for this transaction
-      let selectedProject = null;
-      if (transaction.project) {
-        const projects = await projectService.findByUserId(user.id);
-        selectedProject = projects.find(p => p.name === transaction.project);
-      }
-
-      if (!selectedProject) {
-        // If no project found, use default project
-        const projects = await projectService.findByUserId(user.id);
-        selectedProject = projects[0];
-      }
+      // Pick project (strict keyword match > AI > default) and refine category.
+      // Match on the transaction's own description for per-item accuracy.
+      const selectedProject = resolveProject(
+        transaction.description || text,
+        userContext.projects,
+        allProjects,
+        transaction,
+        batchDefaultProject
+      );
+      transaction.category = resolveCategory(
+        transaction.description || text,
+        userContext.categories,
+        transaction.category
+      );
 
       if (!selectedProject) {
         await bot.sendMessage(chatId, `❌ Транзакция ${i + 1}: не найден проект для "${transaction.description}"`);
@@ -2296,8 +2371,11 @@ async function handleMemberProjectKeywordsInput(msg, userState) {
       keywords = text;
     }
 
-    // Get current project and add keywords for this user
-    const project = await projectService.findById(projectId);
+    // Save the member's personal keywords for this shared project.
+    // These are stored per-member (project_members.keywords) so they don't
+    // overwrite the owner's project-wide keywords — each participant can have
+    // their own trigger words for the same project.
+    await projectMemberService.setKeywords(projectId, msg.user.id, keywords);
 
     stateManager.clearState(chatId);
 
@@ -2311,9 +2389,6 @@ async function handleMemberProjectKeywordsInput(msg, userState) {
       `${keywordsText}\n\n` +
       `🎉 Теперь вы можете добавлять расходы в этот командный проект!`
     );
-
-    // Note: We don't update project keywords for members as those are owner-specific
-    // Each user can have their own interpretation/keywords for the same project
 
   } catch (error) {
     logger.error('Error handling member project keywords:', error);
@@ -2402,5 +2477,8 @@ module.exports = {
   handleExpenseText,
   handleGoogleSheetsConnected,
   handleSheetsSyncChoice,
-  handleAnalyticsQuestion
+  handleAnalyticsQuestion,
+  pickDefaultProject,
+  resolveProject,
+  resolveCategory
 };

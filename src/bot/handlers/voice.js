@@ -3,7 +3,7 @@ const { userService, projectService, incomeService } = require('../../services/s
 const openaiService = require('../../services/openai');
 const userContextService = require('../../services/userContext');
 const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
-const { tempExpenses, tempIncomes } = require('./messages');
+const { tempExpenses, tempIncomes, pickDefaultProject, resolveProject, resolveCategory } = require('./messages');
 const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
@@ -15,9 +15,10 @@ async function handleVoice(msg) {
   const voice = msg.voice;
   const bot = getBot();
 
-  // Get user's projects (all of them, AI will choose the right one)
+  // Get user's projects and resolve the user's default project (explicit
+  // setting → personal → first).
   const projects = await projectService.findByUserId(user.id);
-  const defaultProject = projects[0]; // fallback project
+  const defaultProject = pickDefaultProject(projects, user);
 
   if (!defaultProject) {
     await bot.sendMessage(chatId,
@@ -93,6 +94,9 @@ async function handleVoice(msg) {
 
     // Get user context for AI transaction parsing
     const userContext = await userContextService.getUserContext(user.id);
+    if (defaultProject) {
+      userContext.defaultProjectName = defaultProject.name;
+    }
     logger.info(`👤 User context for voice transaction: ${JSON.stringify(userContext)}`);
 
     // Parse transaction with AI (could be income or expense)
@@ -112,17 +116,9 @@ async function handleVoice(msg) {
       parsedTransaction.currency = userContext.primaryCurrency || 'RUB';
     }
 
-    // Find the correct project based on AI analysis
-    let selectedProject = defaultProject; // default fallback
-    if (parsedTransaction.project) {
-      const foundProject = projects.find(p => p.name === parsedTransaction.project);
-      if (foundProject) {
-        selectedProject = foundProject;
-        logger.info(`🎯 AI selected project: ${foundProject.name} for transaction: ${transcription}`);
-      } else {
-        logger.warn(`⚠️ AI suggested project "${parsedTransaction.project}" not found, using default: ${defaultProject.name}`);
-      }
-    }
+    // Pick project (strict keyword match > AI > default) and refine category.
+    const selectedProject = resolveProject(transcription, userContext.projects, projects, parsedTransaction, defaultProject);
+    parsedTransaction.category = resolveCategory(transcription, userContext.categories, parsedTransaction.category);
 
     const tempId = generateShortId();
 
@@ -248,6 +244,8 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
     // Send summary message
     await bot.sendMessage(chatId, `🎤 Распознано: "${transcription}"\n🔢 Найдено ${transactions.length} транзакций. Подтвердите каждую:`);
 
+    const batchDefaultProject = pickDefaultProject(projects, user);
+
     // Create individual confirmation cards for each transaction
     for (let i = 0; i < transactions.length; i++) {
       const transaction = transactions[i];
@@ -257,15 +255,19 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
         transaction.currency = userContext.primaryCurrency || 'RUB';
       }
 
-      // Find project for this transaction
-      let selectedProject = null;
-      if (transaction.project) {
-        selectedProject = projects.find(p => p.name === transaction.project);
-      }
-
-      if (!selectedProject) {
-        selectedProject = projects[0]; // Use default project
-      }
+      // Pick project (strict keyword match > AI > default) and refine category.
+      const selectedProject = resolveProject(
+        transaction.description || transcription,
+        userContext.projects,
+        projects,
+        transaction,
+        batchDefaultProject
+      );
+      transaction.category = resolveCategory(
+        transaction.description || transcription,
+        userContext.categories,
+        transaction.category
+      );
 
       if (!selectedProject) {
         await bot.sendMessage(chatId, `❌ Транзакция ${i + 1}: не найден проект для "${transaction.description}"`);

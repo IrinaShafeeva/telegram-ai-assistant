@@ -43,7 +43,9 @@ async function runMigrations() {
     { table: 'projects', column: 'family_established_at', type: 'TIMESTAMP' },
     { table: 'projects', column: 'family_established_by', type: 'BIGINT' },
     { table: 'expenses', column: 'transfer_id', type: 'UUID' },
-    { table: 'incomes', column: 'transfer_id', type: 'UUID' }
+    { table: 'incomes', column: 'transfer_id', type: 'UUID' },
+    { table: 'users', column: 'default_project_id', type: 'UUID REFERENCES projects(id) ON DELETE SET NULL' },
+    { table: 'project_members', column: 'keywords', type: 'TEXT' }
   ];
 
   for (const { table, column, type } of columnsToCheck) {
@@ -292,6 +294,10 @@ const userService = {
     
     if (error) throw error;
     return data;
+  },
+
+  async setDefaultProject(userId, projectId) {
+    return this.update(userId, { default_project_id: projectId });
   },
 
   async checkDailyLimits(userId, action) {
@@ -1051,6 +1057,51 @@ const customCategoryService = {
 
 // Project member operations
 const projectMemberService = {
+  // Per-member keywords for a shared project (see migration 007). Each
+  // participant can have their own trigger words on top of the owner-set
+  // projects.keywords.
+  async setKeywords(projectId, userId, keywords) {
+    const { data, error } = await supabase
+      .from('project_members')
+      .update({ keywords: keywords || null })
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      logger.warn('setKeywords failed (member row may be missing or column not migrated):', error.message);
+      return null;
+    }
+    return data;
+  },
+
+  // Returns a map { projectId: keywords } of this user's per-member keywords.
+  async getKeywordsByUser(userId) {
+    try {
+      const { data, error } = await supabase
+        .from('project_members')
+        .select('project_id, keywords')
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.warn('getKeywordsByUser failed (column may not be migrated):', error.message);
+        return {};
+      }
+
+      const map = {};
+      (data || []).forEach(row => {
+        if (row.keywords && row.keywords.trim()) {
+          map[row.project_id] = row.keywords.trim();
+        }
+      });
+      return map;
+    } catch (error) {
+      logger.warn('getKeywordsByUser error:', error.message);
+      return {};
+    }
+  },
+
   async invite(projectId, username, invitedByUserId) {
     try {
       const normalizedUsername = String(username || '').replace(/^@/, '').trim();
