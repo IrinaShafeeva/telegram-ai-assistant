@@ -29,6 +29,43 @@ const { notifyPartners, partnerLabel } = require('../../services/familyBudget');
 const { handleTransferCallback } = require('./transfer');
 const { handleProjectsSummaryCallback } = require('./projectsSummary');
 
+function stripCategoryEmoji(category) {
+  const parts = String(category || '').trim().split(/\s+/);
+  return parts.length > 1 ? parts.slice(1).join(' ') : String(category || '').trim();
+}
+
+async function userCanEditTransaction(transaction, user) {
+  if (!transaction || !user?.id) return false;
+  if (transaction.user_id === user.id) return true;
+  if (!transaction.project_id) return false;
+  try {
+    const access = await projectService.hasAccess(transaction.project_id, user.id);
+    return !!access.access;
+  } catch (error) {
+    logger.warn('Could not verify transaction project access:', error.message);
+    return false;
+  }
+}
+
+async function updateTransactionAndSheet(transactionType, transactionId, updates) {
+  const service = transactionType === 'expense' ? expenseService : incomeService;
+  const updated = await service.update(transactionId, updates);
+  try {
+    if (updated?.project_id) {
+      await googleSheetsService.updateTransactionInSheet(updated, updated.project_id, transactionType);
+    }
+  } catch (sheetsError) {
+    logger.warn('Failed to update transaction in Google Sheets:', sheetsError.message);
+  }
+  return updated;
+}
+
+async function findTransactionByType(transactionType, transactionId) {
+  if (transactionType === 'expense') return expenseService.findById(transactionId);
+  if (transactionType === 'income') return incomeService.findById(transactionId);
+  throw new Error('Invalid transaction type');
+}
+
 async function handleCallback(callbackQuery) {
   // Inter-project transfer wizard handles its own fb_xfer:* callbacks.
   if (callbackQuery.data && callbackQuery.data.startsWith('fb_xfer:')) {
@@ -83,6 +120,8 @@ async function handleCallback(callbackQuery) {
       await handleBackToSettings(chatId, messageId, callbackQuery.user);
     } else if (data.startsWith('save_expense:')) {
       await handleSaveExpense(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_category:') && data.split(':').length === 3) {
+      await handleEditTransactionCategory(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:')) {
       await handleEditCategory(chatId, messageId, data, user);
     } else if (data.startsWith('edit_currency:')) {
@@ -189,6 +228,8 @@ async function handleCallback(callbackQuery) {
       await handleCategoriesCallback(chatId, messageId, user);
     } else if (data.startsWith('proj_sel:')) {
       await handleProjectSelectionForTransaction(callbackQuery, data);
+    } else if (data.startsWith('tx_project:')) {
+      await handleProjectSelectionForSavedTransaction(chatId, messageId, data, user);
     } else if (data.startsWith('cancel_trans:')) {
       await handleCancelTransaction(chatId, messageId, data);
     } else if (data.startsWith('export_format:')) {
@@ -594,10 +635,56 @@ async function handleSetProject(chatId, messageId, data, user) {
 }
 
 async function handleSetCategory(chatId, messageId, data, user) {
+  const bot = getBot();
   const parts = data.split(':');
   const tempId = parts[1];
   const categoryIndex = parseInt(parts[2]);
+  const activeState = stateManager.getState(chatId);
   const expenseData = tempExpenses.get(tempId);
+
+  if (activeState?.type === STATE_TYPES.EDITING_TRANSACTION_CATEGORY) {
+    const { transactionType, transactionId } = activeState.data;
+    if (transactionType === 'expense' && transactionId === tempId) {
+      try {
+        let customCategories = [];
+        try {
+          customCategories = await customCategoryService.findByUserId(user.id);
+        } catch (customError) {
+          logger.error('Error getting custom categories:', customError);
+        }
+
+        const { DEFAULT_CATEGORIES } = require('../../config/constants');
+        const categories = [...DEFAULT_CATEGORIES, ...customCategories.map(c => `${c.emoji} ${c.name}`)];
+        const selectedCategory = categories[categoryIndex];
+        if (!selectedCategory) throw new Error('Invalid category index');
+
+        const transaction = await expenseService.findById(transactionId);
+        if (!(await userCanEditTransaction(transaction, user))) {
+          await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+            chat_id: chatId,
+            message_id: messageId
+          });
+          return;
+        }
+
+        const category = stripCategoryEmoji(selectedCategory);
+        await updateTransactionAndSheet('expense', transactionId, { category });
+        stateManager.clearState(chatId);
+        await bot.editMessageText(`✅ Категория расхода обновлена: ${category}`, {
+          chat_id: chatId,
+          message_id: messageId
+        });
+      } catch (error) {
+        logger.error('Error updating saved expense category:', error);
+        stateManager.clearState(chatId);
+        await bot.editMessageText('❌ Ошибка обновления категории.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+      }
+      return;
+    }
+  }
 
   if (!expenseData) {
     await bot.editMessageText('❌ Данные расхода устарели.', {
@@ -631,7 +718,7 @@ async function handleSetCategory(chatId, messageId, data, user) {
     }
 
     // Extract category name without emoji
-    const categoryName = selectedCategory.split(' ').slice(1).join(' ');
+    const categoryName = stripCategoryEmoji(selectedCategory);
     expenseData.category = categoryName;
     tempExpenses.set(tempId, expenseData);
 
@@ -2055,6 +2142,35 @@ async function handleSetIncomeCategory(chatId, messageId, data, user) {
   try {
     const [, tempId, categoryIndexStr] = data.split(':');
     const categoryIndex = parseInt(categoryIndexStr);
+    const activeState = stateManager.getState(chatId);
+
+    if (activeState?.type === STATE_TYPES.EDITING_TRANSACTION_CATEGORY) {
+      const { transactionType, transactionId } = activeState.data;
+      if (transactionType === 'income' && transactionId === tempId) {
+        const { INCOME_CATEGORIES } = require('../../config/constants');
+        const selectedCategory = INCOME_CATEGORIES[categoryIndex];
+        if (!selectedCategory) throw new Error('Invalid category index');
+
+        const transaction = await incomeService.findById(transactionId);
+        if (!(await userCanEditTransaction(transaction, user))) {
+          await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+            chat_id: chatId,
+            message_id: messageId
+          });
+          return;
+        }
+
+        const category = stripCategoryEmoji(selectedCategory);
+        await updateTransactionAndSheet('income', transactionId, { category });
+        stateManager.clearState(chatId);
+        await bot.editMessageText(`✅ Категория дохода обновлена: ${category}`, {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+    }
+
     const incomeData = tempIncomes.get(tempId);
 
     if (!incomeData) {
@@ -2074,7 +2190,7 @@ async function handleSetIncomeCategory(chatId, messageId, data, user) {
     }
 
     // Extract category name without emoji
-    const categoryName = selectedCategory.split(' ').slice(1).join(' ');
+    const categoryName = stripCategoryEmoji(selectedCategory);
     incomeData.category = categoryName;
     tempIncomes.set(tempId, incomeData);
 
@@ -3318,6 +3434,46 @@ async function handleProjectSelectionForTransaction(callbackQuery, data) {
   }
 }
 
+async function handleProjectSelectionForSavedTransaction(chatId, messageId, data, user) {
+  const bot = getBot();
+  const [, projectIndexStr, transactionType, transactionId] = data.split(':');
+
+  try {
+    const transaction = await findTransactionByType(transactionType, transactionId);
+    if (!(await userCanEditTransaction(transaction, user))) {
+      await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    const projects = await projectService.findByUserId(user.id);
+    const project = projects[parseInt(projectIndexStr, 10)];
+    if (!project) {
+      await bot.editMessageText('❌ Проект не найден.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
+    await updateTransactionAndSheet(transactionType, transactionId, { project_id: project.id });
+    stateManager.clearState(chatId);
+    await bot.editMessageText(`✅ Проект записи обновлён: ${project.name}`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  } catch (error) {
+    logger.error('Error updating saved transaction project:', error);
+    stateManager.clearState(chatId);
+    await bot.editMessageText('❌ Ошибка обновления проекта записи.', {
+      chat_id: chatId,
+      message_id: messageId
+    });
+  }
+}
+
 async function handleCancelTransaction(chatId, messageId, data) {
   const bot = getBot();
   const shortTransactionId = data.split(':')[1];
@@ -3761,7 +3917,7 @@ async function handleEditTransaction(chatId, messageId, data, user) {
       throw new Error('Invalid transaction type');
     }
 
-    if (!transaction || transaction.user_id !== user.id) {
+    if (!(await userCanEditTransaction(transaction, user))) {
       await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
         chat_id: chatId,
         message_id: messageId
@@ -3825,6 +3981,15 @@ async function handleEditTransactionAmount(chatId, messageId, data, user) {
     const [, transactionType, transactionId] = data.split(':');
     logger.info(`🔧 Parsed data: transactionType=${transactionType}, transactionId=${transactionId}`);
 
+    const transaction = await findTransactionByType(transactionType, transactionId);
+    if (!(await userCanEditTransaction(transaction, user))) {
+      await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
     // Set state for editing amount
     logger.info(`🔧 Setting state EDITING_TRANSACTION_AMOUNT for chatId: ${chatId}, transactionId: ${transactionId}, type: ${transactionType}`);
     stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_AMOUNT, {
@@ -3858,6 +4023,15 @@ async function handleEditTransactionDescription(chatId, messageId, data, user) {
 
   try {
     const [, transactionType, transactionId] = data.split(':');
+
+    const transaction = await findTransactionByType(transactionType, transactionId);
+    if (!(await userCanEditTransaction(transaction, user))) {
+      await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
 
     stateManager.setState(chatId, STATE_TYPES.EDITING_TRANSACTION_DESCRIPTION, {
       transactionType,
@@ -3898,7 +4072,7 @@ async function handleEditTransactionCategory(chatId, messageId, data, user) {
       transaction = await incomeService.findById(transactionId);
     }
 
-    if (!transaction || transaction.user_id !== user.id) {
+    if (!(await userCanEditTransaction(transaction, user))) {
       await bot.editMessageText('❌ Транзакция не найдена.', {
         chat_id: chatId,
         message_id: messageId
@@ -3922,9 +4096,33 @@ async function handleEditTransactionCategory(chatId, messageId, data, user) {
       }
     }
 
-    const keyboard = transactionType === 'expense'
-      ? getCategorySelectionKeyboard(transactionId, customCategories)
-      : getIncomeCategorySelectionKeyboard(transactionId);
+    let keyboard;
+    if (transactionType === 'expense') {
+      const { DEFAULT_CATEGORIES } = require('../../config/constants');
+      const categories = [...DEFAULT_CATEGORIES, ...customCategories.map(c => `${c.emoji} ${c.name}`)];
+      const rows = [];
+      for (let i = 0; i < categories.length; i += 2) {
+        const row = [{ text: categories[i], callback_data: `set_category:${transactionId}:${i}` }];
+        if (categories[i + 1]) {
+          row.push({ text: categories[i + 1], callback_data: `set_category:${transactionId}:${i + 1}` });
+        }
+        rows.push(row);
+      }
+      rows.push([{ text: '❌ Отмена', callback_data: 'cancel_edit' }]);
+      keyboard = { inline_keyboard: rows };
+    } else {
+      const { INCOME_CATEGORIES } = require('../../config/constants');
+      const rows = [];
+      for (let i = 0; i < INCOME_CATEGORIES.length; i += 2) {
+        const row = [{ text: INCOME_CATEGORIES[i], callback_data: `set_income_category:${transactionId}:${i}` }];
+        if (INCOME_CATEGORIES[i + 1]) {
+          row.push({ text: INCOME_CATEGORIES[i + 1], callback_data: `set_income_category:${transactionId}:${i + 1}` });
+        }
+        rows.push(row);
+      }
+      rows.push([{ text: '❌ Отмена', callback_data: 'cancel_edit' }]);
+      keyboard = { inline_keyboard: rows };
+    }
 
     await bot.editMessageText(
       '🏷️ Выберите новую категорию:',
@@ -3952,6 +4150,15 @@ async function handleEditTransactionProject(chatId, messageId, data, user) {
   try {
     const [, transactionType, transactionId] = data.split(':');
 
+    const transaction = await findTransactionByType(transactionType, transactionId);
+    if (!(await userCanEditTransaction(transaction, user))) {
+      await bot.editMessageText('❌ Транзакция не найдена или недоступна.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
+
     // Get user's projects
     const projects = await projectService.findByUserId(user.id);
 
@@ -3970,8 +4177,12 @@ async function handleEditTransactionProject(chatId, messageId, data, user) {
       messageId
     });
 
-    // Show project selection
-    const keyboard = getProjectSelectionForTransactionKeyboard(projects, transactionId, transactionType);
+    const rows = projects.map((project, index) => ([{
+      text: `📋 ${project.name}`,
+      callback_data: `tx_project:${index}:${transactionType}:${transactionId}`
+    }]));
+    rows.push([{ text: '❌ Отмена', callback_data: 'cancel_edit' }]);
+    const keyboard = { inline_keyboard: rows };
 
     await bot.editMessageText(
       '📂 Выберите новый проект:',
@@ -4007,7 +4218,7 @@ async function handleDeleteTransaction(chatId, messageId, data, user) {
       transaction = await incomeService.findById(transactionId);
     }
 
-    if (!transaction || transaction.user_id !== user.id) {
+    if (!(await userCanEditTransaction(transaction, user))) {
       await bot.editMessageText('❌ Транзакция не найдена.', {
         chat_id: chatId,
         message_id: messageId
@@ -4065,7 +4276,7 @@ async function handleConfirmDelete(chatId, messageId, data, user) {
       transaction = await incomeService.findById(transactionId);
     }
 
-    if (!transaction || transaction.user_id !== user.id) {
+    if (!(await userCanEditTransaction(transaction, user))) {
       await bot.editMessageText('❌ Транзакция не найдена.', {
         chat_id: chatId,
         message_id: messageId
@@ -4442,6 +4653,14 @@ async function handleEditProjectTransactions(chatId, messageId, data, user) {
 
   try {
     const projectId = data.split(':')[1];
+    const access = await projectService.hasAccess(projectId, user.id);
+    if (!access.access) {
+      await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+        chat_id: chatId,
+        message_id: messageId
+      });
+      return;
+    }
 
     // Get project transactions
     const expenses = await expenseService.findByProject(projectId, 100, 0);

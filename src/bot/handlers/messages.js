@@ -110,6 +110,19 @@ function resolveCategory(text, ucCategories, parsedCategory) {
   return parsedCategory;
 }
 
+async function userCanEditTransaction(transaction, user) {
+  if (!transaction || !user?.id) return false;
+  if (transaction.user_id === user.id) return true;
+  if (!transaction.project_id) return false;
+  try {
+    const access = await projectService.hasAccess(transaction.project_id, user.id);
+    return !!access.access;
+  } catch (error) {
+    logger.warn('Could not verify transaction edit access:', error.message);
+    return false;
+  }
+}
+
 // Store temporary expense data
 const tempExpenses = new Map();
 // Store temporary income data
@@ -2403,6 +2416,7 @@ async function handleTransactionAmountEdit(msg, userState) {
   const text = msg.text.trim();
   const bot = getBot();
   const { transactionId, transactionType } = userState.data;
+  const user = msg.user;
 
   logger.info(`🔧 handleTransactionAmountEdit called: chatId=${chatId}, text="${text}", transactionId=${transactionId}, type=${transactionType}`);
 
@@ -2416,11 +2430,22 @@ async function handleTransactionAmountEdit(msg, userState) {
 
     // Update transaction
     const service = transactionType === 'expense' ? expenseService : incomeService;
+    const currentTransaction = await service.findById(transactionId);
+    if (!(await userCanEditTransaction(currentTransaction, user))) {
+      stateManager.clearState(chatId);
+      await bot.sendMessage(chatId, '❌ Транзакция не найдена или недоступна.');
+      return;
+    }
+
     const updatedTransaction = await service.update(transactionId, { amount });
 
     // Update Google Sheets
-    if (updatedTransaction && updatedTransaction.project_id) {
-      await googleSheetsService.updateTransactionInSheet(updatedTransaction, updatedTransaction.project_id, transactionType);
+    try {
+      if (updatedTransaction && updatedTransaction.project_id) {
+        await googleSheetsService.updateTransactionInSheet(updatedTransaction, updatedTransaction.project_id, transactionType);
+      }
+    } catch (sheetsError) {
+      logger.warn('Failed to update transaction amount in Google Sheets:', sheetsError.message);
     }
 
     stateManager.clearState(chatId);
@@ -2439,6 +2464,7 @@ async function handleTransactionDescriptionEdit(msg, userState) {
   const text = msg.text.trim();
   const bot = getBot();
   const { transactionId, transactionType } = userState.data;
+  const user = msg.user;
 
   try {
     // Validate description
@@ -2449,11 +2475,22 @@ async function handleTransactionDescriptionEdit(msg, userState) {
 
     // Update transaction
     const service = transactionType === 'expense' ? expenseService : incomeService;
+    const currentTransaction = await service.findById(transactionId);
+    if (!(await userCanEditTransaction(currentTransaction, user))) {
+      stateManager.clearState(chatId);
+      await bot.sendMessage(chatId, '❌ Транзакция не найдена или недоступна.');
+      return;
+    }
+
     const updatedTransaction = await service.update(transactionId, { description: text });
 
     // Update Google Sheets
-    if (updatedTransaction && updatedTransaction.project_id) {
-      await googleSheetsService.updateTransactionInSheet(updatedTransaction, updatedTransaction.project_id, transactionType);
+    try {
+      if (updatedTransaction && updatedTransaction.project_id) {
+        await googleSheetsService.updateTransactionInSheet(updatedTransaction, updatedTransaction.project_id, transactionType);
+      }
+    } catch (sheetsError) {
+      logger.warn('Failed to update transaction description in Google Sheets:', sheetsError.message);
     }
 
     stateManager.clearState(chatId);

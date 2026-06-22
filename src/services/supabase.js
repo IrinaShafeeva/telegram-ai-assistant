@@ -1617,11 +1617,26 @@ const projectSheetService = {
 const transactionService = {
   async getRecentTransactions(userId, limit = 3) {
     try {
-      // Get recent expenses and incomes in parallel
-      const [expenses, incomes] = await Promise.all([
-        expenseService.getRecentTransactions(userId, limit),
-        incomeService.getRecentTransactions(userId, limit)
-      ]);
+      const projects = await projectService.findByUserId(userId);
+
+      let expenses = [];
+      let incomes = [];
+      if (projects?.length) {
+        const [expenseLists, incomeLists] = await Promise.all([
+          Promise.all(projects.map(project => expenseService.findByProject(project.id, limit, 0))),
+          Promise.all(projects.map(project => incomeService.findByProject(project.id, limit, 0)))
+        ]);
+
+        expenses = expenseLists.flat().map(row => ({ ...row, type: 'expense' }));
+        incomes = incomeLists.flat().map(row => ({ ...row, type: 'income' }));
+      } else {
+        const ownRows = await Promise.all([
+          expenseService.getRecentTransactions(userId, limit),
+          incomeService.getRecentTransactions(userId, limit)
+        ]);
+        expenses = ownRows[0] || [];
+        incomes = ownRows[1] || [];
+      }
 
       // Combine and sort by creation date
       const allTransactions = [...expenses, ...incomes].sort((a, b) =>

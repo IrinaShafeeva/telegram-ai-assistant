@@ -70,11 +70,23 @@ CREATE TABLE IF NOT EXISTS floating_incomes (
   amount DECIMAL(12,2) NOT NULL,
   description VARCHAR(200),
   income_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  income_id UUID REFERENCES incomes(id) ON DELETE SET NULL,
   created_by BIGINT REFERENCES users(id),
   created_at TIMESTAMP DEFAULT NOW()
 );
-ALTER TABLE floating_incomes ADD COLUMN IF NOT EXISTS income_id UUID REFERENCES incomes(id) ON DELETE SET NULL;
+ALTER TABLE floating_incomes ADD COLUMN IF NOT EXISTS income_id UUID;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'floating_incomes_income_id_fkey'
+      AND conrelid = 'floating_incomes'::regclass
+  ) THEN
+    ALTER TABLE floating_incomes
+      ADD CONSTRAINT floating_incomes_income_id_fkey
+      FOREIGN KEY (income_id) REFERENCES incomes(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- Per-month occurrences of planned payments/incomes. This lets a planned row
 -- stay monthly while a single occurrence can be confirmed or postponed.
