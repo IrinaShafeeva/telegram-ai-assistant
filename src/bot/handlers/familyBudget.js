@@ -6,6 +6,7 @@ const {
   plannedIncomeService,
   debtService,
   floatingIncomeService,
+  plannedOccurrenceService,
   notifyPartners,
   partnerLabel,
   currentPlanMonth
@@ -18,6 +19,7 @@ const {
   listsMenuKeyboard,
   listActionsKeyboard,
   listRowKeyboard,
+  plannedOccurrenceKeyboard,
   realityActionsKeyboard,
   updateBroadcastKeyboard,
   confirmDeleteKeyboard,
@@ -40,6 +42,48 @@ function parseDay(text) {
   const n = parseInt(text.replace(/\D/g, ''), 10);
   if (n >= 1 && n <= 31) return n;
   return null;
+}
+
+function parsePostponeDate(text) {
+  const value = String(text || '').trim();
+  const today = new Date();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const date = new Date(`${value}T00:00:00`);
+    return isNaN(date.getTime()) ? null : value;
+  }
+
+  const parts = value.match(/^(\d{1,2})(?:[.\-/](\d{1,2}))?$/);
+  if (!parts) return null;
+
+  const day = parseInt(parts[1], 10);
+  const month = parts[2] ? parseInt(parts[2], 10) : today.getMonth() + 1;
+  let year = today.getFullYear();
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+
+  const buildDate = (y, m, d) => {
+    const last = new Date(y, m, 0).getDate();
+    const safeDay = Math.min(d, last);
+    return new Date(y, m - 1, safeDay);
+  };
+
+  let date = buildDate(year, month, day);
+  date.setHours(0, 0, 0, 0);
+  const todayStart = new Date(today);
+  todayStart.setHours(0, 0, 0, 0);
+  if (!parts[2] && date < todayStart) {
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    date = buildDate(nextYear, nextMonth, day);
+  } else if (parts[2] && date < todayStart) {
+    year += 1;
+    date = buildDate(year, month, day);
+  }
+
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 // Parse a single-line entry like "550 жилье Албания" or "жилье 550"
@@ -532,6 +576,17 @@ async function handleFamilyText(msg, userState) {
     await showMonthReality(chatId, user.id);
     return;
   }
+  if (userState.type === STATE_TYPES.FB_POSTPONE_DATE) {
+    const targetDate = parsePostponeDate(text);
+    if (!targetDate) {
+      return bot.sendMessage(chatId, 'Введите дату: число месяца, ДД.ММ или YYYY-MM-DD.');
+    }
+    const result = await plannedOccurrenceService.postpone(data.eventId, user.id, targetDate);
+    stateManager.clearState(chatId);
+    await bot.sendMessage(chatId, `⏰ Перенесено: «${result.item.title}» на ${targetDate}.`);
+    await notifyPartners(bot, result.event.project_id, user.id, `⏰ ${partnerLabel(user)} перенёс(ла) «${result.item.title}» на ${targetDate}`);
+    return;
+  }
   if (userState.type === STATE_TYPES.FB_DEBT_TOPUP) {
     const amount = parseAmount(text);
     if (!amount || amount <= 0) return bot.sendMessage(chatId, 'Введите сумму.');
@@ -760,6 +815,48 @@ async function handleFamilyCallback(callbackQuery) {
 
   if (data === 'fb:close') {
     await bot.deleteMessage(chatId, callbackQuery.message.message_id).catch(() => {});
+    return true;
+  }
+
+  if (data.startsWith('fb:occ:done:')) {
+    const eventId = data.split(':')[3];
+    const result = await plannedOccurrenceService.complete(eventId, user.id);
+    if (result.alreadyDone) {
+      await bot.sendMessage(chatId, 'Эта запись уже отмечена.');
+      return true;
+    }
+    const isIncome = result.event.item_type === 'income';
+    const verb = isIncome ? 'зачислен' : 'записан как расход';
+    await bot.sendMessage(chatId, `✅ «${result.item.title}» ${verb}: ${result.item.amount} ${result.project?.budget_currency || 'RUB'}.`);
+    await notifyPartners(
+      bot,
+      result.event.project_id,
+      user.id,
+      `✅ ${partnerLabel(user)} отметил(а): «${result.item.title}» ${isIncome ? 'пришёл' : 'оплачен'}`
+    );
+    return true;
+  }
+
+  if (data.startsWith('fb:occ:postpone:')) {
+    const [, , , eventId, mode] = data.split(':');
+    const { event, item } = await plannedOccurrenceService.getEventWithItem(eventId);
+    if (mode === 'date') {
+      stateManager.setState(chatId, STATE_TYPES.FB_POSTPONE_DATE, { eventId }, 20);
+      await bot.sendMessage(chatId, 'На какую дату перенести этот раз? Можно: 14, 14.07 или 2026-07-14.');
+      return true;
+    }
+    const targetDate = plannedOccurrenceService.nextPostponeDate(event, item, mode);
+    if (!targetDate) {
+      await bot.sendMessage(chatId, 'Не понял дату переноса.');
+      return true;
+    }
+    const result = await plannedOccurrenceService.postpone(eventId, user.id, targetDate);
+    if (result.alreadyDone) {
+      await bot.sendMessage(chatId, 'Эта запись уже отмечена.');
+      return true;
+    }
+    await bot.sendMessage(chatId, `⏰ Перенесено: «${result.item.title}» на ${targetDate}.`);
+    await notifyPartners(bot, result.event.project_id, user.id, `⏰ ${partnerLabel(user)} перенёс(ла) «${result.item.title}» на ${targetDate}`);
     return true;
   }
 

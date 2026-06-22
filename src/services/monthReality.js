@@ -24,8 +24,9 @@ async function getMonthReality(project, date = new Date()) {
 
   const plannedExpenses = payments.reduce((s, p) => s + parseFloat(p.amount), 0);
   const plannedIncome = incomes.reduce((s, p) => s + parseFloat(p.amount), 0);
+  const actualIncomeTotal = plannedIncome + floatingMtd;
   const monthBalance = plannedIncome - plannedExpenses;
-  const totalWithFloating = monthBalance + floatingMtd;
+  const totalWithFloating = actualIncomeTotal - plannedExpenses;
 
   const upcomingPayments = sortByUpcoming(payments, date, 3);
   const upcomingIncomes = sortByUpcoming(incomes, date, 3);
@@ -33,6 +34,7 @@ async function getMonthReality(project, date = new Date()) {
   return {
     currency,
     plannedIncome,
+    actualIncomeTotal,
     plannedExpenses,
     monthBalance,
     floatingMtd,
@@ -51,6 +53,10 @@ function formatMonthRealityMessage(reality) {
 
   lines.push('📊 *Реальность месяца*\n');
   lines.push(`📥 Ожидаемые доходы: *${formatMoney(reality.plannedIncome, currency)}*`);
+  if (reality.floatingMtd > 0) {
+    lines.push(`💫 Плавающий доход: *+${formatMoney(reality.floatingMtd, currency)}*`);
+    lines.push(`💰 Доходы всего: *${formatMoney(reality.actualIncomeTotal, currency)}*`);
+  }
   lines.push(`📤 Обязательные платежи: *${formatMoney(reality.plannedExpenses, currency)}*`);
 
   const balance = reality.monthBalance;
@@ -63,8 +69,7 @@ function formatMonthRealityMessage(reality) {
   }
 
   if (reality.floatingMtd > 0) {
-    lines.push(`\n💫 Плавающий доход (уже в этом месяце): +${formatMoney(reality.floatingMtd, currency)}`);
-    lines.push(`📐 С учётом плавающего: *${formatMoney(reality.totalWithFloating, currency)}*`);
+    lines.push(`\n📐 Остаток с учётом плавающего дохода: *${formatMoney(reality.totalWithFloating, currency)}*`);
   }
 
   lines.push(`\n🏦 Счётчик долга: *${formatMoney(reality.debtTotal, currency)}*`);

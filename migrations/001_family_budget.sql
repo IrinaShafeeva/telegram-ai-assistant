@@ -4,6 +4,8 @@
 ALTER TABLE users ADD COLUMN IF NOT EXISTS lumik_update_seen BOOLEAN DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_morning_sent_date DATE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_insight_sent_date DATE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_weekly_summary_sent_date DATE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_monthly_summary_sent_month VARCHAR(7);
 
 -- Projects
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_family_budget BOOLEAN DEFAULT FALSE;
@@ -68,8 +70,39 @@ CREATE TABLE IF NOT EXISTS floating_incomes (
   amount DECIMAL(12,2) NOT NULL,
   description VARCHAR(200),
   income_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  income_id UUID REFERENCES incomes(id) ON DELETE SET NULL,
   created_by BIGINT REFERENCES users(id),
   created_at TIMESTAMP DEFAULT NOW()
+);
+ALTER TABLE floating_incomes ADD COLUMN IF NOT EXISTS income_id UUID REFERENCES incomes(id) ON DELETE SET NULL;
+
+-- Per-month occurrences of planned payments/incomes. This lets a planned row
+-- stay monthly while a single occurrence can be confirmed or postponed.
+CREATE TABLE IF NOT EXISTS planned_item_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  item_type VARCHAR(20) NOT NULL CHECK (item_type IN ('payment', 'income')),
+  item_id UUID NOT NULL,
+  due_date DATE NOT NULL,
+  scheduled_date DATE NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'postponed', 'done')),
+  transaction_id UUID,
+  completed_by BIGINT REFERENCES users(id),
+  completed_at TIMESTAMP,
+  postponed_by BIGINT REFERENCES users(id),
+  postponed_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(project_id, item_type, item_id, due_date)
+);
+
+CREATE TABLE IF NOT EXISTS planned_item_event_reminders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES planned_item_events(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id),
+  reminder_date DATE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(event_id, user_id, reminder_date)
 );
 
 -- Audit trail for plan list changes
@@ -90,5 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_planned_payments_project ON planned_payments(proj
 CREATE INDEX IF NOT EXISTS idx_planned_incomes_project ON planned_incomes(project_id);
 CREATE INDEX IF NOT EXISTS idx_debts_project ON debts(project_id);
 CREATE INDEX IF NOT EXISTS idx_floating_incomes_project_date ON floating_incomes(project_id, income_date);
+CREATE INDEX IF NOT EXISTS idx_planned_item_events_project_date ON planned_item_events(project_id, scheduled_date, status);
+CREATE INDEX IF NOT EXISTS idx_planned_item_event_reminders_user_date ON planned_item_event_reminders(user_id, reminder_date);
 CREATE INDEX IF NOT EXISTS idx_budget_changelog_project ON budget_changelog(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_family_owner ON projects(owner_id) WHERE is_family_budget = TRUE;

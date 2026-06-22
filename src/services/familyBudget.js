@@ -1,5 +1,6 @@
 const { supabase, projectService, projectMemberService, userService } = require('./supabase');
 const logger = require('../utils/logger');
+const { clampDayOfMonth } = require('../utils/budgetDates');
 
 const FAMILY_KEYWORDS = 'семья, семейный, общак';
 const FAMILY_PROJECT_NAME = 'Семейный бюджет';
@@ -81,6 +82,34 @@ async function logChangelog({ projectId, userId, entityType, entityId, action, s
     new_value: newValue || null
   });
   if (error) logger.warn('budget_changelog insert failed:', error);
+}
+
+function toDateOnly(date = new Date()) {
+  if (typeof date === 'string') return date.slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(dateString, days) {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return toDateOnly(date);
+}
+
+function monthlyDueDate(dateString, dayOfMonth) {
+  const date = new Date(`${dateString}T00:00:00`);
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const day = clampDayOfMonth(year, month, dayOfMonth);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function nextMonthDueDate(dateString, dayOfMonth) {
+  const date = new Date(`${dateString}T00:00:00`);
+  const next = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  const year = next.getFullYear();
+  const month = next.getMonth() + 1;
+  const day = clampDayOfMonth(year, month, dayOfMonth);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 const familyProjectService = {
@@ -553,9 +582,37 @@ const floatingIncomeService = {
   },
 
   async create(row, userId) {
-    const payload = { ...row, created_by: userId };
+    const project = await projectService.findById(row.project_id);
+    const currency = project?.budget_currency || row.currency || 'RUB';
+    const incomeDate = row.income_date || toDateOnly();
+    const description = row.description || 'Плавающий доход';
+
+    const { data: income, error: incomeError } = await supabase
+      .from('incomes')
+      .insert({
+        user_id: userId,
+        project_id: row.project_id,
+        amount: row.amount,
+        currency,
+        category: row.category || 'Плавающий доход',
+        description,
+        income_date: incomeDate,
+        source: 'floating_income'
+      })
+      .select()
+      .single();
+    if (incomeError) throw incomeError;
+
+    const payload = { ...row, description, income_date: incomeDate, income_id: income.id, created_by: userId };
     const { data, error } = await supabase.from('floating_incomes').insert(payload).select().single();
-    if (error) throw error;
+    if (error) {
+      try {
+        await supabase.from('incomes').delete().eq('id', income.id);
+      } catch (rollbackError) {
+        logger.warn('floating income rollback failed:', rollbackError.message);
+      }
+      throw error;
+    }
     await logChangelog({
       projectId: row.project_id,
       userId,
@@ -565,7 +622,203 @@ const floatingIncomeService = {
       summary: `Плавающий доход: +${data.amount}`,
       newValue: data
     });
-    return data;
+    return { ...data, income };
+  }
+};
+
+const plannedOccurrenceService = {
+  async ensureForDate(projectId, date = new Date()) {
+    const dateString = toDateOnly(date);
+    const [payments, incomes] = await Promise.all([
+      plannedPaymentService.list(projectId),
+      plannedIncomeService.list(projectId)
+    ]);
+
+    const rows = [];
+    for (const payment of payments) {
+      const dueDate = monthlyDueDate(dateString, payment.day_of_month);
+      if (dueDate === dateString) {
+        rows.push({
+          project_id: projectId,
+          item_type: 'payment',
+          item_id: payment.id,
+          due_date: dueDate,
+          scheduled_date: dueDate
+        });
+      }
+    }
+    for (const income of incomes) {
+      const dueDate = monthlyDueDate(dateString, income.day_of_month);
+      if (dueDate === dateString) {
+        rows.push({
+          project_id: projectId,
+          item_type: 'income',
+          item_id: income.id,
+          due_date: dueDate,
+          scheduled_date: dueDate
+        });
+      }
+    }
+
+    if (rows.length === 0) return [];
+    const { error } = await supabase
+      .from('planned_item_events')
+      .upsert(rows, { onConflict: 'project_id,item_type,item_id,due_date', ignoreDuplicates: true });
+    if (error) throw error;
+    return rows;
+  },
+
+  async listDueForUser(projectId, userId, date = new Date()) {
+    const dateString = toDateOnly(date);
+    await this.ensureForDate(projectId, dateString);
+
+    const { data: events, error } = await supabase
+      .from('planned_item_events')
+      .select('*')
+      .eq('project_id', projectId)
+      .in('status', ['pending', 'postponed'])
+      .lte('scheduled_date', dateString)
+      .order('scheduled_date', { ascending: true });
+    if (error) throw error;
+
+    const due = [];
+    for (const event of events || []) {
+      const { data: reminder, error: reminderError } = await supabase
+        .from('planned_item_event_reminders')
+        .select('id')
+        .eq('event_id', event.id)
+        .eq('user_id', userId)
+        .eq('reminder_date', dateString)
+        .maybeSingle();
+      if (reminderError && reminderError.code !== 'PGRST116') throw reminderError;
+      if (!reminder) due.push(event);
+    }
+    return due;
+  },
+
+  async markReminderSent(eventId, userId, date = new Date()) {
+    const { error } = await supabase
+      .from('planned_item_event_reminders')
+      .upsert(
+        { event_id: eventId, user_id: userId, reminder_date: toDateOnly(date) },
+        { onConflict: 'event_id,user_id,reminder_date', ignoreDuplicates: true }
+      );
+    if (error) logger.warn('planned reminder mark failed:', error.message);
+  },
+
+  async getEventWithItem(eventId) {
+    const { data: event, error } = await supabase
+      .from('planned_item_events')
+      .select('*')
+      .eq('id', eventId)
+      .single();
+    if (error) throw error;
+
+    const table = event.item_type === 'income' ? 'planned_incomes' : 'planned_payments';
+    const { data: item, error: itemError } = await supabase
+      .from(table)
+      .select('*')
+      .eq('id', event.item_id)
+      .single();
+    if (itemError) throw itemError;
+    return { event, item };
+  },
+
+  async complete(eventId, userId) {
+    const { event, item } = await this.getEventWithItem(eventId);
+    if (event.status === 'done') return { event, item, alreadyDone: true };
+
+    const project = await projectService.findById(event.project_id);
+    const currency = project?.budget_currency || 'RUB';
+    const date = event.scheduled_date || event.due_date;
+    const isIncome = event.item_type === 'income';
+    const table = isIncome ? 'incomes' : 'expenses';
+    const dateField = isIncome ? 'income_date' : 'expense_date';
+    const category = item.category || (isIncome ? 'Ожидаемые доходы' : 'Обязательные платежи');
+    const source = isIncome ? 'planned_income' : 'planned_payment';
+
+    const { data: transaction, error: txError } = await supabase
+      .from(table)
+      .insert({
+        user_id: userId,
+        project_id: event.project_id,
+        amount: item.amount,
+        currency,
+        category,
+        description: item.title,
+        [dateField]: date,
+        source
+      })
+      .select()
+      .single();
+    if (txError) throw txError;
+
+    const { data: updated, error: updateError } = await supabase
+      .from('planned_item_events')
+      .update({
+        status: 'done',
+        transaction_id: transaction.id,
+        completed_by: userId,
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', eventId)
+      .select()
+      .single();
+    if (updateError) throw updateError;
+
+    await logChangelog({
+      projectId: event.project_id,
+      userId,
+      entityType: 'planned_item_event',
+      entityId: eventId,
+      action: 'completed',
+      summary: `${isIncome ? 'Доход пришёл' : 'Платёж оплачен'}: ${item.title} ${item.amount}`,
+      oldValue: event,
+      newValue: updated
+    });
+
+    return { event: updated, item, transaction, project };
+  },
+
+  async postpone(eventId, userId, targetDate) {
+    const { event, item } = await this.getEventWithItem(eventId);
+    if (event.status === 'done') return { event, item, alreadyDone: true };
+
+    const { data: updated, error } = await supabase
+      .from('planned_item_events')
+      .update({
+        scheduled_date: targetDate,
+        status: 'postponed',
+        postponed_by: userId,
+        postponed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', eventId)
+      .select()
+      .single();
+    if (error) throw error;
+
+    await logChangelog({
+      projectId: event.project_id,
+      userId,
+      entityType: 'planned_item_event',
+      entityId: eventId,
+      action: 'postponed',
+      summary: `Перенос: ${item.title} на ${targetDate}`,
+      oldValue: event,
+      newValue: updated
+    });
+
+    return { event: updated, item };
+  },
+
+  nextPostponeDate(event, item, mode) {
+    const base = event.scheduled_date || event.due_date || toDateOnly();
+    if (mode === 'tomorrow') return addDays(base, 1);
+    if (mode === '3d') return addDays(base, 3);
+    if (mode === 'next_month') return nextMonthDueDate(base, item.day_of_month);
+    return null;
   }
 };
 
@@ -596,6 +849,7 @@ module.exports = {
   plannedIncomeService,
   debtService,
   floatingIncomeService,
+  plannedOccurrenceService,
   changelogService,
   logChangelog,
   notifyPartners,

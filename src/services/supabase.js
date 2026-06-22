@@ -39,11 +39,14 @@ async function runMigrations() {
     { table: 'users', column: 'lumik_update_seen', type: 'BOOLEAN DEFAULT FALSE' },
     { table: 'users', column: 'last_morning_sent_date', type: 'DATE' },
     { table: 'users', column: 'last_insight_sent_date', type: 'DATE' },
+    { table: 'users', column: 'last_weekly_summary_sent_date', type: 'DATE' },
+    { table: 'users', column: 'last_monthly_summary_sent_month', type: 'VARCHAR(7)' },
     { table: 'users', column: 'email', type: 'TEXT' },
     { table: 'projects', column: 'family_established_at', type: 'TIMESTAMP' },
     { table: 'projects', column: 'family_established_by', type: 'BIGINT' },
     { table: 'expenses', column: 'transfer_id', type: 'UUID' },
     { table: 'incomes', column: 'transfer_id', type: 'UUID' },
+    { table: 'floating_incomes', column: 'income_id', type: 'UUID REFERENCES incomes(id) ON DELETE SET NULL' },
     { table: 'users', column: 'default_project_id', type: 'UUID REFERENCES projects(id) ON DELETE SET NULL' },
     { table: 'project_members', column: 'keywords', type: 'TEXT' }
   ];
@@ -67,12 +70,12 @@ async function runMigrations() {
 
   // Tables that the code expects but bootstrap doesn't create. Log a clear
   // warning instead of letting the first runtime usage fail silently.
-  const requiredTables = ['project_invites'];
+  const requiredTables = ['project_invites', 'planned_item_events', 'planned_item_event_reminders'];
   for (const table of requiredTables) {
     try {
       const { error } = await supabase.from(table).select('*').limit(1);
       if (error && (error.code === '42P01' || /relation .* does not exist/i.test(error.message || ''))) {
-        logger.warn(`Table "${table}" is MISSING. Apply migration: see migrations/006_project_invites.sql`);
+        logger.warn(`Table "${table}" is MISSING. Apply SQL migrations from the migrations directory.`);
       } else if (error) {
         logger.warn(`Could not probe table "${table}":`, error.message);
       } else {

@@ -1,4 +1,4 @@
-const { expenseService, userService, incomeService, supabase } = require('./supabase');
+const { expenseService, userService, incomeService, projectService, supabase } = require('./supabase');
 // Inter-project transfers are recorded as paired expense+income rows under
 // the ↔️ Перевод category and share a transfer_id. They cancel each other
 // out and must be excluded from analytics so we don't double-count internal
@@ -6,6 +6,42 @@ const { expenseService, userService, incomeService, supabase } = require('./supa
 function dropTransferRows(rows) {
   if (!Array.isArray(rows)) return rows;
   return rows.filter(r => !r || !r.transfer_id);
+}
+async function getLegacyFloatingIncomeRows(projectIds, startDate, endDate, fallbackCurrency) {
+  const ids = [...new Set((projectIds || []).filter(Boolean))];
+  if (ids.length === 0) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('floating_incomes')
+      .select('id, project_id, amount, description, income_date, income_id, created_at')
+      .in('project_id', ids)
+      .gte('income_date', startDate.toISOString().split('T')[0])
+      .lte('income_date', endDate.toISOString().split('T')[0]);
+    if (error) throw error;
+
+    const projects = await Promise.all(ids.map(id => projectService.findById(id).catch(() => null)));
+    const currencyByProject = Object.fromEntries(
+      projects.filter(Boolean).map(project => [project.id, project.budget_currency || fallbackCurrency])
+    );
+
+    return (data || [])
+      .filter(row => !row.income_id)
+      .map(row => ({
+        id: `floating:${row.id}`,
+        project_id: row.project_id,
+        amount: row.amount,
+        currency: currencyByProject[row.project_id] || fallbackCurrency,
+        category: 'Плавающий доход',
+        description: row.description || 'Плавающий доход',
+        income_date: row.income_date,
+        created_at: row.created_at,
+        source: 'floating_income_legacy'
+      }));
+  } catch (error) {
+    logger.warn('Could not load legacy floating incomes for analytics:', error.message);
+    return [];
+  }
 }
 const openaiService = require('./openai');
 const currencyService = require('./currency');
@@ -139,7 +175,10 @@ class AnalyticsService {
           incomeService.getIncomesForExportByProject(projectId, startDate, endDate)
         ]);
         expenses = dropTransferRows(exps || []);
-        incomes = dropTransferRows(incs || []);
+        incomes = [
+          ...dropTransferRows(incs || []),
+          ...await getLegacyFloatingIncomeRows([projectId], startDate, endDate, primaryCurrency)
+        ];
       } else {
         const [expensesResult, allIncomes] = await Promise.all([
           supabase.rpc('get_user_expenses_for_period', {
@@ -150,7 +189,12 @@ class AnalyticsService {
           incomeService.getIncomesForExport(userId, startDate, endDate)
         ]);
         expenses = dropTransferRows(expensesResult.data || []);
-        incomes = dropTransferRows(allIncomes || []);
+        const projects = await projectService.findByUserId(userId).catch(() => []);
+        const familyProjectIds = (projects || []).filter(p => p.is_family_budget).map(p => p.id);
+        incomes = [
+          ...dropTransferRows(allIncomes || []),
+          ...await getLegacyFloatingIncomeRows(familyProjectIds, startDate, endDate, primaryCurrency)
+        ];
       }
 
       // If no data at all, return appropriate message
@@ -496,8 +540,18 @@ class AnalyticsService {
     try {
       const { startDate, endDate } = getDateRange(period);
       
-      // Get incomes for the period
-      const incomes = await incomeService.getIncomesForExport(userId, startDate, endDate);
+      const user = await userService.findById(userId);
+      const primaryCurrency = user.primary_currency || 'RUB';
+
+      // Get incomes for the period. Family floating incomes created before
+      // this feature wrote real income rows are appended as legacy rows.
+      const [rawIncomes, projects] = await Promise.all([
+        incomeService.getIncomesForExport(userId, startDate, endDate),
+        projectService.findByUserId(userId).catch(() => [])
+      ]);
+      const familyProjectIds = (projects || []).filter(p => p.is_family_budget).map(p => p.id);
+      const legacyFloating = await getLegacyFloatingIncomeRows(familyProjectIds, startDate, endDate, primaryCurrency);
+      const incomes = [...dropTransferRows(rawIncomes || []), ...legacyFloating];
 
       if (!incomes || incomes.length === 0) {
         return {
@@ -536,9 +590,6 @@ class AnalyticsService {
       }, {});
 
       // Calculate total in primary currency
-      const user = await userService.findById(userId);
-      const primaryCurrency = user.primary_currency || 'RUB';
-      
       let totalInPrimaryCurrency = 0;
       for (const [currency, amount] of Object.entries(currencyTotals)) {
         if (currency === primaryCurrency) {
@@ -628,7 +679,13 @@ class AnalyticsService {
         (projects || []).map(p => incomeService.getIncomesForExportByProject(p.id, startDate, endDate))
       );
       const expenses = expenseLists.flat();
-      const incomes = incomeLists.flat();
+      const legacyFloating = await getLegacyFloatingIncomeRows(
+        (projects || []).filter(p => p.is_family_budget).map(p => p.id),
+        startDate,
+        endDate,
+        'RUB'
+      );
+      const incomes = [...incomeLists.flat(), ...legacyFloating];
 
       const empty = () => ({
         income: {},      // external income (no transfer_id)

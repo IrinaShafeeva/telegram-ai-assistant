@@ -29,6 +29,23 @@ function listActionsKeyboard(listType) {
   };
 }
 
+function plannedOccurrenceKeyboard(eventId, itemType) {
+  const doneText = itemType === 'income' ? '✅ Пришло' : '✅ Оплачено';
+  return {
+    inline_keyboard: [
+      [{ text: doneText, callback_data: `fb:occ:done:${eventId}` }],
+      [
+        { text: '⏰ Завтра', callback_data: `fb:occ:postpone:${eventId}:tomorrow` },
+        { text: '+3 дня', callback_data: `fb:occ:postpone:${eventId}:3d` }
+      ],
+      [
+        { text: '📅 Выбрать дату', callback_data: `fb:occ:postpone:${eventId}:date` },
+        { text: 'След. месяц', callback_data: `fb:occ:postpone:${eventId}:next_month` }
+      ]
+    ]
+  };
+}
+
 function realityActionsKeyboard() {
   return {
     inline_keyboard: [
@@ -110,6 +127,7 @@ module.exports = {
   listRowKeyboard,
   listsMenuKeyboard,
   listActionsKeyboard,
+  plannedOccurrenceKeyboard,
   realityActionsKeyboard,
   updateBroadcastKeyboard,
   confirmDeleteKeyboard,
