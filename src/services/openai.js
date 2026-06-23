@@ -7,7 +7,10 @@ const logger = require('../utils/logger');
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   maxRetries: 3,
-  timeout: 30000
+  timeout: 30000,
+  defaultHeaders: {
+    'Accept-Encoding': 'identity'
+  }
 });
 
 function sleep(ms) {
