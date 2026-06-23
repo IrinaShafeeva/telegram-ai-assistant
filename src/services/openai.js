@@ -40,6 +40,69 @@ function friendlyOpenAIError(error, fallback = 'AI временно недост
   return 'Не удалось обработать запись. Попробуйте написать чуть проще.';
 }
 
+function detectCurrency(text, primaryCurrency = 'RUB') {
+  const normalized = String(text || '').toLowerCase();
+  if (/(евро|eur|€)/i.test(normalized)) return 'EUR';
+  if (/(доллар|долларов|бакс|usd|\$)/i.test(normalized)) return 'USD';
+  if (/(грив|грн|uah|₴)/i.test(normalized)) return 'UAH';
+  if (/(фунт|gbp|£)/i.test(normalized)) return 'GBP';
+  if (/(тенге|kzt|₸)/i.test(normalized)) return 'KZT';
+  if (/(руб|рубл|rur|rub|₽)/i.test(normalized)) return 'RUB';
+  return primaryCurrency;
+}
+
+function parseAmountFromText(text) {
+  const amountMatch = String(text || '').match(/(?:^|[^\d])(\d+(?:[\s\u00A0]\d{3})*(?:[.,]\d+)?|\d+(?:[.,]\d+)?)(?:[^\d]|$)/);
+  if (!amountMatch) return null;
+
+  const amount = parseFloat(amountMatch[1].replace(/[\s\u00A0]/g, '').replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  return {
+    amount,
+    raw: amountMatch[1]
+  };
+}
+
+function detectTransactionType(text) {
+  const normalized = String(text || '').toLowerCase();
+  if (/(получил|получила|пришло|зачисл|доход|зарплат|оплатили|перевели|продал|продала)/i.test(normalized)) {
+    return 'income';
+  }
+  return 'expense';
+}
+
+function cleanupSimpleDescription(text, amountRaw) {
+  let description = String(text || '')
+    .replace(amountRaw, ' ')
+    .replace(/\b(рублей|рубля|рубль|руб|rub|rur|евро|eur|долларов|доллара|доллар|usd|баксов|бакс|гривен|гривны|гривна|грн|uah|фунтов|фунт|gbp|тенге|kzt)\b/gi, ' ')
+    .replace(/[€$₽₴£₸]/g, ' ')
+    .replace(/\b(потратил|потратила|купил|купила|оплатил|оплатила|расход|трата|на|за|получил|получила|пришло)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!description) description = 'Расход';
+  return description.charAt(0).toUpperCase() + description.slice(1);
+}
+
+function parseSimpleTransactionFallback(userInput, userContext = {}) {
+  const amountInfo = parseAmountFromText(userInput);
+  if (!amountInfo) return null;
+
+  const primaryCurrency = userContext.primaryCurrency || 'RUB';
+  const type = detectTransactionType(userInput);
+  const description = cleanupSimpleDescription(userInput, amountInfo.raw);
+
+  return {
+    type,
+    amount: amountInfo.amount,
+    currency: detectCurrency(userInput, primaryCurrency),
+    description,
+    category: null,
+    project: userContext.defaultProjectName || null
+  };
+}
+
 async function createChatCompletionWithRetry(params, label) {
   const attempts = 3;
   let lastError;
@@ -130,6 +193,18 @@ class OpenAIService {
       }
     } catch (error) {
       logger.error('Expense parsing failed:', error);
+      if (isTransientOpenAIError(error)) {
+        const fallback = parseSimpleTransactionFallback(userInput);
+        if (fallback && fallback.type === 'expense') {
+          logger.warn(`Using simple fallback parser for expense: ${JSON.stringify(fallback)}`);
+          return {
+            amount: fallback.amount,
+            currency: fallback.currency,
+            description: fallback.description,
+            category: fallback.category
+          };
+        }
+      }
       throw new Error(friendlyOpenAIError(error, 'AI временно не ответил. Попробуйте отправить запись ещё раз через минуту.'));
     }
   }
@@ -299,6 +374,13 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
       logger.error('Transaction parsing failed:', error);
       if (error?.message === 'parsing') {
         throw new Error('Не удалось понять запись. Попробуйте написать проще, например: "кофе 15 евро".');
+      }
+      if (isTransientOpenAIError(error)) {
+        const fallback = parseSimpleTransactionFallback(userInput, userContext);
+        if (fallback) {
+          logger.warn(`Using simple fallback parser for transaction: ${JSON.stringify(fallback)}`);
+          return fallback;
+        }
       }
       throw new Error(friendlyOpenAIError(error, 'AI временно не ответил. Попробуйте отправить запись ещё раз через минуту.'));
     }
