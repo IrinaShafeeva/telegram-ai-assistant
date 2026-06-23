@@ -110,6 +110,17 @@ function resolveCategory(text, ucCategories, parsedCategory) {
   return parsedCategory;
 }
 
+function userFacingTransactionError(error) {
+  const message = String(error?.message || '');
+  if (/premature close|invalid response body|fetch failed|socket hang up|timeout|econnreset/i.test(message)) {
+    return 'AI временно не ответил. Попробуйте отправить запись ещё раз через минуту.';
+  }
+  if (message === 'parsing') {
+    return 'Не удалось понять запись. Попробуйте написать проще, например: "кофе 15 евро".';
+  }
+  return message || 'Не удалось обработать запись. Попробуйте написать яснее.';
+}
+
 async function userCanEditTransaction(transaction, user) {
   if (!transaction || !user?.id) return false;
   if (transaction.user_id === user.id) return true;
@@ -438,7 +449,7 @@ async function handleExpenseText(msg) {
   } catch (error) {
     logger.error('Expense text processing error:', error);
     await bot.sendMessage(chatId, 
-      `❌ ${error.message || 'Не удалось обработать расход. Попробуйте написать яснее.'}\n\n💡 Пример: "кофе 15 евро"`
+      `❌ ${userFacingTransactionError(error)}\n\n💡 Пример: "кофе 15 евро"`
     );
   }
 }

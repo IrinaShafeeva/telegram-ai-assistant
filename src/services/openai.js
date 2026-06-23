@@ -6,7 +6,58 @@ const logger = require('../utils/logger');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  maxRetries: 3,
+  timeout: 30000
 });
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isTransientOpenAIError(error) {
+  const message = `${error?.message || ''} ${error?.cause?.message || ''}`.toLowerCase();
+  return (
+    error?.status === 408 ||
+    error?.status === 409 ||
+    error?.status === 429 ||
+    (error?.status >= 500 && error?.status < 600) ||
+    error?.code === 'ECONNRESET' ||
+    error?.code === 'ETIMEDOUT' ||
+    error?.code === 'ENOTFOUND' ||
+    error?.name === 'APIConnectionError' ||
+    error?.name === 'APIConnectionTimeoutError' ||
+    message.includes('premature close') ||
+    message.includes('fetch failed') ||
+    message.includes('socket hang up') ||
+    message.includes('timeout')
+  );
+}
+
+function friendlyOpenAIError(error, fallback = 'AI временно недоступен. Попробуйте ещё раз через минуту.') {
+  if (isTransientOpenAIError(error)) {
+    return fallback;
+  }
+  return 'Не удалось обработать запись. Попробуйте написать чуть проще.';
+}
+
+async function createChatCompletionWithRetry(params, label) {
+  const attempts = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await openai.chat.completions.create(params);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientOpenAIError(error) || attempt === attempts) break;
+      const delayMs = 500 * attempt;
+      logger.warn(`${label} transient OpenAI error, retry ${attempt}/${attempts}: ${error.message}`);
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError;
+}
 
 class OpenAIService {
   async transcribeVoice(audioBuffer, mimeType = 'audio/ogg') {
@@ -37,7 +88,7 @@ class OpenAIService {
     try {
       let prompt = EXPENSE_PARSING_PROMPT.replace('{{userInput}}', userInput);
 
-      const completion = await openai.chat.completions.create({
+      const completion = await createChatCompletionWithRetry({
         model: 'gpt-4o-mini',
         messages: [
           {
@@ -51,7 +102,7 @@ class OpenAIService {
         ],
         temperature: 0.1,
         max_tokens: 1000
-      });
+      }, 'parseExpense');
 
       const result = completion.choices[0].message.content.trim();
       
@@ -79,7 +130,7 @@ class OpenAIService {
       }
     } catch (error) {
       logger.error('Expense parsing failed:', error);
-      throw error;
+      throw new Error(friendlyOpenAIError(error, 'AI временно не ответил. Попробуйте отправить запись ещё раз через минуту.'));
     }
   }
 
@@ -185,7 +236,7 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
 "Расходы на аренду машины 5000" (если "RentaCar" имеет ключевые слова "аренда, машина") → {"type": "expense", "amount": 5000, "currency": "RUB", "description": "Аренда машины", "category": "Транспорт", "project": "RentaCar"}
 `;
 
-      const completion = await openai.chat.completions.create({
+      const completion = await createChatCompletionWithRetry({
         model: 'gpt-4o-mini',
         messages: [
           {
@@ -199,7 +250,7 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
         ],
         temperature: 0.1,
         max_tokens: 1000
-      });
+      }, 'parseTransaction');
 
       const result = completion.choices[0].message.content.trim();
       logger.info(`🤖 AI raw response: ${result}`);
@@ -246,7 +297,10 @@ ${contextPrompt}ВАЖНО: Если в тексте несколько тран
 
     } catch (error) {
       logger.error('Transaction parsing failed:', error);
-      throw error;
+      if (error?.message === 'parsing') {
+        throw new Error('Не удалось понять запись. Попробуйте написать проще, например: "кофе 15 евро".');
+      }
+      throw new Error(friendlyOpenAIError(error, 'AI временно не ответил. Попробуйте отправить запись ещё раз через минуту.'));
     }
   }
 

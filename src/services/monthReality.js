@@ -6,6 +6,8 @@ const {
 } = require('./familyBudget');
 const { sortByUpcoming, formatDaysLeft, formatDateRu } = require('../utils/budgetDates');
 
+const UPCOMING_ITEMS_LIMIT = 10;
+
 function formatMoney(amount, currency) {
   const n = Math.round(parseFloat(amount) * 100) / 100;
   return `${n.toLocaleString('ru-RU')} ${currency || ''}`.trim();
@@ -28,8 +30,8 @@ async function getMonthReality(project, date = new Date()) {
   const monthBalance = plannedIncome - plannedExpenses;
   const totalWithFloating = actualIncomeTotal - plannedExpenses;
 
-  const upcomingPayments = sortByUpcoming(payments, date, 3);
-  const upcomingIncomes = sortByUpcoming(incomes, date, 3);
+  const upcomingPayments = sortByUpcoming(payments, date, UPCOMING_ITEMS_LIMIT);
+  const upcomingIncomes = sortByUpcoming(incomes, date, UPCOMING_ITEMS_LIMIT);
 
   return {
     currency,
@@ -42,6 +44,8 @@ async function getMonthReality(project, date = new Date()) {
     debtTotal,
     upcomingPayments,
     upcomingIncomes,
+    hiddenUpcomingPaymentsCount: Math.max(0, payments.length - upcomingPayments.length),
+    hiddenUpcomingIncomesCount: Math.max(0, incomes.length - upcomingIncomes.length),
     payments,
     incomes
   };
@@ -81,6 +85,9 @@ function formatMonthRealityMessage(reality) {
         `• ${p.title} — ${formatMoney(p.amount, currency)}, ${formatDateRu(p.nextDate)} (${formatDaysLeft(p.daysLeft)})`
       );
     }
+    if (reality.hiddenUpcomingPaymentsCount > 0) {
+      lines.push(`• …и ещё ${reality.hiddenUpcomingPaymentsCount} платеж(ей) в плане`);
+    }
   }
 
   if (reality.upcomingIncomes.length > 0) {
@@ -89,6 +96,9 @@ function formatMonthRealityMessage(reality) {
       lines.push(
         `• ${p.title} — ${formatMoney(p.amount, currency)}, ${formatDateRu(p.nextDate)} (${formatDaysLeft(p.daysLeft)})`
       );
+    }
+    if (reality.hiddenUpcomingIncomesCount > 0) {
+      lines.push(`• …и ещё ${reality.hiddenUpcomingIncomesCount} доход(ов) в плане`);
     }
   }
 

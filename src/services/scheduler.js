@@ -1,7 +1,14 @@
 const { supabase, userService } = require('./supabase');
 const { familyProjectService, familyMemberStateService, plannedOccurrenceService } = require('./familyBudget');
 const { generateDailyInsightText } = require('./dailyInsight');
-const { getLocalHour, getLocalDateString, currentPlanMonth, formatPlanMonthLabel } = require('../utils/budgetDates');
+const {
+  getLocalHour,
+  getLocalDateString,
+  currentPlanMonth,
+  formatPlanMonthLabel,
+  sortByUpcoming,
+  formatDateRu
+} = require('../utils/budgetDates');
 const { monthlyReviewKeyboard, plannedOccurrenceKeyboard } = require('../bot/keyboards/familyBudget');
 const { getMonthReality, formatMoney } = require('./monthReality');
 const logger = require('../utils/logger');
@@ -65,6 +72,17 @@ function previousWeekBounds(now) {
   return { start, end };
 }
 
+function currentWeekBounds(now) {
+  const date = new Date(now);
+  date.setHours(0, 0, 0, 0);
+  const day = date.getDay() || 7;
+  const start = new Date(date);
+  start.setDate(date.getDate() - day + 1);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
 function previousMonthBounds(now) {
   const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const end = new Date(now.getFullYear(), now.getMonth(), 0);
@@ -81,9 +99,8 @@ function pickEncouragement(balance) {
   return 'Есть минус, но он уже виден, а значит им можно управлять. Один аккуратный шаг дальше поможет.';
 }
 
-async function buildPeriodSummary(project, bounds, label) {
-  const currency = project.budget_currency || 'RUB';
-  const [expensesRes, incomesRes, reality] = await Promise.all([
+async function getActualTotals(project, bounds) {
+  const [expensesRes, incomesRes] = await Promise.all([
     supabase
       .from('expenses')
       .select('amount, transfer_id')
@@ -95,8 +112,7 @@ async function buildPeriodSummary(project, bounds, label) {
       .select('amount, transfer_id')
       .eq('project_id', project.id)
       .gte('income_date', dateOnly(bounds.start))
-      .lte('income_date', dateOnly(bounds.end)),
-    getMonthReality(project)
+      .lte('income_date', dateOnly(bounds.end))
   ]);
 
   if (expensesRes.error) throw expensesRes.error;
@@ -106,15 +122,70 @@ async function buildPeriodSummary(project, bounds, label) {
   const incomes = (incomesRes.data || []).filter((row) => !row.transfer_id);
   const totalExpenses = expenses.reduce((sum, row) => sum + Math.abs(parseFloat(row.amount || 0)), 0);
   const totalIncome = incomes.reduce((sum, row) => sum + parseFloat(row.amount || 0), 0);
-  const balance = totalIncome - totalExpenses;
+  return { totalIncome, totalExpenses, balance: totalIncome - totalExpenses };
+}
+
+function formatBounds(bounds) {
+  return `${formatDateRu(bounds.start)}-${formatDateRu(bounds.end)}`;
+}
+
+function itemsThisWeek(items, now, weekBounds) {
+  return sortByUpcoming(items, now, 50)
+    .filter((item) => item.nextDate >= weekBounds.start && item.nextDate <= weekBounds.end);
+}
+
+function formatPlanItems(items, currency) {
+  if (!items.length) return '• ничего по плану';
+  return items
+    .map((item) => `• ${item.title} — ${formatMoney(item.amount, currency)}, ${formatDateRu(item.nextDate)}`)
+    .join('\n');
+}
+
+async function buildWeeklySummary(project, now) {
+  const currency = project.budget_currency || 'RUB';
+  const previousBounds = previousWeekBounds(now);
+  const weekBounds = currentWeekBounds(now);
+  const [actual, reality] = await Promise.all([
+    getActualTotals(project, previousBounds),
+    getMonthReality(project, now)
+  ]);
+
+  const plannedIncomeThisWeek = itemsThisWeek(reality.incomes, now, weekBounds);
+  const plannedPaymentsThisWeek = itemsThisWeek(reality.payments, now, weekBounds);
+
+  const planBalance = reality.totalWithFloating;
+  const planLine = planBalance >= 0
+    ? `По месячному плану после обязательных платежей остаётся ${formatMoney(planBalance, currency)}.`
+    : `По месячному плану пока не хватает ${formatMoney(Math.abs(planBalance), currency)}.`;
+
+  return (
+    `📊 *Старт недели*\n\n` +
+    `*Факт прошлой недели (${formatBounds(previousBounds)}):*\n` +
+    `📥 Доходы: *${formatMoney(actual.totalIncome, currency)}*\n` +
+    `📤 Расходы: *${formatMoney(actual.totalExpenses, currency)}*\n` +
+    `${actual.balance >= 0 ? '✅' : '⚠️'} Итог: *${formatMoney(actual.balance, currency)}*\n\n` +
+    `*На этой неделе по плану (${formatBounds(weekBounds)}):*\n` +
+    `📥 Доходы:\n${formatPlanItems(plannedIncomeThisWeek, currency)}\n\n` +
+    `📤 Обязательные платежи:\n${formatPlanItems(plannedPaymentsThisWeek, currency)}\n\n` +
+    `${planLine}\n` +
+    `Спокойная неделя начинается с видимой картины. Дальше просто отмечаем, что пришло и что оплачено.`
+  );
+}
+
+async function buildPeriodSummary(project, bounds, label) {
+  const currency = project.budget_currency || 'RUB';
+  const [actual, reality] = await Promise.all([
+    getActualTotals(project, bounds),
+    getMonthReality(project)
+  ]);
 
   return (
     `📊 *${label}*\n\n` +
-    `📥 Доходы: *${formatMoney(totalIncome, currency)}*\n` +
-    `📤 Расходы: *${formatMoney(totalExpenses, currency)}*\n` +
-    `${balance >= 0 ? '✅' : '⚠️'} Итог: *${formatMoney(balance, currency)}*\n\n` +
+    `📥 Доходы: *${formatMoney(actual.totalIncome, currency)}*\n` +
+    `📤 Расходы: *${formatMoney(actual.totalExpenses, currency)}*\n` +
+    `${actual.balance >= 0 ? '✅' : '⚠️'} Итог: *${formatMoney(actual.balance, currency)}*\n\n` +
     `План месяца: доходы всего ${formatMoney(reality.actualIncomeTotal, currency)}, обязательные платежи ${formatMoney(reality.plannedExpenses, currency)}.\n\n` +
-    pickEncouragement(balance)
+    pickEncouragement(actual.balance)
   );
 }
 
@@ -131,7 +202,7 @@ async function sendWeeklySummary(bot, user) {
   const family = await familyProjectService.findFamilyProjectForUser(user.id);
   if (!family || !(family.onboarding_completed || family.family_established_at)) return;
 
-  const text = await buildPeriodSummary(family, previousWeekBounds(now), 'Сводка за прошлую неделю');
+  const text = await buildWeeklySummary(family, now);
   await bot.sendMessage(user.id, text, {
     parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: [[{ text: '📊 Реальность месяца', callback_data: 'fb:reality' }]] }
