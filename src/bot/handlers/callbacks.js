@@ -134,8 +134,12 @@ async function handleCallback(callbackQuery) {
       await handleEditTransaction(chatId, messageId, data, user);
     } else if (data === 'cancel_edit') {
       await handleCancelEdit(chatId, messageId, user);
+    } else if (data.startsWith('edit_amount:') && data.split(':').length === 2) {
+      await handleEditAmount(chatId, messageId, data, user);
     } else if (data.startsWith('edit_amount:') && data.split(':').length === 3) {
       await handleEditTransactionAmount(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_description:') && data.split(':').length === 2) {
+      await handleEditDescription(chatId, messageId, data, user);
     } else if (data.startsWith('edit_description:') && data.split(':').length === 3) {
       await handleEditTransactionDescription(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:') && data.split(':').length === 3) {
@@ -331,9 +335,13 @@ async function handleCallback(callbackQuery) {
       await handleBackToTeam(chatId, messageId, user);
     } else if (data.startsWith('edit_transaction:')) {
       await handleEditTransaction(chatId, messageId, data, user);
-    } else if (data.startsWith('edit_amount:')) {
+    } else if (data.startsWith('edit_amount:') && data.split(':').length === 2) {
+      await handleEditAmount(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_amount:') && data.split(':').length === 3) {
       await handleEditTransactionAmount(chatId, messageId, data, user);
-    } else if (data.startsWith('edit_description:')) {
+    } else if (data.startsWith('edit_description:') && data.split(':').length === 2) {
+      await handleEditDescription(chatId, messageId, data, user);
+    } else if (data.startsWith('edit_description:') && data.split(':').length === 3) {
       await handleEditTransactionDescription(chatId, messageId, data, user);
     } else if (data.startsWith('edit_category:')) {
       await handleEditTransactionCategory(chatId, messageId, data, user);
@@ -464,6 +472,7 @@ ${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google 
 
 
 async function handleEditAmount(chatId, messageId, data, user) {
+  const bot = getBot();
   const tempId = data.split(':')[1];
   const expenseData = tempExpenses.get(tempId);
 
