@@ -27,8 +27,8 @@ async function getMonthReality(project, date = new Date()) {
   const plannedExpenses = payments.reduce((s, p) => s + parseFloat(p.amount), 0);
   const plannedIncome = incomes.reduce((s, p) => s + parseFloat(p.amount), 0);
   const actualIncomeTotal = plannedIncome + floatingMtd;
-  const monthBalance = plannedIncome - plannedExpenses;
-  const totalWithFloating = actualIncomeTotal - plannedExpenses;
+  const monthBalance = actualIncomeTotal - plannedExpenses;
+  const totalWithFloating = monthBalance;
 
   const upcomingPayments = sortByUpcoming(payments, date, UPCOMING_ITEMS_LIMIT);
   const upcomingIncomes = sortByUpcoming(incomes, date, UPCOMING_ITEMS_LIMIT);
