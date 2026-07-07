@@ -737,21 +737,41 @@ const plannedOccurrenceService = {
     const category = item.category || (isIncome ? 'Ожидаемые доходы' : 'Обязательные платежи');
     const source = isIncome ? 'planned_income' : 'planned_payment';
 
-    const { data: transaction, error: txError } = await supabase
+    let createdTransaction = false;
+    let { data: transaction, error: existingTxError } = await supabase
       .from(table)
-      .insert({
-        user_id: userId,
-        project_id: event.project_id,
-        amount: item.amount,
-        currency,
-        category,
-        description: item.title,
-        [dateField]: date,
-        source
-      })
-      .select()
-      .single();
-    if (txError) throw txError;
+      .select('*')
+      .eq('project_id', event.project_id)
+      .eq('amount', item.amount)
+      .eq('currency', currency)
+      .eq('category', category)
+      .eq('description', item.title)
+      .eq(dateField, date)
+      .eq('source', source)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingTxError && existingTxError.code !== 'PGRST116') throw existingTxError;
+
+    if (!transaction) {
+      const { data: inserted, error: txError } = await supabase
+        .from(table)
+        .insert({
+          user_id: userId,
+          project_id: event.project_id,
+          amount: item.amount,
+          currency,
+          category,
+          description: item.title,
+          [dateField]: date,
+          source
+        })
+        .select()
+        .single();
+      if (txError) throw txError;
+      transaction = inserted;
+      createdTransaction = true;
+    }
 
     const { data: updated, error: updateError } = await supabase
       .from('planned_item_events')
@@ -765,7 +785,16 @@ const plannedOccurrenceService = {
       .eq('id', eventId)
       .select()
       .single();
-    if (updateError) throw updateError;
+    if (updateError) {
+      if (createdTransaction) {
+        const rollbackId = transaction.id;
+        const { error: rollbackError } = await supabase.from(table).delete().eq('id', rollbackId);
+        if (rollbackError) {
+          logger.warn('planned occurrence transaction rollback failed:', rollbackError.message);
+        }
+      }
+      throw updateError;
+    }
 
     await logChangelog({
       projectId: event.project_id,

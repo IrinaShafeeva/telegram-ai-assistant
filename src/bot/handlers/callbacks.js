@@ -88,7 +88,18 @@ async function handleCallback(callbackQuery) {
   logger.info(`🔘 DEBUG: Starting callback processing for: ${data}`);
 
   if (data.startsWith('fb:')) {
-    await handleFamilyCallback(callbackQuery);
+    try {
+      await handleFamilyCallback(callbackQuery);
+    } catch (error) {
+      logger.error('Family budget callback handling error:', error);
+      try {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'Не удалось выполнить действие. Попробуйте ещё раз.',
+          show_alert: false
+        });
+      } catch (_) {}
+      await bot.sendMessage(chatId, '❌ Не удалось выполнить действие. Попробуйте ещё раз.');
+    }
     return;
   }
 

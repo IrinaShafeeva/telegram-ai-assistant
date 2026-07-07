@@ -13,6 +13,10 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS budget_currency VARCHAR(3);
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS last_insight_sent_at TIMESTAMP;
 
+-- Older installations may have expenses/incomes created before the source column existed.
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'bot';
+ALTER TABLE incomes ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'bot';
+
 -- Planned mandatory payments (monthly)
 CREATE TABLE IF NOT EXISTS planned_payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
