@@ -38,9 +38,10 @@ function detectCurrencyByLanguage(text, languageCode) {
   return 'USD';
 }
 
-// Pick the user's default project: explicit user setting → personal project →
-// first project. `allProjects` are full rows from projectService.findByUserId,
-// `user` is the current user row (may carry default_project_id).
+// Pick the user's default project: explicit user setting → family budget →
+// personal project → first project. `allProjects` are full rows from
+// projectService.findByUserId, `user` is the current user row (may carry
+// default_project_id).
 function pickDefaultProject(allProjects, user) {
   if (!allProjects || allProjects.length === 0) return null;
 
@@ -49,17 +50,81 @@ function pickDefaultProject(allProjects, user) {
     if (chosen) return chosen;
   }
 
+  const family = allProjects.find(
+    p => p.is_family_budget && p.is_active !== false
+  );
+  if (family) return family;
+
   const personal = allProjects.find(
     p => p.name === 'Личные траты' || p.name === 'Личные расходы'
   );
   return personal || allProjects[0];
 }
 
+function hasRefundLikeMarker(text) {
+  return /(к[эе]шб[эе]к|cashback|возврат|вернул[аи]?|вернули|компенсац|refund|refunded|reimburse)/i.test(text || '');
+}
+
+function hasExplicitIncomeMarker(text) {
+  return /(получил|получила|получили|приш[её]л|пришла|пришло|зачисл|доход|зарплат|оплатили|перевели|продал|продала)/i.test(text || '');
+}
+
+function mentionsNonDefaultProjectName(text, allProjects, defaultProject) {
+  const textLower = (text || '').toLowerCase();
+  return (allProjects || []).some((project) => {
+    if (!project?.name || project.id === defaultProject?.id) return false;
+    return textLower.includes(String(project.name).toLowerCase());
+  });
+}
+
+function findProjectMentionedByName(text, allProjects) {
+  const textLower = (text || '').toLowerCase();
+  return (allProjects || []).find((project) => {
+    if (!project?.name) return false;
+    return textLower.includes(String(project.name).toLowerCase());
+  }) || null;
+}
+
+function shouldPreferDefaultProject(text, allProjects, defaultProject) {
+  return !!defaultProject?.is_family_budget &&
+    hasRefundLikeMarker(text) &&
+    !mentionsNonDefaultProjectName(text, allProjects, defaultProject);
+}
+
+function normalizeParsedTransaction(text, parsedTransaction) {
+  if (!parsedTransaction) return parsedTransaction;
+  if (
+    parsedTransaction.type === 'income' &&
+    hasRefundLikeMarker(text) &&
+    !hasExplicitIncomeMarker(text)
+  ) {
+    logger.info(`↩️ Refund/cashback-like text without income marker → treating as expense: "${text}"`);
+    return {
+      ...parsedTransaction,
+      type: 'expense',
+      category: /доход/i.test(parsedTransaction.category || '') ? null : parsedTransaction.category
+    };
+  }
+  return parsedTransaction;
+}
+
 // Resolve which project a transaction belongs to.
-// Precedence: strict keyword match (deterministic) > AI suggestion > default.
+// Precedence: explicit project name > strict keyword match (deterministic) >
+// family default > AI suggestion > default.
 // `ucProjects` come from userContext (id, name, keywords incl. member keywords).
 function resolveProject(text, ucProjects, allProjects, parsedTransaction, defaultProject) {
   const textLower = (text || '').toLowerCase();
+
+  if (shouldPreferDefaultProject(text, allProjects, defaultProject)) {
+    logger.info(`🏠 Refund/cashback-like text → default family project "${defaultProject.name}"`);
+    return defaultProject;
+  }
+
+  const projectByName = findProjectMentionedByName(text, allProjects);
+  if (projectByName) {
+    logger.info(`📌 Project name match → project "${projectByName.name}"`);
+    return projectByName;
+  }
 
   // 1) Deterministic keyword match — beats the AI so "семейный завтрак" always
   //    lands in the family project regardless of how the model guesses.
@@ -76,6 +141,11 @@ function resolveProject(text, ucProjects, allProjects, parsedTransaction, defaul
         return match;
       }
     }
+  }
+
+  if (defaultProject?.is_family_budget) {
+    logger.info(`🏠 No project marker found → default family project "${defaultProject.name}"`);
+    return defaultProject;
   }
 
   // 2) AI suggestion, if it names a real project.
@@ -337,7 +407,7 @@ async function handleExpenseText(msg) {
     }
 
     // Handle single transaction (backward compatibility)
-    const parsedTransaction = parsedResult;
+    const parsedTransaction = normalizeParsedTransaction(text, parsedResult);
 
     // Apply user's default currency if no currency was detected or if OpenAI defaulted to RUB but user has different preference
     const originalCurrency = parsedTransaction.currency;
@@ -2051,7 +2121,7 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
 
     // Create individual confirmation cards for each transaction
     for (let i = 0; i < transactions.length; i++) {
-      const transaction = transactions[i];
+      const transaction = normalizeParsedTransaction(transactions[i].description || text, transactions[i]);
 
       // Apply user's default currency
       if (!transaction.currency) {
@@ -2527,6 +2597,7 @@ module.exports = {
   handleSheetsSyncChoice,
   handleAnalyticsQuestion,
   pickDefaultProject,
+  normalizeParsedTransaction,
   resolveProject,
   resolveCategory
 };

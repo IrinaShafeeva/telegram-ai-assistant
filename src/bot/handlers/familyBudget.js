@@ -563,16 +563,44 @@ async function handleFamilyText(msg, userState) {
     return handleListInput(msg, data);
   }
   if (userState.type === STATE_TYPES.FB_FLOATING_AMOUNT) {
-    const amount = parseAmount(text);
-    if (!amount || amount <= 0) {
-      return bot.sendMessage(chatId, 'Введите сумму числом.');
+    if (!data.amount) {
+      const oneLine = parseAmountAndTitle(text);
+      if (oneLine) {
+        await floatingIncomeService.create(
+          {
+            project_id: data.projectId,
+            amount: oneLine.amount,
+            description: oneLine.title,
+            income_date: new Date().toISOString().slice(0, 10)
+          },
+          user.id
+        );
+        stateManager.clearState(chatId);
+        await notifyPartners(bot, data.projectId, user.id, `💫 ${partnerLabel(user)} добавил(а) плавающий доход: ${oneLine.amount} (${oneLine.title})`);
+        await showMonthReality(chatId, user.id);
+        return;
+      }
+
+      const amount = parseAmount(text);
+      if (!amount || amount <= 0) {
+        return bot.sendMessage(chatId, 'Введите сумму числом.');
+      }
+      stateManager.setState(chatId, STATE_TYPES.FB_FLOATING_AMOUNT, { ...data, amount }, 15);
+      return bot.sendMessage(chatId, 'Откуда этот плавающий доход? Например: подработка, возврат, продажа вещи.');
     }
+
+    const description = text;
     await floatingIncomeService.create(
-      { project_id: data.projectId, amount, description: data.description || 'Плавающий доход', income_date: new Date().toISOString().slice(0, 10) },
+      {
+        project_id: data.projectId,
+        amount: data.amount,
+        description,
+        income_date: new Date().toISOString().slice(0, 10)
+      },
       user.id
     );
     stateManager.clearState(chatId);
-    await notifyPartners(bot, data.projectId, user.id, `💫 ${partnerLabel(user)} добавил(а) плавающий доход: ${amount}`);
+    await notifyPartners(bot, data.projectId, user.id, `💫 ${partnerLabel(user)} добавил(а) плавающий доход: ${data.amount} (${description})`);
     await showMonthReality(chatId, user.id);
     return;
   }
@@ -820,6 +848,25 @@ async function handleFamilyCallback(callbackQuery) {
 
   if (data.startsWith('fb:occ:done:')) {
     const eventId = data.split(':')[3];
+    const preview = await plannedOccurrenceService.getEventWithItem(eventId);
+    if (preview.event.status === 'done') {
+      await bot.sendMessage(chatId, 'Эта запись уже отмечена.');
+      return true;
+    }
+    if (preview.event.item_type === 'income') {
+      await bot.sendMessage(chatId, `«${preview.item.title}» уже пришёл? Запишу доход только после подтверждения.`, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Да, пришёл', callback_data: `fb:occ:confirm:${eventId}` },
+              { text: '❌ Нет', callback_data: `fb:occ:no:${eventId}` }
+            ]
+          ]
+        }
+      });
+      return true;
+    }
+
     const result = await plannedOccurrenceService.complete(eventId, user.id);
     if (result.alreadyDone) {
       await bot.sendMessage(chatId, 'Эта запись уже отмечена.');
@@ -834,6 +881,34 @@ async function handleFamilyCallback(callbackQuery) {
       user.id,
       `✅ ${partnerLabel(user)} отметил(а): «${result.item.title}» ${isIncome ? 'пришёл' : 'оплачен'}`
     );
+    return true;
+  }
+
+  if (data.startsWith('fb:occ:confirm:')) {
+    const eventId = data.split(':')[3];
+    const result = await plannedOccurrenceService.complete(eventId, user.id);
+    if (result.alreadyDone) {
+      await bot.sendMessage(chatId, 'Эта запись уже отмечена.');
+      return true;
+    }
+    await bot.sendMessage(chatId, `✅ «${result.item.title}» зачислен: ${result.item.amount} ${result.project?.budget_currency || 'RUB'}.`);
+    await notifyPartners(
+      bot,
+      result.event.project_id,
+      user.id,
+      `✅ ${partnerLabel(user)} подтвердил(а): «${result.item.title}» пришёл`
+    );
+    return true;
+  }
+
+  if (data.startsWith('fb:occ:no:')) {
+    const eventId = data.split(':')[3];
+    const { event, item } = await plannedOccurrenceService.getEventWithItem(eventId);
+    if (event.status === 'done') {
+      await bot.sendMessage(chatId, 'Эта запись уже отмечена.');
+      return true;
+    }
+    await bot.sendMessage(chatId, `Ок, «${item.title}» не записываю как пришедший доход. Напомню снова при следующей проверке или перенесите дату кнопкой из напоминания.`);
     return true;
   }
 
@@ -928,7 +1003,7 @@ async function handleFamilyCallback(callbackQuery) {
       return true;
     }
     stateManager.setState(chatId, STATE_TYPES.FB_FLOATING_AMOUNT, { projectId: project.id }, 15);
-    await bot.sendMessage(chatId, 'Сумма плавающего дохода (разовый, за этот месяц):');
+    await bot.sendMessage(chatId, 'Сумма плавающего дохода (разовый, за этот месяц). Можно одной строкой: «5000 подработка».');
     return true;
   }
 

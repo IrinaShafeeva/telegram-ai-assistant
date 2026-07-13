@@ -184,7 +184,7 @@ async function buildPeriodSummary(project, bounds, label) {
     `📥 Доходы: *${formatMoney(actual.totalIncome, currency)}*\n` +
     `📤 Расходы: *${formatMoney(actual.totalExpenses, currency)}*\n` +
     `${actual.balance >= 0 ? '✅' : '⚠️'} Итог: *${formatMoney(actual.balance, currency)}*\n\n` +
-    `План месяца: доходы всего ${formatMoney(reality.actualIncomeTotal, currency)}, обязательные платежи ${formatMoney(reality.plannedExpenses, currency)}.\n\n` +
+    `План месяца: ожидаемые доходы ${formatMoney(reality.plannedIncome, currency)}, уже пришло ${formatMoney(reality.actualIncomeTotal, currency)}, обязательные платежи ${formatMoney(reality.plannedExpenses, currency)}.\n\n` +
     pickEncouragement(actual.balance)
   );
 }

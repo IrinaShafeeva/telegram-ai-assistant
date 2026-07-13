@@ -3,7 +3,14 @@ const { userService, projectService, incomeService } = require('../../services/s
 const openaiService = require('../../services/openai');
 const userContextService = require('../../services/userContext');
 const { getExpenseConfirmationKeyboard, getIncomeConfirmationKeyboard } = require('../keyboards/inline');
-const { tempExpenses, tempIncomes, pickDefaultProject, resolveProject, resolveCategory } = require('./messages');
+const {
+  tempExpenses,
+  tempIncomes,
+  pickDefaultProject,
+  normalizeParsedTransaction,
+  resolveProject,
+  resolveCategory
+} = require('./messages');
 const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
@@ -109,7 +116,7 @@ async function handleVoice(msg) {
     }
 
     // Handle single transaction
-    const parsedTransaction = parsedResult;
+    const parsedTransaction = normalizeParsedTransaction(transcription, parsedResult);
 
     // Use user's primary currency if not specified
     if (!parsedTransaction.currency) {
@@ -248,7 +255,7 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
 
     // Create individual confirmation cards for each transaction
     for (let i = 0; i < transactions.length; i++) {
-      const transaction = transactions[i];
+      const transaction = normalizeParsedTransaction(transactions[i].description || transcription, transactions[i]);
 
       // Apply user's default currency
       if (!transaction.currency) {
