@@ -10,7 +10,7 @@ const {
   formatDateRu
 } = require('../utils/budgetDates');
 const { monthlyReviewKeyboard, plannedOccurrenceKeyboard } = require('../bot/keyboards/familyBudget');
-const { getMonthReality, formatMoney } = require('./monthReality');
+const { getMonthReality, formatMoney, formatWeeklyGuidesBlock } = require('./monthReality');
 const logger = require('../utils/logger');
 
 const MORNING_HOUR = 9;
@@ -157,6 +157,7 @@ async function buildWeeklySummary(project, now) {
   const planLine = planBalance >= 0
     ? `По месячному плану после обязательных платежей остаётся ${formatMoney(planBalance, currency)}.`
     : `По месячному плану пока не хватает ${formatMoney(Math.abs(planBalance), currency)}.`;
+  const weeklyGuidesBlock = formatWeeklyGuidesBlock(reality.weeklyGuides);
 
   return (
     `📊 *Старт недели*\n\n` +
@@ -167,6 +168,7 @@ async function buildWeeklySummary(project, now) {
     `*На этой неделе по плану (${formatBounds(weekBounds)}):*\n` +
     `📥 Доходы:\n${formatPlanItems(plannedIncomeThisWeek, currency)}\n\n` +
     `📤 Обязательные платежи:\n${formatPlanItems(plannedPaymentsThisWeek, currency)}\n\n` +
+    `${weeklyGuidesBlock ? `${weeklyGuidesBlock}\n\n` : ''}` +
     `${planLine}\n` +
     `Спокойная неделя начинается с видимой картины. Дальше просто отмечаем, что пришло и что оплачено.`
   );

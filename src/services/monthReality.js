@@ -2,7 +2,8 @@ const {
   plannedPaymentService,
   plannedIncomeService,
   debtService,
-  floatingIncomeService
+  floatingIncomeService,
+  weeklyCategoryGuideService
 } = require('./familyBudget');
 const { supabase } = require('./supabase');
 const { sortByUpcoming, formatDaysLeft, formatDateRu } = require('../utils/budgetDates');
@@ -21,6 +22,36 @@ function monthBounds(date) {
   const endDate = new Date(year, month, 0);
   const end = `${year}-${String(month).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
   return { start, end };
+}
+
+function formatWeekRange(bounds) {
+  return `${formatDateRu(new Date(`${bounds.start}T00:00:00`))} — ${formatDateRu(new Date(`${bounds.end}T00:00:00`))}`;
+}
+
+function formatWeeklyGuideLine(guide, currency, markdown = true) {
+  const title = markdown ? `*${guide.title}*` : guide.title;
+  const base = `${title}: ${formatMoney(guide.spent, currency)} / ${formatMoney(guide.amount, currency)}`;
+  if (guide.amount <= 0) return base;
+  if (guide.remaining >= 0) {
+    return `${base} · осталось ${formatMoney(guide.remaining, currency)}`;
+  }
+  return `${base} · выше ориентира на ${formatMoney(Math.abs(guide.remaining), currency)}`;
+}
+
+function formatWeeklyGuidesBlock(progress, options = {}) {
+  const guides = progress?.guides || [];
+  if (!guides.length) return '';
+  const guideIds = options.guideIds ? new Set(options.guideIds) : null;
+  const visibleGuides = guideIds ? guides.filter((guide) => guideIds.has(guide.id)) : guides;
+  if (!visibleGuides.length) return '';
+
+  const markdown = options.markdown !== false;
+  const header = options.compact ? '🧭 Ритм недели' : `🧭 Ритм недели (${formatWeekRange(progress.bounds)})`;
+  const lines = [header];
+  for (const guide of visibleGuides) {
+    lines.push(`• ${formatWeeklyGuideLine(guide, progress.currency, markdown)}`);
+  }
+  return lines.join('\n');
 }
 
 async function sumConfirmedPlannedIncomeForMonth(projectId, date) {
@@ -50,6 +81,7 @@ async function getMonthReality(project, date = new Date()) {
     floatingIncomeService.sumForMonth(projectId, date),
     sumConfirmedPlannedIncomeForMonth(projectId, date)
   ]);
+  const weeklyGuides = await weeklyCategoryGuideService.getProgress(project, date);
 
   const plannedExpenses = payments.reduce((s, p) => s + parseFloat(p.amount), 0);
   const plannedIncome = incomes.reduce((s, p) => s + parseFloat(p.amount), 0);
@@ -76,6 +108,7 @@ async function getMonthReality(project, date = new Date()) {
     floatingMtd,
     totalWithFloating,
     debtTotal,
+    weeklyGuides,
     upcomingPayments,
     upcomingIncomes,
     hiddenUpcomingPaymentsCount: Math.max(0, payments.length - upcomingPayments.length),
@@ -115,6 +148,11 @@ function formatMonthRealityMessage(reality) {
 
   lines.push(`\n🏦 Счётчик долга: *${formatMoney(reality.debtTotal, currency)}*`);
 
+  const weeklyGuidesBlock = formatWeeklyGuidesBlock(reality.weeklyGuides);
+  if (weeklyGuidesBlock) {
+    lines.push(`\n${weeklyGuidesBlock}`);
+  }
+
   if (reality.upcomingPayments.length > 0) {
     lines.push('\n🔥 Ближайшие платежи:');
     for (const p of reality.upcomingPayments) {
@@ -145,5 +183,6 @@ function formatMonthRealityMessage(reality) {
 module.exports = {
   getMonthReality,
   formatMonthRealityMessage,
+  formatWeeklyGuidesBlock,
   formatMoney
 };

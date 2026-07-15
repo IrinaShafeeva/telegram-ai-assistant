@@ -25,7 +25,8 @@ const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const logger = require('../../utils/logger');
 const { handleFamilyCallback } = require('./familyBudget');
-const { notifyPartners, partnerLabel } = require('../../services/familyBudget');
+const { notifyPartners, partnerLabel, weeklyCategoryGuideService } = require('../../services/familyBudget');
+const { formatWeeklyGuidesBlock } = require('../../services/monthReality');
 const { handleTransferCallback } = require('./transfer');
 const { handleProjectsSummaryCallback } = require('./projectsSummary');
 
@@ -438,12 +439,29 @@ async function handleSaveExpense(chatId, messageId, data, user) {
       }
     }
 
+    let weeklyGuideText = '';
+    if (project?.is_family_budget) {
+      try {
+        const matchingGuides = await weeklyCategoryGuideService.findMatchingGuides(project.id, savedExpense.category);
+        if (matchingGuides.length > 0) {
+          const progress = await weeklyCategoryGuideService.getProgress(project, new Date(`${savedExpense.expense_date}T00:00:00`));
+          weeklyGuideText = formatWeeklyGuidesBlock(progress, {
+            guideIds: matchingGuides.map((guide) => guide.id),
+            markdown: false,
+            compact: true
+          });
+        }
+      } catch (guideError) {
+        logger.warn('Weekly guide progress failed:', guideError.message);
+      }
+    }
+
     const successText = `✅ Расход сохранён!
 
 💰 ${expenseData.description}: -${expenseData.amount} ${expenseData.currency}
 📂 Категория: ${expenseData.category}
 📋 Проект: ${project.name}
-${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}`;
+${project.google_sheet_id ? (sheetsSuccess ? '📊 Добавлено в Google Sheets' : '📊 Синхронизация с Google Sheets: ошибка (данные сохранены)') : ''}${weeklyGuideText ? `\n\n${weeklyGuideText}` : ''}`;
 
     const successKeyboard = { inline_keyboard: [[{ text: '📋 Проекты', callback_data: 'back_to_projects' }]] };
 

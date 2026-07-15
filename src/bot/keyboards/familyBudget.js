@@ -14,6 +14,7 @@ function listsMenuKeyboard() {
     inline_keyboard: [
       [{ text: '📤 Обязательные платежи', callback_data: 'fb:list:payments' }],
       [{ text: '📥 Ожидаемые доходы', callback_data: 'fb:list:incomes' }],
+      [{ text: '🧭 Недельные ориентиры', callback_data: 'fb:list:guides' }],
       [{ text: '🏦 Долги', callback_data: 'fb:list:debts' }],
       [{ text: '🔙 Закрыть', callback_data: 'fb:close' }]
     ]
@@ -108,6 +109,9 @@ function editFieldKeyboard(listType, itemId) {
   ];
   if (listType !== 'debts') {
     rows.push([{ text: '📅 День месяца', callback_data: `fb:editf:${listType}:${itemId}:day` }]);
+  }
+  if (listType === 'guides') {
+    rows.splice(1, 1, [{ text: '🏷 Категории', callback_data: `fb:editf:${listType}:${itemId}:categories` }]);
   }
   rows.push([{ text: '🔙 Назад', callback_data: `fb:list:${listType}` }]);
   return { inline_keyboard: rows };

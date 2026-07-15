@@ -6,6 +6,7 @@ const {
   plannedIncomeService,
   debtService,
   floatingIncomeService,
+  weeklyCategoryGuideService,
   plannedOccurrenceService,
   notifyPartners,
   partnerLabel,
@@ -105,10 +106,19 @@ function parseAmountAndTitle(text) {
   return null;
 }
 
+function parseCategories(text, fallbackTitle) {
+  const value = String(text || '').trim();
+  if (!value || value === '-') return [fallbackTitle].filter(Boolean);
+  return value
+    .split(',')
+    .map((category) => category.trim())
+    .filter(Boolean);
+}
+
 function isFamilySchemaError(error) {
   const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
   return ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(error?.code) ||
-    /is_family_budget|budget_currency|onboarding_completed|family_established|planned_payments|planned_incomes|family_budget_member_state|budget_changelog|floating_incomes|debt_adjustments/i.test(message);
+    /is_family_budget|budget_currency|onboarding_completed|family_established|planned_payments|planned_incomes|family_budget_member_state|budget_changelog|floating_incomes|debt_adjustments|weekly_category_guides/i.test(message);
 }
 
 async function sendFamilySchemaError(chatId) {
@@ -119,7 +129,8 @@ async function sendFamilySchemaError(chatId) {
       'Нужно выполнить SQL-миграции:\n' +
       '1. migrations/001_family_budget.sql\n' +
       '2. migrations/002_family_member_onboarding.sql\n' +
-      '3. migrations/003_family_canonical_project.sql\n\n' +
+      '3. migrations/003_family_canonical_project.sql\n' +
+      '4. migrations/009_weekly_category_guides.sql\n\n' +
       'После этого нажмите /start и снова выберите «Семейный бюджет».',
     { reply_markup: getMainMenuKeyboard(false) }
   );
@@ -516,6 +527,18 @@ async function showList(chatId, userId, listType) {
     for (const p of sortByUpcoming(items, now, 50)) {
       lines.push(`• ${p.title} — ${p.amount} ${currency}, день ${p.day_of_month}`);
     }
+  } else if (listType === 'guides') {
+    const progress = await weeklyCategoryGuideService.getProgress(project, now);
+    items = progress.guides;
+    lines.push('🧭 *Недельные ориентиры*\n');
+    for (const guide of items) {
+      const left = guide.remaining >= 0
+        ? `осталось ${guide.remaining.toLocaleString('ru-RU')} ${currency}`
+        : `выше ориентира на ${Math.abs(guide.remaining).toLocaleString('ru-RU')} ${currency}`;
+      const categories = (guide.categories || []).join(', ');
+      lines.push(`• ${guide.title} — ${guide.spent.toLocaleString('ru-RU')} / ${guide.amount.toLocaleString('ru-RU')} ${currency}, ${left}`);
+      if (categories) lines.push(`  _Категории: ${categories}_`);
+    }
   } else if (listType === 'debts') {
     items = await debtService.list(project.id);
     const total = await debtService.getTotalDebt(project.id);
@@ -561,6 +584,9 @@ async function handleFamilyText(msg, userState) {
   }
   if (userState.type === STATE_TYPES.FB_LIST_ADD || userState.type === STATE_TYPES.FB_LIST_EDIT) {
     return handleListInput(msg, data);
+  }
+  if (userState.type === STATE_TYPES.FB_WEEKLY_GUIDE_ADD || userState.type === STATE_TYPES.FB_WEEKLY_GUIDE_EDIT) {
+    return handleWeeklyGuideInput(msg, data);
   }
   if (userState.type === STATE_TYPES.FB_FLOATING_AMOUNT) {
     if (!data.amount) {
@@ -810,6 +836,80 @@ async function handleListInput(msg, data) {
   }
 }
 
+async function handleWeeklyGuideInput(msg, data) {
+  const chatId = msg.chat.id;
+  const user = msg.user;
+  const text = msg.text?.trim();
+  const bot = getBot();
+  const { projectId, step, draft, itemId, editField } = data;
+
+  if (editField === 'amount') {
+    const amount = parseAmount(text);
+    if (!amount || amount < 0) return bot.sendMessage(chatId, 'Введите сумму ориентира.');
+    await weeklyCategoryGuideService.update(itemId, { amount }, user.id, projectId);
+    stateManager.clearState(chatId);
+    await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} изменил(а) недельный ориентир`);
+    return showList(chatId, user.id, 'guides');
+  }
+
+  if (editField === 'title') {
+    await weeklyCategoryGuideService.update(itemId, { title: text }, user.id, projectId);
+    stateManager.clearState(chatId);
+    await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} переименовал(а) недельный ориентир`);
+    return showList(chatId, user.id, 'guides');
+  }
+
+  if (editField === 'categories') {
+    const item = (await weeklyCategoryGuideService.list(projectId)).find((guide) => guide.id === itemId);
+    await weeklyCategoryGuideService.update(itemId, { categories: parseCategories(text, item?.title) }, user.id, projectId);
+    stateManager.clearState(chatId);
+    await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} обновил(а) категории недельного ориентира`);
+    return showList(chatId, user.id, 'guides');
+  }
+
+  if (step === 'title') {
+    const oneLine = parseAmountAndTitle(text);
+    if (oneLine) {
+      data.draft = { title: oneLine.title, amount: oneLine.amount };
+      data.step = 'categories';
+      stateManager.setState(chatId, STATE_TYPES.FB_WEEKLY_GUIDE_ADD, data, 30);
+      return bot.sendMessage(
+        chatId,
+        'Какие категории входят в этот ориентир? Через запятую. Например: Еда, Рестораны, Кафе, Продукты.\n\nМожно отправить "-" — возьму название ориентира как категорию.'
+      );
+    }
+    data.draft = { title: text };
+    data.step = 'amount';
+    stateManager.setState(chatId, STATE_TYPES.FB_WEEKLY_GUIDE_ADD, data, 30);
+    return bot.sendMessage(chatId, 'Сколько держим как спокойный ориентир на неделю?');
+  }
+
+  if (step === 'amount') {
+    const amount = parseAmount(text);
+    if (!amount || amount < 0) return bot.sendMessage(chatId, 'Введите сумму ориентира.');
+    data.draft = { ...draft, amount };
+    data.step = 'categories';
+    stateManager.setState(chatId, STATE_TYPES.FB_WEEKLY_GUIDE_ADD, data, 30);
+    return bot.sendMessage(
+      chatId,
+      'Какие категории входят в этот ориентир? Через запятую. Например: Еда, Рестораны, Кафе, Продукты.\n\nМожно отправить "-" — возьму название ориентира как категорию.'
+    );
+  }
+
+  if (step === 'categories') {
+    const categories = parseCategories(text, draft.title);
+    await weeklyCategoryGuideService.create({
+      project_id: projectId,
+      title: draft.title,
+      amount: draft.amount,
+      categories
+    }, user.id);
+    stateManager.clearState(chatId);
+    await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} добавил(а) недельный ориентир «${draft.title}»`);
+    return showList(chatId, user.id, 'guides');
+  }
+}
+
 async function handleFamilyCallback(callbackQuery) {
   const chatId = callbackQuery.message?.chat?.id;
   const user = callbackQuery.user;
@@ -953,6 +1053,15 @@ async function handleFamilyCallback(callbackQuery) {
       await bot.sendMessage(chatId, 'Сначала кто-то из пары должен заполнить опросник.');
       return true;
     }
+    if (listType === 'guides') {
+      stateManager.setState(chatId, STATE_TYPES.FB_WEEKLY_GUIDE_ADD, {
+        projectId: project.id,
+        step: 'title',
+        draft: {}
+      }, 30);
+      await bot.sendMessage(chatId, 'Название ориентира? Можно одной строкой: «Еда 300».');
+      return true;
+    }
     stateManager.setState(chatId, STATE_TYPES.FB_LIST_ADD, {
       listType,
       projectId: project.id,
@@ -967,7 +1076,9 @@ async function handleFamilyCallback(callbackQuery) {
   if (data.startsWith('fb:del:')) {
     const [, , listType, itemId] = data.split(':');
     const project = await familyProjectService.findFamilyProjectForUser(user.id);
-    const item = listType === 'payments'
+    const item = listType === 'guides'
+      ? (await weeklyCategoryGuideService.list(project.id)).find((x) => x.id === itemId)
+      : listType === 'payments'
       ? (await plannedPaymentService.list(project.id)).find((x) => x.id === itemId)
       : listType === 'incomes'
         ? (await plannedIncomeService.list(project.id)).find((x) => x.id === itemId)
@@ -982,8 +1093,9 @@ async function handleFamilyCallback(callbackQuery) {
   if (data.startsWith('fb:delok:')) {
     const [, , listType, itemId] = data.split(':');
     const project = await familyProjectService.findFamilyProjectForUser(user.id);
-    const svc = listType === 'payments' ? plannedPaymentService
-      : listType === 'incomes' ? plannedIncomeService : debtService;
+    const svc = listType === 'guides' ? weeklyCategoryGuideService
+      : listType === 'payments' ? plannedPaymentService
+        : listType === 'incomes' ? plannedIncomeService : debtService;
     await svc.delete(itemId, user.id, project.id);
     await notifyPartners(bot, project.id, user.id, `🗑 ${partnerLabel(user)} удалил(а) запись из списка`);
     await bot.sendMessage(chatId, 'Удалено.');
@@ -1102,6 +1214,20 @@ async function handleFamilyCallback(callbackQuery) {
     const [, , listType, itemId, field] = data.split(':');
     const project = await familyProjectService.findFamilyProjectForUser(user.id);
     if (!project) return true;
+    if (listType === 'guides') {
+      const prompts = {
+        amount: 'Новая сумма недельного ориентира?',
+        title: 'Новое название ориентира?',
+        categories: 'Категории через запятую. Например: Еда, Рестораны, Кафе, Продукты.'
+      };
+      stateManager.setState(chatId, STATE_TYPES.FB_WEEKLY_GUIDE_EDIT, {
+        projectId: project.id,
+        itemId,
+        editField: field
+      }, 20);
+      await bot.sendMessage(chatId, prompts[field] || 'Введите значение:');
+      return true;
+    }
     const prompts = {
       amount: 'Новая сумма?',
       title: listType === 'debts' ? 'Новое описание долга?' : 'Новое название?',

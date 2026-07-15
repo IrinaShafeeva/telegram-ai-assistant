@@ -89,6 +89,41 @@ function toDateOnly(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+function toLocalDateOnly(date = new Date()) {
+  if (typeof date === 'string') return date.slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function currentWeekBounds(date = new Date()) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const day = start.getDay() || 7;
+  start.setDate(start.getDate() - day + 1);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start: toLocalDateOnly(start), end: toLocalDateOnly(end) };
+}
+
+function normalizeGuideCategory(category) {
+  return String(category || '')
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeGuideCategories(categories) {
+  const unique = new Map();
+  for (const category of categories || []) {
+    const label = String(category || '').trim();
+    const key = normalizeGuideCategory(label);
+    if (key && !unique.has(key)) unique.set(key, label);
+  }
+  return Array.from(unique.values());
+}
+
 function addDays(dateString, days) {
   const date = new Date(`${dateString}T00:00:00`);
   date.setDate(date.getDate() + days);
@@ -239,6 +274,7 @@ const familyProjectService = {
       supabase.from('debts').delete().eq('project_id', projectId),
       supabase.from('debt_adjustments').delete().eq('project_id', projectId),
       supabase.from('floating_incomes').delete().eq('project_id', projectId),
+      supabase.from('weekly_category_guides').delete().eq('project_id', projectId),
       supabase.from('budget_changelog').delete().eq('project_id', projectId),
       supabase.from('family_budget_member_state').delete().eq('project_id', projectId)
     ]);
@@ -626,6 +662,138 @@ const floatingIncomeService = {
   }
 };
 
+const weeklyCategoryGuideService = {
+  normalizeCategory: normalizeGuideCategory,
+
+  async list(projectId, includeInactive = false) {
+    let query = supabase
+      .from('weekly_category_guides')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true });
+    if (!includeInactive) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  async create(row, userId) {
+    const payload = {
+      ...row,
+      categories: normalizeGuideCategories(row.categories?.length ? row.categories : [row.title]),
+      created_by: userId,
+      updated_by: userId
+    };
+    const { data, error } = await supabase
+      .from('weekly_category_guides')
+      .insert(payload)
+      .select()
+      .single();
+    if (error) throw error;
+    await logChangelog({
+      projectId: row.project_id,
+      userId,
+      entityType: 'weekly_category_guide',
+      entityId: data.id,
+      action: 'created',
+      summary: `Добавлен недельный ориентир: ${data.title} ${data.amount}`,
+      newValue: data
+    });
+    return data;
+  },
+
+  async update(id, updates, userId, projectId) {
+    const { data: old } = await supabase.from('weekly_category_guides').select('*').eq('id', id).single();
+    const payload = {
+      ...updates,
+      updated_by: userId,
+      updated_at: new Date().toISOString()
+    };
+    if (payload.categories) payload.categories = normalizeGuideCategories(payload.categories);
+    const { data, error } = await supabase
+      .from('weekly_category_guides')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    await logChangelog({
+      projectId,
+      userId,
+      entityType: 'weekly_category_guide',
+      entityId: id,
+      action: 'updated',
+      summary: `Изменён недельный ориентир: ${old?.title || id}`,
+      oldValue: old,
+      newValue: data
+    });
+    return data;
+  },
+
+  async delete(id, userId, projectId) {
+    const { data: old } = await supabase.from('weekly_category_guides').select('*').eq('id', id).single();
+    const { error } = await supabase.from('weekly_category_guides').delete().eq('id', id);
+    if (error) throw error;
+    await logChangelog({
+      projectId,
+      userId,
+      entityType: 'weekly_category_guide',
+      entityId: id,
+      action: 'deleted',
+      summary: `Удалён недельный ориентир: ${old?.title}`,
+      oldValue: old
+    });
+    return old;
+  },
+
+  async getProgress(projectOrId, date = new Date()) {
+    const project = typeof projectOrId === 'string'
+      ? await projectService.findById(projectOrId)
+      : projectOrId;
+    const projectId = project?.id || projectOrId;
+    const currency = project?.budget_currency || 'RUB';
+    const bounds = currentWeekBounds(date);
+    const guides = await this.list(projectId);
+    if (!guides.length) return { bounds, currency, guides: [] };
+
+    const { data: rows, error } = await supabase
+      .from('expenses')
+      .select('id, amount, currency, category, description, expense_date, transfer_id')
+      .eq('project_id', projectId)
+      .gte('expense_date', bounds.start)
+      .lte('expense_date', bounds.end);
+    if (error) throw error;
+
+    const realRows = (rows || []).filter((row) => !row.transfer_id && (!row.currency || row.currency === currency));
+    const progressGuides = guides.map((guide) => {
+      const categoryKeys = (guide.categories || []).map(normalizeGuideCategory).filter(Boolean);
+      const matchedRows = realRows.filter((row) => categoryKeys.includes(normalizeGuideCategory(row.category)));
+      const spent = matchedRows.reduce((sum, row) => sum + Math.abs(parseFloat(row.amount || 0)), 0);
+      const amount = parseFloat(guide.amount || 0);
+      return {
+        ...guide,
+        amount,
+        spent,
+        remaining: amount - spent,
+        percent: amount > 0 ? Math.round((spent / amount) * 100) : 0,
+        transactionCount: matchedRows.length,
+        matchedExpenseIds: matchedRows.map((row) => row.id)
+      };
+    });
+
+    return { bounds, currency, guides: progressGuides };
+  },
+
+  async findMatchingGuides(projectId, category) {
+    const categoryKey = normalizeGuideCategory(category);
+    if (!categoryKey) return [];
+    const guides = await this.list(projectId);
+    return guides.filter((guide) =>
+      (guide.categories || []).map(normalizeGuideCategory).includes(categoryKey)
+    );
+  }
+};
+
 const plannedOccurrenceService = {
   async ensureForDate(projectId, date = new Date()) {
     const dateString = toDateOnly(date);
@@ -871,6 +1039,7 @@ module.exports = {
   FAMILY_KEYWORDS,
   FAMILY_PROJECT_NAME,
   currentPlanMonth,
+  currentWeekBounds,
   familyMemberStateService,
   familyProjectService,
   getFamilyParticipantIds,
@@ -878,6 +1047,7 @@ module.exports = {
   plannedIncomeService,
   debtService,
   floatingIncomeService,
+  weeklyCategoryGuideService,
   plannedOccurrenceService,
   changelogService,
   logChangelog,

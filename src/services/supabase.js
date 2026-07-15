@@ -70,7 +70,7 @@ async function runMigrations() {
 
   // Tables that the code expects but bootstrap doesn't create. Log a clear
   // warning instead of letting the first runtime usage fail silently.
-  const requiredTables = ['project_invites', 'planned_item_events', 'planned_item_event_reminders'];
+  const requiredTables = ['project_invites', 'planned_item_events', 'planned_item_event_reminders', 'weekly_category_guides'];
   for (const table of requiredTables) {
     try {
       const { error } = await supabase.from(table).select('*').limit(1);

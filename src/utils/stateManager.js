@@ -124,6 +124,8 @@ const STATE_TYPES = {
   FB_FLOATING_AMOUNT: 'FB_FLOATING_AMOUNT',
   FB_POSTPONE_DATE: 'FB_POSTPONE_DATE',
   FB_DEBT_TOPUP: 'FB_DEBT_TOPUP',
+  FB_WEEKLY_GUIDE_ADD: 'FB_WEEKLY_GUIDE_ADD',
+  FB_WEEKLY_GUIDE_EDIT: 'FB_WEEKLY_GUIDE_EDIT',
   FB_CONFIRM_DELETE: 'FB_CONFIRM_DELETE',
   // Inter-project transfer wizard.
   // Data carried: { sourceProjectId, targetProjectId, currency, sourceName, targetName, amount, comment }
