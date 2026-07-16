@@ -121,6 +121,12 @@ function isFamilySchemaError(error) {
     /is_family_budget|budget_currency|onboarding_completed|family_established|planned_payments|planned_incomes|family_budget_member_state|budget_changelog|floating_incomes|debt_adjustments|weekly_category_guides/i.test(message);
 }
 
+function isWeeklyGuideSchemaError(error) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return ['42P01', 'PGRST205'].includes(error?.code) ||
+    /weekly_category_guides|relation .* does not exist/i.test(message);
+}
+
 async function sendFamilySchemaError(chatId) {
   const bot = getBot();
   await bot.sendMessage(
@@ -133,6 +139,17 @@ async function sendFamilySchemaError(chatId) {
       '4. migrations/009_weekly_category_guides.sql\n\n' +
       'После этого нажмите /start и снова выберите «Семейный бюджет».',
     { reply_markup: getMainMenuKeyboard(false) }
+  );
+}
+
+async function sendWeeklyGuideSchemaError(chatId) {
+  const bot = getBot();
+  await bot.sendMessage(
+    chatId,
+    'Недельные ориентиры почти готовы, но в Supabase ещё нет таблицы для них.\n\n' +
+      'Примените SQL-миграцию:\n' +
+      'migrations/009_weekly_category_guides.sql\n\n' +
+      'После этого снова откройте «Мои списки» → «Недельные ориентиры».'
   );
 }
 
@@ -846,14 +863,24 @@ async function handleWeeklyGuideInput(msg, data) {
   if (editField === 'amount') {
     const amount = parseAmount(text);
     if (!amount || amount < 0) return bot.sendMessage(chatId, 'Введите сумму ориентира.');
-    await weeklyCategoryGuideService.update(itemId, { amount }, user.id, projectId);
+    try {
+      await weeklyCategoryGuideService.update(itemId, { amount }, user.id, projectId);
+    } catch (error) {
+      if (isWeeklyGuideSchemaError(error)) return sendWeeklyGuideSchemaError(chatId);
+      throw error;
+    }
     stateManager.clearState(chatId);
     await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} изменил(а) недельный ориентир`);
     return showList(chatId, user.id, 'guides');
   }
 
   if (editField === 'title') {
-    await weeklyCategoryGuideService.update(itemId, { title: text }, user.id, projectId);
+    try {
+      await weeklyCategoryGuideService.update(itemId, { title: text }, user.id, projectId);
+    } catch (error) {
+      if (isWeeklyGuideSchemaError(error)) return sendWeeklyGuideSchemaError(chatId);
+      throw error;
+    }
     stateManager.clearState(chatId);
     await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} переименовал(а) недельный ориентир`);
     return showList(chatId, user.id, 'guides');
@@ -861,7 +888,12 @@ async function handleWeeklyGuideInput(msg, data) {
 
   if (editField === 'categories') {
     const item = (await weeklyCategoryGuideService.list(projectId)).find((guide) => guide.id === itemId);
-    await weeklyCategoryGuideService.update(itemId, { categories: parseCategories(text, item?.title) }, user.id, projectId);
+    try {
+      await weeklyCategoryGuideService.update(itemId, { categories: parseCategories(text, item?.title) }, user.id, projectId);
+    } catch (error) {
+      if (isWeeklyGuideSchemaError(error)) return sendWeeklyGuideSchemaError(chatId);
+      throw error;
+    }
     stateManager.clearState(chatId);
     await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} обновил(а) категории недельного ориентира`);
     return showList(chatId, user.id, 'guides');
@@ -898,12 +930,17 @@ async function handleWeeklyGuideInput(msg, data) {
 
   if (step === 'categories') {
     const categories = parseCategories(text, draft.title);
-    await weeklyCategoryGuideService.create({
-      project_id: projectId,
-      title: draft.title,
-      amount: draft.amount,
-      categories
-    }, user.id);
+    try {
+      await weeklyCategoryGuideService.create({
+        project_id: projectId,
+        title: draft.title,
+        amount: draft.amount,
+        categories
+      }, user.id);
+    } catch (error) {
+      if (isWeeklyGuideSchemaError(error)) return sendWeeklyGuideSchemaError(chatId);
+      throw error;
+    }
     stateManager.clearState(chatId);
     await notifyPartners(bot, projectId, user.id, `🧭 ${partnerLabel(user)} добавил(а) недельный ориентир «${draft.title}»`);
     return showList(chatId, user.id, 'guides');

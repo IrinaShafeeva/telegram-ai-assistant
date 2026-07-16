@@ -124,6 +124,12 @@ function normalizeGuideCategories(categories) {
   return Array.from(unique.values());
 }
 
+function isMissingWeeklyGuideSchema(error) {
+  const message = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return ['42P01', 'PGRST205'].includes(error?.code) ||
+    /weekly_category_guides|relation .* does not exist/i.test(message);
+}
+
 function addDays(dateString, days) {
   const date = new Date(`${dateString}T00:00:00`);
   date.setDate(date.getDate() + days);
@@ -673,6 +679,10 @@ const weeklyCategoryGuideService = {
       .order('created_at', { ascending: true });
     if (!includeInactive) query = query.eq('is_active', true);
     const { data, error } = await query;
+    if (isMissingWeeklyGuideSchema(error)) {
+      logger.warn('weekly_category_guides table is missing; weekly guides are disabled until migration 009 is applied.');
+      return [];
+    }
     if (error) throw error;
     return data || [];
   },
