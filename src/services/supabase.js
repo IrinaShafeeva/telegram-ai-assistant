@@ -522,7 +522,14 @@ const projectService = {
     return { access: !!data, role: data?.role || null };
   },
 
-  async delete(id) {
+  async delete(id, ownerId = null) {
+    if (ownerId !== null && ownerId !== undefined) {
+      const project = await this.findById(id);
+      if (!project || project.owner_id !== ownerId) {
+        throw new Error('Only project owner can delete project');
+      }
+    }
+
     // First, delete all related expenses and incomes
     // This is necessary because of foreign key constraints
     
@@ -1668,11 +1675,19 @@ const transferService = {
   async create({ sourceProjectId, targetProjectId, amount, currency, comment, userId, date }) {
     if (!sourceProjectId || !targetProjectId) throw new Error('source and target projects required');
     if (sourceProjectId === targetProjectId) throw new Error('source and target must differ');
+    if (!userId) throw new Error('userId required');
     const num = parseFloat(amount);
     if (!Number.isFinite(num) || num <= 0) throw new Error('amount must be > 0');
 
-    const sourceProject = await projectService.findById(sourceProjectId);
-    const targetProject = await projectService.findById(targetProjectId);
+    const [sourceAccess, targetAccess, sourceProject, targetProject] = await Promise.all([
+      projectService.hasAccess(sourceProjectId, userId),
+      projectService.hasAccess(targetProjectId, userId),
+      projectService.findById(sourceProjectId),
+      projectService.findById(targetProjectId)
+    ]);
+    if (!sourceAccess.access || !targetAccess.access) {
+      throw new Error('No access to one of the transfer projects');
+    }
     if (!sourceProject || !targetProject) throw new Error('project not found');
 
     const transferId = (typeof crypto !== 'undefined' && crypto.randomUUID)

@@ -45,7 +45,7 @@ async function getLegacyFloatingIncomeRows(projectIds, startDate, endDate, fallb
 }
 const openaiService = require('./openai');
 const currencyService = require('./currency');
-const { formatCurrency, formatMultiCurrencyAmount } = require('../utils/currency');
+const { formatCurrency } = require('../utils/currency');
 const { getDateRange, formatDate } = require('../utils/date');
 const logger = require('../utils/logger');
 
@@ -74,8 +74,12 @@ class AnalyticsService {
         };
       }
 
+      const user = await userService.findById(userId);
+      const primaryCurrency = user.primary_currency || 'RUB';
+      const convertedExpenses = await currencyService.convertExpenses(expenses, primaryCurrency);
+
       // Group by category
-      const categoryTotals = expenses.reduce((acc, expense) => {
+      const categoryTotals = convertedExpenses.reduce((acc, expense) => {
         const key = `${expense.category}_${expense.currency}`;
         if (!acc[key]) {
           acc[key] = {
@@ -91,7 +95,7 @@ class AnalyticsService {
       }, {});
 
       // Group by currency
-      const currencyTotals = expenses.reduce((acc, expense) => {
+      const currencyTotals = convertedExpenses.reduce((acc, expense) => {
         if (!acc[expense.currency]) {
           acc[expense.currency] = {
             currency: expense.currency,
@@ -106,6 +110,8 @@ class AnalyticsService {
 
       // Calculate days in period
       const daysInPeriod = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+      const totalInPrimaryCurrency = convertedExpenses
+        .reduce((sum, expense) => sum + Math.abs(parseFloat(expense.amount || 0)), 0);
       
       // Format results
       const categories = Object.values(categoryTotals)
@@ -113,7 +119,7 @@ class AnalyticsService {
         .map(cat => ({
           ...cat,
           formattedAmount: formatCurrency(cat.amount, cat.currency),
-          percentage: Math.round((cat.count / expenses.length) * 100)
+          percentage: totalInPrimaryCurrency > 0 ? Math.round((cat.amount / totalInPrimaryCurrency) * 100) : 0
         }));
 
       const currencies = Object.values(currencyTotals)
@@ -125,7 +131,7 @@ class AnalyticsService {
         }));
 
       return {
-        totalAmount: formatMultiCurrencyAmount(expenses),
+        totalAmount: formatCurrency(totalInPrimaryCurrency, primaryCurrency),
         totalExpenses: expenses.length,
         categories,
         currencies,
@@ -135,7 +141,8 @@ class AnalyticsService {
           startDate: formatDate(startDate),
           endDate: formatDate(endDate),
           daysCount: daysInPeriod
-        }
+        },
+        primaryCurrency
       };
     } catch (error) {
       logger.error('Analytics calculation error:', error);
@@ -205,12 +212,14 @@ class AnalyticsService {
       // Convert expenses to user's primary currency
       const convertedExpenses = expenses.length > 0 ? 
         await currencyService.convertExpenses(expenses, primaryCurrency) : [];
+      const convertedIncomes = incomes.length > 0 ?
+        await currencyService.convertIncomes(incomes, primaryCurrency) : [];
       
       // Calculate analytics
       const expenseAnalytics = expenses.length > 0 ? 
         this.calculateExpenseAnalytics(convertedExpenses, primaryCurrency) : null;
       const incomeAnalytics = incomes.length > 0 ? 
-        this.calculateIncomeAnalytics(incomes, primaryCurrency) : null;
+        this.calculateIncomeAnalytics(convertedIncomes, primaryCurrency) : null;
       
       // Prepare comprehensive data for AI
       const analyticsData = {
@@ -244,12 +253,12 @@ class AnalyticsService {
           currency: primaryCurrency,
           type: 'expense'
         })),
-        detailedIncomes: incomes.map(inc => ({
+        detailedIncomes: convertedIncomes.map(inc => ({
           date: inc.income_date,
           description: inc.description,
           amount: inc.amount,
           category: inc.category,
-          currency: inc.currency,
+          currency: primaryCurrency,
           type: 'income'
         })),
         
@@ -564,8 +573,10 @@ class AnalyticsService {
         };
       }
 
+      const convertedIncomes = await currencyService.convertIncomes(incomes, primaryCurrency);
+
       // Group by category
-      const categoryTotals = incomes.reduce((acc, income) => {
+      const categoryTotals = convertedIncomes.reduce((acc, income) => {
         const key = `${income.category}_${income.currency}`;
         if (!acc[key]) {
           acc[key] = {
@@ -581,7 +592,7 @@ class AnalyticsService {
       }, {});
 
       // Group by currency
-      const currencyTotals = incomes.reduce((acc, income) => {
+      const currencyTotals = convertedIncomes.reduce((acc, income) => {
         if (!acc[income.currency]) {
           acc[income.currency] = 0;
         }
@@ -589,17 +600,8 @@ class AnalyticsService {
         return acc;
       }, {});
 
-      // Calculate total in primary currency
-      let totalInPrimaryCurrency = 0;
-      for (const [currency, amount] of Object.entries(currencyTotals)) {
-        if (currency === primaryCurrency) {
-          totalInPrimaryCurrency += amount;
-        } else {
-          // For now, we'll assume 1:1 conversion or use a simple rate
-          // In production, you'd want proper currency conversion
-          totalInPrimaryCurrency += amount;
-        }
-      }
+      const totalInPrimaryCurrency = Object.values(currencyTotals)
+        .reduce((sum, amount) => sum + amount, 0);
 
       // Calculate average per day
       const daysDiff = Math.max(1, Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)));
@@ -621,7 +623,7 @@ class AnalyticsService {
         .map(([currency, amount]) => ({
           currency,
           amount: formatCurrency(amount, currency),
-          count: incomes.filter(i => i.currency === currency).length
+          count: convertedIncomes.filter(i => i.currency === currency).length
         }))
         .sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount));
 

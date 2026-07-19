@@ -1,6 +1,7 @@
 const { supabase, userService } = require('./supabase');
 const { familyProjectService, familyMemberStateService, plannedOccurrenceService } = require('./familyBudget');
 const { generateDailyInsightText } = require('./dailyInsight');
+const analyticsService = require('./analytics');
 const {
   getLocalHour,
   getLocalDateString,
@@ -19,6 +20,10 @@ const MONTHLY_PLAN_DAY_MAX = 7;
 const PLANNED_REMINDER_HOUR = 9;
 const INSIGHT_HOUR = 10;
 const SUMMARY_HOUR = 11;
+
+function isAdvisorLoopEnabled() {
+  return process.env.ENABLE_ADVISOR_LOOP !== 'false';
+}
 
 async function getUsersForScheduler() {
   const { data, error } = await supabase
@@ -97,6 +102,43 @@ function pickEncouragement(balance) {
   if (balance > 0) return 'Хороший запас. Можно спокойно выбрать, куда его направить: подушка, долг или цель.';
   if (balance === 0) return 'Неделя сошлась почти в ноль. Это тоже контроль, не провал.';
   return 'Есть минус, но он уже виден, а значит им можно управлять. Один аккуратный шаг дальше поможет.';
+}
+
+async function hasFamilyLoop(userId) {
+  const family = await familyProjectService.findFamilyProjectForUser(userId);
+  return !!(family && (family.onboarding_completed || family.family_established_at));
+}
+
+function buildAdvisorFocus(summary) {
+  if ((summary.expenseCount || 0) === 0) {
+    return 'Фокус: расходов пока нет. Запишите первые траты за день, и я начну видеть ритм.';
+  }
+  if (summary.profitStatus === 'positive') {
+    return `Фокус: закрепить плюс. Самая большая статья расходов сейчас — ${summary.topExpenseCategory}.`;
+  }
+  if (summary.profitStatus === 'negative') {
+    return `Фокус: остановить минус. Начните с категории "${summary.topExpenseCategory}" и одного маленького лимита на сегодня.`;
+  }
+  return `Фокус: держать баланс. Проверьте, не прячется ли регулярный расход в категории "${summary.topExpenseCategory}".`;
+}
+
+function hasAdvisorActivity(summary) {
+  return (summary.incomeCount || 0) > 0 || (summary.expenseCount || 0) > 0;
+}
+
+async function buildAdvisorSummaryText(userId, period, title) {
+  const summary = await analyticsService.getFinancialSummary(userId, period);
+  if (summary.error || !hasAdvisorActivity(summary)) return null;
+
+  return (
+    `${title}\n\n` +
+    `Доходы: ${summary.totalIncome}\n` +
+    `Расходы: ${summary.totalExpenses}\n` +
+    `Итог: ${summary.profit}\n\n` +
+    `Главный расход: ${summary.expenseCount ? summary.topExpenseCategory : 'пока нет'}\n` +
+    `Главный доход: ${summary.incomeCount ? summary.topIncomeCategory : 'пока нет'}\n\n` +
+    buildAdvisorFocus(summary)
+  );
 }
 
 async function getActualTotals(project, bounds) {
@@ -210,6 +252,7 @@ async function sendWeeklySummary(bot, user) {
     reply_markup: { inline_keyboard: [[{ text: '📊 Реальность месяца', callback_data: 'fb:reality' }]] }
   });
   await userService.update(user.id, { last_weekly_summary_sent_date: localDate });
+  user.last_weekly_summary_sent_date = localDate;
 }
 
 async function sendMonthlySummary(bot, user) {
@@ -232,6 +275,7 @@ async function sendMonthlySummary(bot, user) {
     reply_markup: monthlyReviewKeyboard()
   });
   await userService.update(user.id, { last_monthly_summary_sent_month: monthKey });
+  user.last_monthly_summary_sent_month = monthKey;
 }
 
 async function sendMorningGreeting(bot, user) {
@@ -262,6 +306,7 @@ async function sendMorningGreeting(bot, user) {
     }
   );
   await userService.update(user.id, { last_morning_sent_date: localDate });
+  user.last_morning_sent_date = localDate;
 }
 
 async function sendMonthlyPlanPrompt(bot, user) {
@@ -296,7 +341,7 @@ async function sendMonthlyPlanPrompt(bot, user) {
 }
 
 async function sendDailyInsight(bot, user) {
-  if (process.env.ENABLE_DAILY_INSIGHT !== 'true') return;
+  if (process.env.ENABLE_DAILY_INSIGHT === 'false') return;
 
   const tz = user.timezone || 'Europe/Moscow';
   const now = new Date();
@@ -318,6 +363,68 @@ async function sendDailyInsight(bot, user) {
     }
   });
   await userService.update(user.id, { last_insight_sent_date: localDate });
+  user.last_insight_sent_date = localDate;
+}
+
+async function sendAdvisorDaily(bot, user) {
+  if (!isAdvisorLoopEnabled()) return;
+
+  const tz = user.timezone || 'Europe/Moscow';
+  const now = new Date();
+  const localDate = getLocalDateString(now, tz);
+  if (user.last_insight_sent_date === localDate) return;
+  if (getLocalHour(now, tz) !== INSIGHT_HOUR) return;
+  if (await hasFamilyLoop(user.id)) return;
+
+  const text = await buildAdvisorSummaryText(user.id, 'this_month', '💡 Финансовый чек-ин');
+  if (!text) return;
+
+  await bot.sendMessage(user.id, text);
+  await userService.update(user.id, { last_insight_sent_date: localDate });
+  user.last_insight_sent_date = localDate;
+}
+
+async function sendAdvisorWeekly(bot, user) {
+  if (!isAdvisorLoopEnabled()) return;
+
+  const tz = user.timezone || 'Europe/Moscow';
+  const now = new Date();
+  const localDate = getLocalDateString(now, tz);
+  if (user.last_weekly_summary_sent_date === localDate) return;
+  if (getLocalHour(now, tz) !== SUMMARY_HOUR) return;
+
+  const localDay = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(now);
+  if (localDay !== 'Mon') return;
+  if (await hasFamilyLoop(user.id)) return;
+
+  const text = await buildAdvisorSummaryText(user.id, 'last_week', '📊 Итоги прошлой недели');
+  if (!text) return;
+
+  await bot.sendMessage(user.id, text);
+  await userService.update(user.id, { last_weekly_summary_sent_date: localDate });
+  user.last_weekly_summary_sent_date = localDate;
+}
+
+async function sendAdvisorMonthly(bot, user) {
+  if (!isAdvisorLoopEnabled()) return;
+
+  const tz = user.timezone || 'Europe/Moscow';
+  const now = new Date();
+  const localDate = getLocalDateString(now, tz);
+  const dayOfMonth = parseInt(localDate.split('-')[2], 10);
+  if (dayOfMonth !== 1) return;
+  if (getLocalHour(now, tz) !== SUMMARY_HOUR) return;
+
+  const monthKey = currentPlanMonth(now);
+  if (user.last_monthly_summary_sent_month === monthKey) return;
+  if (await hasFamilyLoop(user.id)) return;
+
+  const text = await buildAdvisorSummaryText(user.id, 'last_month', '📊 Итоги прошлого месяца');
+  if (!text) return;
+
+  await bot.sendMessage(user.id, text);
+  await userService.update(user.id, { last_monthly_summary_sent_month: monthKey });
+  user.last_monthly_summary_sent_month = monthKey;
 }
 
 function startScheduler(bot) {
@@ -332,8 +439,11 @@ function startScheduler(bot) {
         await sendPlannedItemReminders(bot, user);
         await sendMorningGreeting(bot, user);
         await sendDailyInsight(bot, user);
+        await sendAdvisorDaily(bot, user);
         await sendWeeklySummary(bot, user);
+        await sendAdvisorWeekly(bot, user);
         await sendMonthlySummary(bot, user);
+        await sendAdvisorMonthly(bot, user);
       }
     } catch (e) {
       logger.error('scheduler tick error:', e);
@@ -346,6 +456,9 @@ module.exports = {
   sendMorningGreeting,
   sendMonthlyPlanPrompt,
   sendDailyInsight,
+  sendAdvisorDaily,
+  sendAdvisorWeekly,
+  sendAdvisorMonthly,
   sendPlannedItemReminders,
   sendWeeklySummary,
   sendMonthlySummary

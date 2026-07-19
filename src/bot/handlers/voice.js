@@ -15,6 +15,10 @@ const { getBot } = require('../../utils/bot');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
 const { classifyIntent } = require('../../utils/intentClassifier');
+const {
+  collapseSplitTransactions,
+  hasExplicitCurrencyMarker
+} = require('../../utils/transactionNormalizer');
 
 async function handleVoice(msg) {
   const chatId = msg.chat.id;
@@ -108,18 +112,26 @@ async function handleVoice(msg) {
 
     // Parse transaction with AI (could be income or expense)
     const parsedResult = await openaiService.parseTransaction(transcription, userContext);
+    const normalizedParsedResult = Array.isArray(parsedResult)
+      ? collapseSplitTransactions(transcription, parsedResult, userContext)
+      : parsedResult;
 
     // Handle multiple transactions from voice input
-    if (Array.isArray(parsedResult)) {
-      await handleMultipleVoiceTransactions(chatId, processingMessage.message_id, parsedResult, userContext, user, projects, transcription);
+    if (Array.isArray(normalizedParsedResult) && normalizedParsedResult.length > 1) {
+      await handleMultipleVoiceTransactions(chatId, processingMessage.message_id, normalizedParsedResult, userContext, user, projects, transcription);
       return;
     }
 
     // Handle single transaction
-    const parsedTransaction = normalizeParsedTransaction(transcription, parsedResult);
+    const parsedTransaction = normalizeParsedTransaction(transcription, Array.isArray(normalizedParsedResult) ? normalizedParsedResult[0] : normalizedParsedResult);
 
-    // Use user's primary currency if not specified
-    if (!parsedTransaction.currency) {
+    // Use user's primary currency if not specified, or if the model silently
+    // defaulted to RUB while the user prefers another currency.
+    if (!parsedTransaction.currency || (
+      parsedTransaction.currency === 'RUB' &&
+      (userContext.primaryCurrency || 'RUB') !== 'RUB' &&
+      !hasExplicitCurrencyMarker(transcription, 'RUB')
+    )) {
       parsedTransaction.currency = userContext.primaryCurrency || 'RUB';
     }
 
@@ -258,7 +270,11 @@ async function handleMultipleVoiceTransactions(chatId, messageId, transactions, 
       const transaction = normalizeParsedTransaction(transactions[i].description || transcription, transactions[i]);
 
       // Apply user's default currency
-      if (!transaction.currency) {
+      if (!transaction.currency || (
+        transaction.currency === 'RUB' &&
+        (userContext.primaryCurrency || 'RUB') !== 'RUB' &&
+        !hasExplicitCurrencyMarker(transaction.description || transcription, 'RUB')
+      )) {
         transaction.currency = userContext.primaryCurrency || 'RUB';
       }
 

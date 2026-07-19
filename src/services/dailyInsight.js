@@ -81,7 +81,7 @@ async function buildDailyInsightContext(project, date = new Date()) {
 }
 
 async function generateDailyInsightText(project) {
-  if (process.env.ENABLE_DAILY_INSIGHT !== 'true') {
+  if (process.env.ENABLE_DAILY_INSIGHT === 'false') {
     return null;
   }
 

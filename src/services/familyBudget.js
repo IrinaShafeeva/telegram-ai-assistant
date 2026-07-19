@@ -108,10 +108,24 @@ function currentWeekBounds(date = new Date()) {
 }
 
 function normalizeGuideCategory(category) {
-  return String(category || '')
+  const normalized = String(category || '')
     .replace(/^[^\p{L}\p{N}]+/u, '')
     .trim()
     .toLowerCase();
+  if ([
+    'еда и рестораны',
+    'еда',
+    'продукты',
+    'продукт',
+    'мясо',
+    'булки',
+    'булка',
+    'кофе',
+    'хлеб'
+  ].includes(normalized)) {
+    return 'еда';
+  }
+  return normalized;
 }
 
 function normalizeGuideCategories(categories) {

@@ -23,6 +23,13 @@ const {
 } = require('../keyboards/inline');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
+const {
+  CSV_MIME_TYPE,
+  XLSX_MIME_TYPE,
+  buildTransactionRows,
+  generateCsvBuffer,
+  generateXlsxBuffer
+} = require('../../utils/export');
 const logger = require('../../utils/logger');
 const { handleFamilyCallback } = require('./familyBudget');
 const { notifyPartners, partnerLabel, weeklyCategoryGuideService } = require('../../services/familyBudget');
@@ -772,6 +779,7 @@ async function handleSetCategory(chatId, messageId, data, user) {
 
 
 async function handleBackToConfirmation(chatId, messageId, data, user) {
+  const bot = getBot();
   const tempId = data.split(':')[1];
   const expenseData = tempExpenses.get(tempId);
 
@@ -1064,6 +1072,17 @@ async function handleSetCurrency(chatId, messageId, data, user) {
     
     // Update user's primary currency
     await userService.update(user.id, { primary_currency: currency });
+    user.primary_currency = currency;
+
+    try {
+      const projects = await projectService.findByUserId(user.id);
+      const familyProjects = (projects || []).filter(project => project.is_family_budget);
+      await Promise.all(
+        familyProjects.map(project => projectService.update(project.id, { budget_currency: currency }))
+      );
+    } catch (projectCurrencyError) {
+      logger.warn('Could not update family budget currency:', projectCurrencyError.message);
+    }
     
     const currencyNames = {
       'RUB': 'Рубль',
@@ -1132,6 +1151,17 @@ async function handleChangeCurrency(chatId, messageId, data, user) {
     
     // Update user's primary currency
     await userService.update(user.id, { primary_currency: currency });
+    user.primary_currency = currency;
+
+    try {
+      const projects = await projectService.findByUserId(user.id);
+      const familyProjects = (projects || []).filter(project => project.is_family_budget);
+      await Promise.all(
+        familyProjects.map(project => projectService.update(project.id, { budget_currency: currency }))
+      );
+    } catch (projectCurrencyError) {
+      logger.warn('Could not update family budget currency:', projectCurrencyError.message);
+    }
     
     const currencyNames = {
       'RUB': 'Рубль',
@@ -1717,6 +1747,15 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
     let expenses, incomes, projectName = '';
 
     if (projectId) {
+      const access = await projectService.hasAccess(projectId, user.id);
+      if (!access.access) {
+        await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+
       // Get project data
       const project = await projectService.findById(projectId);
       if (!project) {
@@ -1761,19 +1800,16 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
     let fileContent, fileName, mimeType;
 
     const filePrefix = projectId ? `${projectName}_transactions` : 'transactions';
+    const rows = buildTransactionRows(expenses, incomes);
 
     if (format === 'csv') {
-      // Generate CSV
-      const csvData = generateCSV(expenses, incomes);
-      fileContent = Buffer.from(csvData, 'utf-8');
+      fileContent = generateCsvBuffer(rows);
       fileName = `${filePrefix}_${formatDate(startDate)}_${formatDate(endDate)}.csv`;
-      mimeType = 'text/csv';
+      mimeType = CSV_MIME_TYPE;
     } else {
-      // Generate Excel - for now, use CSV format as placeholder
-      const csvData = generateCSV(expenses, incomes);
-      fileContent = Buffer.from(csvData, 'utf-8');
+      fileContent = generateXlsxBuffer(rows, 'Transactions');
       fileName = `${filePrefix}_${formatDate(startDate)}_${formatDate(endDate)}.xlsx`;
-      mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      mimeType = XLSX_MIME_TYPE;
     }
 
     // Send file
@@ -1800,43 +1836,6 @@ async function generateExport(chatId, messageId, user, format, startDate, endDat
       message_id: messageId
     });
   }
-}
-
-function generateCSV(expenses, incomes) {
-  const headers = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Проект', 'Тип'];
-  const rows = [headers];
-
-  // Add expenses (negative amounts)
-  expenses.forEach(expense => {
-    rows.push([
-      expense.expense_date,
-      expense.description,
-      -Math.abs(expense.amount), // Negative for expenses
-      expense.currency,
-      expense.category,
-      expense.project_name || 'Без проекта',
-      'Расход'
-    ]);
-  });
-
-  // Add incomes (positive amounts)
-  incomes.forEach(income => {
-    rows.push([
-      income.income_date,
-      income.description,
-      Math.abs(income.amount), // Positive for incomes
-      income.currency,
-      income.category,
-      income.project_name || 'Без проекта',
-      'Доход'
-    ]);
-  });
-
-  // Sort by date (newest first)
-  const dataRows = rows.slice(1);
-  dataRows.sort((a, b) => new Date(b[0]) - new Date(a[0]));
-
-  return [headers, ...dataRows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
 }
 
 function formatDate(date) {
@@ -2446,7 +2445,7 @@ async function handleConfirmDeleteProject(chatId, messageId, data, user) {
     }
 
     // Delete the project and all related data (expenses, incomes, members)
-    await projectService.delete(projectId);
+    await projectService.delete(projectId, user.id);
 
     // If deleted project was active, activate another one
     if (project.is_active) {
@@ -2840,30 +2839,16 @@ async function handleSetTransactionCurrency(chatId, messageId, data, user) {
       if (incomeData) {
         incomeData.currency = currency;
         tempIncomes.set(expenseId, incomeData);
-
-        await bot.editMessageText(
-          `💰 ${incomeData.description || 'Доход'}\n💵 Сумма: ${incomeData.amount} ${incomeData.currency}\n📁 Проект: ${incomeData.project_name || 'Не указан'}\n🗂 Категория: ${incomeData.category}\n\nЧто хотите изменить?`,
-          {
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup: getIncomeConfirmationKeyboard(expenseId)
-          }
-        );
+        await handleBackToIncomeConfirmation(chatId, messageId, `back_to_income_confirmation:${expenseId}`, user);
+        return;
       }
     } else {
       const expenseData = tempExpenses.get(expenseId);
       if (expenseData) {
         expenseData.currency = currency;
         tempExpenses.set(expenseId, expenseData);
-
-        await bot.editMessageText(
-          `💸 ${expenseData.description || 'Расход'}\n💵 Сумма: ${expenseData.amount} ${expenseData.currency}\n📁 Проект: ${expenseData.project_name || 'Не указан'}\n🗂 Категория: ${expenseData.category}\n\nЧто хотите изменить?`,
-          {
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup: getExpenseConfirmationKeyboard(expenseId)
-          }
-        );
+        await handleBackToConfirmation(chatId, messageId, `back_to_confirmation:${expenseId}`, user);
+        return;
       }
     }
   } catch (error) {

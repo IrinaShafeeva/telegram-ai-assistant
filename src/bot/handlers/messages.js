@@ -9,6 +9,18 @@ const { SUPPORTED_CURRENCIES } = require('../../config/constants');
 const { getBot } = require('../../utils/bot');
 const { stateManager, STATE_TYPES } = require('../../utils/stateManager');
 const { shortTransactionMap } = require('../../utils/transactionMap');
+const {
+  collapseSplitTransactions,
+  hasExplicitCurrencyMarker,
+  normalizeCategoryFromText
+} = require('../../utils/transactionNormalizer');
+const {
+  CSV_MIME_TYPE,
+  XLSX_MIME_TYPE,
+  buildTransactionRows,
+  generateCsvBuffer,
+  generateXlsxBuffer
+} = require('../../utils/export');
 const logger = require('../../utils/logger');
 const { generateShortId } = require('../../utils/shortId');
 const { isAnalyticsQuestion } = require('../../utils/intentClassifier');
@@ -177,7 +189,7 @@ function resolveCategory(text, ucCategories, parsedCategory) {
       return cat.name;
     }
   }
-  return parsedCategory;
+  return normalizeCategoryFromText(text, parsedCategory);
 }
 
 function userFacingTransactionError(error) {
@@ -399,21 +411,28 @@ async function handleExpenseText(msg) {
     // Parse transaction(s) first to determine if it's income or expense
     const processingMessage = await bot.sendMessage(chatId, '🤖 Обрабатываю транзакцию(и)...');
     const parsedResult = await openaiService.parseTransaction(text, userContext);
+    const normalizedParsedResult = Array.isArray(parsedResult)
+      ? collapseSplitTransactions(text, parsedResult, userContext)
+      : parsedResult;
 
     // Handle multiple transactions
-    if (Array.isArray(parsedResult)) {
-      await handleMultipleTransactions(chatId, processingMessage.message_id, parsedResult, userContext, user, text);
+    if (Array.isArray(normalizedParsedResult) && normalizedParsedResult.length > 1) {
+      await handleMultipleTransactions(chatId, processingMessage.message_id, normalizedParsedResult, userContext, user, text);
       return;
     }
 
     // Handle single transaction (backward compatibility)
-    const parsedTransaction = normalizeParsedTransaction(text, parsedResult);
+    const parsedTransaction = normalizeParsedTransaction(text, Array.isArray(normalizedParsedResult) ? normalizedParsedResult[0] : normalizedParsedResult);
 
     // Apply user's default currency if no currency was detected or if OpenAI defaulted to RUB but user has different preference
     const originalCurrency = parsedTransaction.currency;
     const userPrimaryCurrency = userContext.primaryCurrency || user.primary_currency || 'RUB';
 
-    if (!parsedTransaction.currency || (parsedTransaction.currency === 'RUB' && userPrimaryCurrency !== 'RUB')) {
+    if (!parsedTransaction.currency || (
+      parsedTransaction.currency === 'RUB' &&
+      userPrimaryCurrency !== 'RUB' &&
+      !hasExplicitCurrencyMarker(text, 'RUB')
+    )) {
       parsedTransaction.currency = userPrimaryCurrency;
       logger.info(`💱 Using user default currency: ${parsedTransaction.currency} (was: ${originalCurrency || 'null'})`);
     }
@@ -1285,7 +1304,7 @@ async function handleCustomExportDatesInput(msg, userState) {
   const chatId = msg.chat.id;
   const text = msg.text.trim();
   const bot = getBot();
-  const { format, messageId } = userState.data;
+  const { format, messageId, projectId } = userState.data;
   
   // Parse date range format: DD.MM.YYYY - DD.MM.YYYY
   const dateRangeRegex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})\s*-\s*(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
@@ -1315,7 +1334,7 @@ async function handleCustomExportDatesInput(msg, userState) {
     }
     
     // Generate export directly (duplicate of callbacks.js logic for now)
-    await generateCustomExport(chatId, messageId, msg.user, format, startDate, endDate);
+    await generateCustomExport(chatId, messageId, msg.user, format, startDate, endDate, projectId);
     
   } catch (error) {
     logger.error('Date parsing error:', error);
@@ -1325,10 +1344,8 @@ async function handleCustomExportDatesInput(msg, userState) {
   stateManager.clearState(chatId);
 }
 
-async function generateCustomExport(chatId, messageId, user, format, startDate, endDate) {
+async function generateCustomExport(chatId, messageId, user, format, startDate, endDate, projectId = null) {
   const bot = getBot();
-  const { expenseService } = require('../../services/supabase');
-  const logger = require('../../utils/logger');
   
   // Show processing message
   await bot.editMessageText('⏳ Генерируем экспорт...', {
@@ -1337,10 +1354,30 @@ async function generateCustomExport(chatId, messageId, user, format, startDate, 
   });
   
   try {
-    // Get user's expenses for the period
-    const expenses = await expenseService.getExpensesForExport(user.id, startDate, endDate);
+    let expenses, incomes;
+
+    if (projectId) {
+      const access = await projectService.hasAccess(projectId, user.id);
+      if (!access.access) {
+        await bot.editMessageText('❌ У вас нет доступа к этому проекту.', {
+          chat_id: chatId,
+          message_id: messageId
+        });
+        return;
+      }
+
+      [expenses, incomes] = await Promise.all([
+        expenseService.getExpensesForExportByProject(projectId, startDate, endDate),
+        incomeService.getIncomesForExportByProject(projectId, startDate, endDate)
+      ]);
+    } else {
+      [expenses, incomes] = await Promise.all([
+        expenseService.getExpensesForExport(user.id, startDate, endDate),
+        incomeService.getIncomesForExport(user.id, startDate, endDate)
+      ]);
+    }
     
-    if (expenses.length === 0) {
+    if (expenses.length === 0 && incomes.length === 0) {
       await bot.editMessageText('📊 Нет данных за выбранный период для экспорта.', {
         chat_id: chatId,
         message_id: messageId
@@ -1348,35 +1385,23 @@ async function generateCustomExport(chatId, messageId, user, format, startDate, 
       return;
     }
     
-    // Generate CSV content
-    const headers = ['Дата', 'Описание', 'Сумма', 'Валюта', 'Категория', 'Проект'];
-    const rows = [headers];
-    
-    expenses.forEach(expense => {
-      rows.push([
-        expense.expense_date,
-        expense.description,
-        expense.amount,
-        expense.currency,
-        expense.category,
-        expense.project_name || 'Без проекта'
-      ]);
-    });
-    
-    const csvData = rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
-    const fileContent = Buffer.from(csvData, 'utf-8');
-    
+    const rows = buildTransactionRows(expenses, incomes);
+    const fileContent = format === 'xlsx'
+      ? generateXlsxBuffer(rows, 'Transactions')
+      : generateCsvBuffer(rows);
+
     const formatDate = (date) => date.toISOString().split('T')[0].replace(/-/g, '.');
     const fileName = `expenses_${formatDate(startDate)}_${formatDate(endDate)}.${format === 'xlsx' ? 'xlsx' : 'csv'}`;
+    const mimeType = format === 'xlsx' ? XLSX_MIME_TYPE : CSV_MIME_TYPE;
     
     // Send file
-    await bot.sendDocument(chatId, fileContent, {
+    await bot.sendDocument(chatId, fileContent, {}, {
       filename: fileName,
-      contentType: format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv'
+      contentType: mimeType
     });
     
     // Update message
-    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${expenses.length} записей\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
+    await bot.editMessageText(`✅ Экспорт готов!\n\n📊 Экспортировано: ${expenses.length + incomes.length} записей\n📅 Период: ${formatDate(startDate)} - ${formatDate(endDate)}`, {
       chat_id: chatId,
       message_id: messageId
     });
@@ -2123,8 +2148,14 @@ async function handleMultipleTransactions(chatId, messageId, transactions, userC
     for (let i = 0; i < transactions.length; i++) {
       const transaction = normalizeParsedTransaction(transactions[i].description || text, transactions[i]);
 
-      // Apply user's default currency
-      if (!transaction.currency) {
+      // Apply user's default currency, and override the model's RUB default
+      // when the user prefers another currency and the item text has no
+      // explicit currency marker.
+      if (!transaction.currency || (
+        transaction.currency === 'RUB' &&
+        (userContext.primaryCurrency || 'RUB') !== 'RUB' &&
+        !hasExplicitCurrencyMarker(transaction.description || text, 'RUB')
+      )) {
         transaction.currency = userContext.primaryCurrency || 'RUB';
       }
 

@@ -126,6 +126,28 @@ class CurrencyService {
     return convertedExpenses;
   }
 
+  async convertIncomes(incomes, targetCurrency) {
+    const convertedIncomes = [];
+
+    for (const income of incomes) {
+      const convertedAmount = await this.convertAmount(
+        income.amount,
+        income.currency,
+        targetCurrency
+      );
+
+      convertedIncomes.push({
+        ...income,
+        originalAmount: income.amount,
+        originalCurrency: income.currency,
+        amount: convertedAmount,
+        currency: targetCurrency
+      });
+    }
+
+    return convertedIncomes;
+  }
+
   formatAmount(amount, currency) {
     const symbols = {
       'RUB': '₽',
